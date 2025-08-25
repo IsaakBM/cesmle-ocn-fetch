@@ -47,3 +47,27 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# OS/editor
+.DS_Store
+*.swp
+
+# R / Python cruft (in case you use them)
+.Rhistory
+.Rproj.user/
+.venv/
+__pycache__/
+
+# env & secrets
+.env
+config/*.env
+
+# HPC outputs
+*.out
+*.err
+data/logs/
+
+# Data (never commit NetCDF or big artifacts)
+*.nc
+data/raw/
+data/cache/

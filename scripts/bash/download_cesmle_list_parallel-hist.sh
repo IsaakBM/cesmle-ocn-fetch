@@ -5,13 +5,13 @@
 #SBATCH --time=04:00:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=ibrito@eri.ucsb.edu
-#SBATCH --output=cesmle_hist_list_par_%j.out
-#SBATCH --error=cesmle_hist_list_par_%j.err
+#SBATCH --output=logs/cesmle_hist_list_par_%j.out
+#SBATCH --error=logs/cesmle_hist_list_par_%j.err
 
 set -euo pipefail
 
 # ------------- CONFIG -------------
-OUTROOT="/home/sandbox-sparc/z_esmLE_hist"
+OUTROOT="/home/sandbox-sparc/cesmle-ocn-fetch"
 
 # Default variables (override at submit time: --export=ALL,VARS="O2 UVEL")
 VARS_DEFAULT=(TEMP SALT O2 UVEL)
@@ -33,6 +33,7 @@ DATE_RE='[0-9-]+'
 FALLBACK_SPANS=("192001-200512" "192001-198012" "198101-200512")
 
 mkdir -p "$OUTROOT"
+mkdir -p logs
 
 # ---------- helpers ----------
 TASKS="$(mktemp)"; : > "$TASKS"

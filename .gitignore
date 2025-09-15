@@ -69,6 +69,7 @@ data/
 **/*.part
 
 # slurm/app logs
+logs/
 *.out
 *.err
 

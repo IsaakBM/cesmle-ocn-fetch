@@ -62,12 +62,17 @@ __pycache__/
 .env
 config/*.env
 
-# HPC outputs
+# never commit data (even if someone points OUTROOT into repo)
+data/
+**/data/
+**/*.nc
+**/*.part
+
+# slurm/app logs
+logs/
 *.out
 *.err
-data/logs/
 
-# Data (never commit NetCDF or big artifacts)
-*.nc
-data/raw/
-data/cache/
+# macOS/editor noise
+.DS_Store
+*.swp

@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-# Activate your conda env if present (so the CLI is available in batch)
+# Activate env so CLI is visible in batch
 if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
   source "$HOME/miniconda3/etc/profile.d/conda.sh"
   conda activate cmems || true
@@ -28,7 +28,7 @@ mkdir -p "$OUTROOT" "$LOGDIR"
 DATASET_MY="cmems_mod_glo_phy_my_0.083deg_P1D-m"      # 1993–2020
 DATASET_MYINT="cmems_mod_glo_phy_myint_0.083deg_P1D-m" # 2021
 
-# ========= Time window (override at submit time with --export=ALL,VAR=val) =========
+# ========= Time window (override at submit time) =========
 YEAR_START="${YEAR_START:-1993}"
 YEAR_END="${YEAR_END:-2021}"
 MONTHS=(01 02 03 04 05 06 07 08 09 10 11 12)
@@ -42,7 +42,7 @@ if [[ -z "$CM" && -x "$HOME/.local/bin/copernicusmarine" ]]; then
   CM="$HOME/.local/bin/copernicusmarine"
 fi
 if [[ -z "$CM" ]]; then
-  echo "[fatal] copernicusmarine CLI not found. Ensure Python>=3.9 and 'pip install --user copernicusmarine' + 'copernicusmarine login'."
+  echo "[fatal] copernicusmarine CLI not found. Install/login first."
   exit 1
 fi
 
@@ -72,7 +72,7 @@ for year in $(seq "${YEAR_START}" "${YEAR_END}"); do
     # daily filename regex for that month
     REGEX="mercatorglorys12v1_gl12_mean_${year}${mm}[0-9]{2}_R[0-9]{8}\\.nc"
 
-    # skip if already looks complete (>=28 days found)
+    # quick completeness heuristic
     existing=$(ls -1 "${OUTDIR}"/mercatorglorys12v1_gl12_mean_${year}${mm}??_R????????.nc 2>/dev/null | wc -l || true)
     if (( existing >= 28 )); then
       echo "[skip] Likely complete (${year}-${mm}: ${existing} files) at ${OUTDIR}"
@@ -83,23 +83,18 @@ for year in $(seq "${YEAR_START}" "${YEAR_END}"); do
   done
 done
 
-# ========= Helper: tidy nested structure from previous runs =========
+# ========= Helper: tidy nested structure from older runs =========
 tidy_nested_if_any() {
   local outdir="$1" year mm
   year=$(basename "$(dirname "$outdir")")
   mm=$(basename "$outdir")
 
-  # Move any files buried under product/version path up to outdir
   if compgen -G "${outdir}/GLOBAL_MULTIYEAR_PHY_001_030/*/*/${year}/${mm}/mercatorglorys12v1_gl12_mean_${year}${mm}??_R????????.nc*" > /dev/null; then
     find "${outdir}/GLOBAL_MULTIYEAR_PHY_001_030" -type f -regex ".*/mercatorglorys12v1_gl12_mean_${year}${mm}[0-9]{2}_R[0-9]{8}\\.nc.*" -print0 \
       | xargs -0 -I {} bash -c '
           src="{}"; base=$(basename "$src")
-          # if it’s a partial (has extra suffix), keep the full name to allow resume
-          if [[ "$base" =~ \.nc(\..+)?$ ]]; then
-            mv -f "$src" "'"$outdir"'/"$base"
-          fi
-        '
-    # Remove empty dirs
+          mv -f "$src" "'"$outdir"'/"$base"
+        ' || true
     find "${outdir}/GLOBAL_MULTIYEAR_PHY_001_030" -type d -empty -delete || true
   fi
 }
@@ -114,17 +109,17 @@ fetch_month() {
   echo "      regex=${regex}"
   echo "      outdir=${outdir}"
 
-  # Flat layout (no extra product/version folders)
+  # Flat layout: put files directly in $outdir (no nested product/version dirs)
   "$CM" get \
     --dataset-id "$dataset" \
     --regex "$regex" \
     --output-directory "$outdir" \
-    --no-relative-path
+    --no-directories
 
-  # Tidy any nested leftovers (from older runs without --no-relative-path)
+  # Tidy leftovers from earlier runs (if any)
   tidy_nested_if_any "$outdir"
 
-  # Write/refresh manifest
+  # Manifest
   year=$(basename "$(dirname "$outdir")")
   mm=$(basename "$outdir")
   manifest="${outdir}/manifest_${year}${mm}.txt"

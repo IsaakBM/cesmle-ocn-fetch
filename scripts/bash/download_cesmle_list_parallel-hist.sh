@@ -2,7 +2,6 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4          # <= parallel downloads = 4
-#SBATCH --time=04:00:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=ibrito@eri.ucsb.edu
 #SBATCH --output=logs/cesmle_hist_list_par_%j.out

@@ -58,9 +58,16 @@ fi
 INROOT="/home/sandbox-sparc/cesmle-ocn-fetch/cesm"
 INPATH="${INROOT}/${SCEN}/${VAR}"
 
-# IMPORTANT: do not attempt to create /home/scratch itself
-SCRATCH_ROOT="/home/scratch"
+# ==============================================================================
+# Scratch (correct path on this system)
+# ==============================================================================
+SCRATCH_ROOT="/scratch/sparc"
 USER_SCRATCH="${SCRATCH_ROOT}/${USER}"
+
+if [[ ! -d "$SCRATCH_ROOT" ]]; then
+  echo "ERROR: Scratch root not found: $SCRATCH_ROOT"
+  exit 1
+fi
 
 mkdir -p "${USER_SCRATCH}"
 

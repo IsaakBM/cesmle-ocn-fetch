@@ -1,4 +1,25 @@
 #!/bin/bash
+#
+# ==============================================================================
+#  CESM POP regridding pipeline (1-degree global grid)
+#
+#  This code was created by Isaac Brito-Morales
+#  (ibrito@eri.ucsb.edu)
+#
+#  Please do not distribute or reuse without permission.
+#  NO GUARANTEES THAT THIS CODE IS CORRECT.
+#  Use at your own risk. Caveat emptor.
+#
+#  Purpose:
+#    - Regrid CESM POP ocean variables (TEMP, SALT, O2, UVEL)
+#      to a regular 1° global grid (360x180)
+#    - Process files independently (safe, restartable)
+#    - Optionally merge RCP85 time chunks per ensemble member
+#
+#  Intended to be run on Slurm-based HPC systems.
+#
+# ==============================================================================
+
 #SBATCH --job-name=cesm_regrid
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -37,8 +58,13 @@ fi
 INROOT="/home/sandbox-sparc/cesmle-ocn-fetch/cesm"
 INPATH="${INROOT}/${SCEN}/${VAR}"
 
-SCRATCH_BASE="/home/scratch/${USER}"
-OUTROOT="${SCRATCH_BASE}/cesm_regrid_1deg"
+# IMPORTANT: do not attempt to create /home/scratch itself
+SCRATCH_ROOT="/home/scratch"
+USER_SCRATCH="${SCRATCH_ROOT}/${USER}"
+
+mkdir -p "${USER_SCRATCH}"
+
+OUTROOT="${USER_SCRATCH}/cesm_regrid_1deg"
 OUTDIR="${OUTROOT}/${SCEN}/${VAR}"
 PARTS="${OUTDIR}/parts"
 MERGED="${OUTDIR}/merged"
@@ -47,11 +73,12 @@ TMPDIR="${OUTDIR}/tmp"
 mkdir -p "$PARTS" "$MERGED" "$TMPDIR"
 
 echo "================================================="
-echo " Scenario   : $SCEN"
-echo " Variable   : $VAR"
-echo " Input path : $INPATH"
-echo " Output dir : $OUTDIR"
-echo " CPUs       : ${SLURM_CPUS_PER_TASK:-8}"
+echo " Scenario      : $SCEN"
+echo " Variable      : $VAR"
+echo " Input path    : $INPATH"
+echo " Output dir    : $OUTDIR"
+echo " User scratch  : $USER_SCRATCH"
+echo " CPUs          : ${SLURM_CPUS_PER_TASK:-8}"
 echo "================================================="
 
 if [[ ! -d "$INPATH" ]]; then

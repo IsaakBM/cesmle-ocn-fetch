@@ -24,11 +24,11 @@ submit_and_wait () {
 
 # Example: run sequentially
 submit_and_wait hist O2
-submit_and_wait hist TEMP
-submit_and_wait hist SALT
-submit_and_wait hist UVEL
+#submit_and_wait hist TEMP
+#submit_and_wait hist SALT
+#submit_and_wait hist UVEL
 
-submit_and_wait rcp85 O2
-submit_and_wait rcp85 TEMP
-submit_and_wait rcp85 SALT
-submit_and_wait rcp85 UVEL
+#submit_and_wait rcp85 O2
+#submit_and_wait rcp85 TEMP
+#submit_and_wait rcp85 SALT
+#submit_and_wait rcp85 UVEL

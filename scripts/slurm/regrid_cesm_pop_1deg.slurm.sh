@@ -79,6 +79,23 @@ TMPDIR="${OUTDIR}/tmp"
 
 mkdir -p "$PARTS" "$MERGED" "$TMPDIR"
 
+# ==============================================================================
+# A) Scratch free-space preflight (fail early)
+# ==============================================================================
+MIN_FREE_GB=150
+FREE_GB=$(df -BG "$USER_SCRATCH" | awk 'NR==2 {gsub("G","",$4); print $4}')
+
+if [[ -z "$FREE_GB" ]]; then
+  echo "ERROR: Could not determine free space on: $USER_SCRATCH"
+  exit 1
+fi
+
+if [[ "$FREE_GB" -lt "$MIN_FREE_GB" ]]; then
+  echo "ERROR: Low free space on scratch: ${FREE_GB}G free, need at least ${MIN_FREE_GB}G."
+  echo "       Path checked: $USER_SCRATCH"
+  exit 1
+fi
+
 echo "================================================="
 echo " Scenario      : $SCEN"
 echo " Variable      : $VAR"
@@ -86,6 +103,7 @@ echo " Input path    : $INPATH"
 echo " Output dir    : $OUTDIR"
 echo " User scratch  : $USER_SCRATCH"
 echo " CPUs          : ${SLURM_CPUS_PER_TASK:-8}"
+echo " Free scratch  : ${FREE_GB}G"
 echo "================================================="
 
 if [[ ! -d "$INPATH" ]]; then
@@ -96,7 +114,8 @@ fi
 # ==============================================================================
 # Performance safety (avoid nested parallelism)
 # ==============================================================================
-NPROC=8
+# C) Lower concurrency to reduce NetCDF/HDF5 crashes and I/O pressure
+NPROC=4
 export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
@@ -138,9 +157,11 @@ regrid_one() {
   local base out tmp
 
   base="$(basename "$in")"
-  out="${PARTS}/${base}"
-  out="${out%.nc.part}.1deg.nc"
-  out="${out%.nc}.1deg.nc"
+
+  # B) fix naming so we never get .1deg.1deg.nc
+  base="${base%.nc.part}"
+  base="${base%.nc}"
+  out="${PARTS}/${base}.1deg.nc"
 
   if [[ -s "$out" ]]; then
     echo "SKIP (exists): $out"
@@ -149,7 +170,8 @@ regrid_one() {
 
   tmp="${TMPDIR}/.${base}.tmp.nc"
 
-  cdo -O -P 1 ${METHOD},${GRID} -selname,${VAR} "$in" "$tmp"
+  # B) add -L for safer NetCDF4/HDF5 handling
+  cdo -L -O -P 1 ${METHOD},${GRID} -selname,${VAR} "$in" "$tmp"
   mv "$tmp" "$out"
 
   echo "DONE: $out"
@@ -195,7 +217,7 @@ if [[ "$SCEN" == "rcp85" ]]; then
 
     [[ -s "$out" ]] && continue
 
-    cdo -O -P 1 mergetime "$f1" "${f2[0]}" "$out"
+    cdo -L -O -P 1 mergetime "$f1" "${f2[0]}" "$out"
     echo "MERGED member ${member}: $out"
   done
 

@@ -1,20 +1,34 @@
-MAXRUN=3
+#!/usr/bin/env bash
+set -euo pipefail
 
-count_running () {
-  squeue -u "$USER" -h -t R -n "regrid_*" | wc -l
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SLURM_SCRIPT="${SCRIPT_DIR}/regrid_cesm_pop_1deg.slurm.sh"
+
+submit_and_wait () {
+  local scen="$1"
+  local var="$2"
+
+  echo "Submitting: SCEN=${scen} VAR=${var}"
+  jobid=$(SCEN="${scen}" VAR="${var}" sbatch \
+    --parsable \
+    --job-name="regrid_${scen}_${var}" \
+    "$SLURM_SCRIPT")
+
+  echo "Submitted jobid=${jobid}. Waiting..."
+  # wait until job leaves the queue
+  while squeue -j "$jobid" -h >/dev/null 2>&1; do
+    sleep 60
+  done
+  echo "Done: jobid=${jobid} (SCEN=${scen} VAR=${var})"
 }
 
-for SCEN in hist rcp85; do
-  for VAR in TEMP SALT O2 UVEL; do
+# Example: run sequentially
+submit_and_wait hist O2
+submit_and_wait hist TEMP
+submit_and_wait hist SALT
+submit_and_wait hist UVEL
 
-    while [[ "$(count_running)" -ge "$MAXRUN" ]]; do
-      echo "Already ${MAXRUN}+ regrid jobs running, waiting..."
-      sleep 60
-    done
-
-    echo "Submitting job: SCEN=${SCEN} VAR=${VAR}"
-    SCEN="${SCEN}" VAR="${VAR}" sbatch \
-      --job-name="regrid_${SCEN}_${VAR}" \
-      "${SCRIPT_DIR}/regrid_cesm_pop_1deg.slurm.sh"
-  done
-done
+submit_and_wait rcp85 O2
+submit_and_wait rcp85 TEMP
+submit_and_wait rcp85 SALT
+submit_and_wait rcp85 UVEL

@@ -82,7 +82,7 @@ mkdir -p "$PARTS" "$MERGED" "$TMPDIR"
 # ==============================================================================
 # A) Scratch free-space preflight (fail early)
 # ==============================================================================
-MIN_FREE_GB=150
+MIN_FREE_GB=100
 FREE_GB=$(df -BG "$USER_SCRATCH" | awk 'NR==2 {gsub("G","",$4); print $4}')
 
 if [[ -z "$FREE_GB" ]]; then

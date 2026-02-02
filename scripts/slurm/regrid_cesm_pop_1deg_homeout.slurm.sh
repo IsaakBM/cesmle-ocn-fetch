@@ -20,10 +20,13 @@
 #
 # ==============================================================================
 
+#SBATCH -p grit_nodes
 #SBATCH --job-name=cesm_regrid
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=5
+#SBATCH --mem=256G
+#SBATCH -t 3-00:00:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=ibrito@eri.ucsb.edu
 #SBATCH --output=/home/sandbox-sparc/cesmle-ocn-fetch/logs/regrid_%j.out

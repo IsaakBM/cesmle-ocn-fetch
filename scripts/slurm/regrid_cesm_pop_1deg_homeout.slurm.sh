@@ -70,7 +70,7 @@ MERGED="${OUTDIR}/merged"
 mkdir -p "$PARTS" "$MERGED"
 
 # Temp goes to scratch (fast, limited space)
-SCRATCH_ROOT="/scratch/sparc"
+SCRATCH_ROOT="/home/hpc-scratch"
 USER_SCRATCH="${SCRATCH_ROOT}/${USER}"
 
 if [[ ! -d "$SCRATCH_ROOT" ]]; then

@@ -69,35 +69,25 @@ MERGED="${OUTDIR}/merged"
 
 mkdir -p "$PARTS" "$MERGED"
 
-# Temp goes to scratch (fast, limited space)
-SCRATCH_ROOT="/home/hpc-scratch"
-USER_SCRATCH="${SCRATCH_ROOT}/${USER}"
-
-if [[ ! -d "$SCRATCH_ROOT" ]]; then
-  echo "ERROR: Scratch root not found: $SCRATCH_ROOT"
-  exit 1
-fi
-
-mkdir -p "${USER_SCRATCH}"
-
-TMPROOT="${USER_SCRATCH}/cesm_regrid_1deg_tmp"
-TMPDIR="${TMPROOT}/${SCEN}/${VAR}"
+# ==============================================================================
+# Temp directory: use node-local scratch if available, otherwise fall back to home
+# ==============================================================================
+TMPBASE="${SLURM_TMPDIR:-${HOME_OUTROOT}/tmp}"
+TMPDIR="${TMPBASE}/${SCEN}/${VAR}"
 mkdir -p "$TMPDIR"
 
-# ==============================================================================
-# Scratch free-space preflight (scratch is only ~133G total)
-# ==============================================================================
+# Free-space preflight on the filesystem backing TMPBASE
 MIN_FREE_GB=60
-FREE_GB=$(df -BG "$SCRATCH_ROOT" | awk 'NR==2 {gsub("G","",$4); print $4}')
+FREE_GB=$(df -BG "$TMPBASE" | awk 'NR==2 {gsub("G","",$4); print $4}')
 
 if [[ -z "$FREE_GB" ]]; then
-  echo "ERROR: Could not determine free space on: $SCRATCH_ROOT"
+  echo "ERROR: Could not determine free space on: $TMPBASE"
   exit 1
 fi
 
 if [[ "$FREE_GB" -lt "$MIN_FREE_GB" ]]; then
-  echo "ERROR: Low free space on scratch: ${FREE_GB}G free, need at least ${MIN_FREE_GB}G."
-  echo "       Path checked: $SCRATCH_ROOT"
+  echo "ERROR: Low free space where TMP lives: ${FREE_GB}G free, need at least ${MIN_FREE_GB}G."
+  echo "       Path checked: $TMPBASE"
   exit 1
 fi
 
@@ -108,7 +98,7 @@ echo " Input path    : $INPATH"
 echo " Output dir    : $OUTDIR"
 echo " Temp dir      : $TMPDIR"
 echo " CPUs          : ${SLURM_CPUS_PER_TASK:-8}"
-echo " Free scratch  : ${FREE_GB}G (min ${MIN_FREE_GB}G)"
+echo " Free tmp fs   : ${FREE_GB}G (min ${MIN_FREE_GB}G)"
 echo "================================================="
 
 if [[ ! -d "$INPATH" ]]; then
@@ -174,7 +164,7 @@ regrid_one() {
     return 0
   fi
 
-  # Unique tmp per file, on scratch
+  # Unique tmp per file, in TMPDIR
   tmp="${TMPDIR}/.${base}.tmp.nc"
 
   # Clean up tmp if anything fails mid-write

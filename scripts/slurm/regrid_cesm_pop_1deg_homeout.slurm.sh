@@ -171,7 +171,7 @@ regrid_one() {
   trap 'rm -f "$tmp"' RETURN
 
   # -L helps avoid NetCDF4/HDF5 crashes with non-thread-safe libs
-  cdo -L -O -P 1 ${METHOD},${GRID} -selname,${VAR} "$in" "$tmp"
+  /usr/bin/cdo -L -O -P 1 ${METHOD},${GRID} -selname,${VAR} "$in" "$tmp"
 
   # Move final file to home output (cross-FS move = copy+delete, but OK)
   mv "$tmp" "$out"
@@ -221,7 +221,7 @@ if [[ "$SCEN" == "rcp85" ]]; then
 
     [[ -s "$out" ]] && continue
 
-    cdo -L -O -P 1 mergetime "$f1" "${f2[0]}" "$out"
+    /usr/bin/cdo -L -O -P 1 mergetime "$f1" "${f2[0]}" "$out"
     echo "MERGED member ${member}: $out"
   done
 

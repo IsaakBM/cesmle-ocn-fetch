@@ -32,8 +32,8 @@ jid=""
 
 # --- HISTORICAL ---
 #jid=$(submit_dep hist O2   "$jid")
-jid=$(submit_dep hist SALT "$jid")
-#jid=$(submit_dep hist UVEL "$jid")
+#jid=$(submit_dep hist SALT "$jid")
+jid=$(submit_dep hist UVEL "$jid")
 #jid=$(submit_dep hist TEMP "$jid")
 
 # --- RCP85 ---

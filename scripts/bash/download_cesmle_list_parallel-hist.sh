@@ -29,8 +29,10 @@ CPUS="${SLURM_CPUS_PER_TASK:-4}"
 # Experiment tag: historical
 EXPT="B20TRC5CNBDRD"
 
-# members 001–035
-MEMBERS=$(seq -w 001 035)
+# members 001–035 (allow override via --export=ALL,MEMBERS="012 013 ...")
+MEMBERS_DEFAULT=$(seq -w 001 035)
+MEMBERS="${MEMBERS:-$MEMBERS_DEFAULT}"
+
 MEM_RE='(00[1-9]|0[1-2][0-9]|03[0-5])'
 DATE_RE='[0-9-]+'
 

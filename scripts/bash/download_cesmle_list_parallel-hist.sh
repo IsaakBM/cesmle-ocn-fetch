@@ -1,22 +1,28 @@
 #!/usr/bin/env bash
+#SBATCH -p grit_nodes
+#SBATCH --job-name=cesmle_fetch
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4          # <= parallel downloads = 4
+#SBATCH --cpus-per-task=4          # parallel downloads
+#SBATCH --mem=16G                  # mostly curl + manifests, adjust if needed
+#SBATCH -t 1-00:00:00              # adjust if needed
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=ibrito@eri.ucsb.edu
-#SBATCH --output=logs/cesmle_hist_list_par_%j.out
-#SBATCH --error=logs/cesmle_hist_list_par_%j.err
+#SBATCH --output=/home/sandbox-sparc/cesmle-ocn-fetch/logs/cesmle_hist_list_par_%j.out
+#SBATCH --error=/home/sandbox-sparc/cesmle-ocn-fetch/logs/cesmle_hist_list_par_%j.err
+#SBATCH --chdir=/home/sandbox-sparc/cesmle-ocn-fetch
 
 set -euo pipefail
 
 # ------------- CONFIG -------------
-OUTROOT="/home/sandbox-sparc/cesmle-ocn-fetch"
+# NEW: stage raw downloads here (not in the project root)
+OUTROOT="/home/sandbox-sparc/cesmle-ocn-fetch/cesm/downloads"
 
 # Default variables (override at submit time: --export=ALL,VARS="O2 UVEL")
 VARS_DEFAULT=(TEMP SALT O2 UVEL)
 VARS=(${VARS:-${VARS_DEFAULT[@]}})
 
-# NCAR/RDA root (same dataset; just switching experiment tag below)
+# NCAR/RDA root
 BASE_ROOT="https://data-osdf.rda.ucar.edu/ncar/rda/d651027/cesmLE/CESM-CAM5-BGC-LE/ocn/proc/tseries/monthly"
 CPUS="${SLURM_CPUS_PER_TASK:-4}"
 
@@ -31,8 +37,9 @@ DATE_RE='[0-9-]+'
 # Historical fallback spans (CESM-LE monthly, 1920–2005)
 FALLBACK_SPANS=("192001-200512" "192001-198012" "198101-200512")
 
+# Create dirs (logs goes in project root; downloads go under cesm/)
 mkdir -p "$OUTROOT"
-mkdir -p logs
+mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs
 
 # ---------- helpers ----------
 TASKS="$(mktemp)"; : > "$TASKS"
@@ -57,11 +64,7 @@ download_one() {
 
   for try in $(seq 1 "$max_tries"); do
     # resume if partial exists
-    if [[ -f "$tmp" ]]; then
-      curl -fL --retry 0 -C - --connect-timeout 20 --max-time 0 -o "$tmp" "$url" || true
-    else
-      curl -fL --retry 0 -C - --connect-timeout 20 --max-time 0 -o "$tmp" "$url" || true
-    fi
+    curl -fL --retry 0 -C - --connect-timeout 20 --max-time 0 -o "$tmp" "$url" || true
 
     have=""
     [[ -f "$tmp" ]] && have=$(stat -c%s "$tmp" 2>/dev/null || stat -f%z "$tmp")

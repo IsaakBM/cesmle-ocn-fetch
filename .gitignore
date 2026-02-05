@@ -76,3 +76,6 @@ logs/
 # macOS/editor noise
 .DS_Store
 *.swp
+# large data dirs (keep outside git)
+cesm/
+glorys12v1/

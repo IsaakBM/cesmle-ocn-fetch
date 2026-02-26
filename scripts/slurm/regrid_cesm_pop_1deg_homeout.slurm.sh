@@ -62,7 +62,8 @@ INROOT="/home/sandbox-sparc/cesmle-ocn-fetch/cesm"
 INPATH="${INROOT}/${SCEN}/${VAR}"
 
 # Outputs go to home (big filesystem)
-HOME_OUTROOT="/home/sandbox-sparc/z_cesm_test/cesm_regrid_1deg"
+#HOME_OUTROOT="/home/sandbox-sparc/z_cesm_test/cesm_regrid_1deg"
+HOME_OUTROOT="/home/hpc-scratch/ibrito/cesm_regrid_1deg"
 OUTDIR="${HOME_OUTROOT}/${SCEN}/${VAR}"
 PARTS="${OUTDIR}/parts"
 MERGED="${OUTDIR}/merged"

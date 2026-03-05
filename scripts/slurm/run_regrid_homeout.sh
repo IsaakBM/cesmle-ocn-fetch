@@ -37,8 +37,8 @@ jid=""
 #jid=$(submit_dep hist TEMP "$jid")
 
 # --- RCP85 ---
-jid=$(submit_dep rcp85 O2   "$jid")
-#jid=$(submit_dep rcp85 SALT "$jid")
+#jid=$(submit_dep rcp85 O2   "$jid")
+jid=$(submit_dep rcp85 SALT "$jid")
 #jid=$(submit_dep rcp85 UVEL "$jid")
 #jid=$(submit_dep rcp85 TEMP "$jid")
 

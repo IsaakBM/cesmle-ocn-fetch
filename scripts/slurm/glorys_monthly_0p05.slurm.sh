@@ -24,8 +24,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=64G
-#SBATCH -t 2-00:00:00
+#SBATCH --mem=128G
+#SBATCH -t 5-00:00:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=ibrito@eri.ucsb.edu
 #SBATCH --output=/home/sandbox-sparc/cesmle-ocn-fetch/logs/glorys_%j.out

@@ -8,11 +8,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SLURM_SCRIPT="${SCRIPT_DIR}/glorys_monthly_0p05.slurm.sh"
 
 VARS=(
-  thetao
-  so
-  mlotst
+  #thetao
+  #so
+  #mlotst
   uo
-  vo
+  #vo
   zos
   bottomT
 )

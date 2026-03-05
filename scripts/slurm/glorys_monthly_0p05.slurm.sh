@@ -78,17 +78,17 @@ if [[ "$FREE_GB" -lt "$MIN_FREE_GB" ]]; then
 fi
 
 # ==============================================================================
-# Target 0.05° grid (match GLORYS latitude extent: -80..90)
+# Target 0.05° global grid (-180..180, -90..90)
 # ==============================================================================
-GRIDFILE="${OUTROOT}/grid_0p05_glorys_lat80_90.txt"
+GRIDFILE="${OUTROOT}/grid_0p05_global.txt"
 if [[ ! -s "$GRIDFILE" ]]; then
   cat > "$GRIDFILE" << 'EOF'
 gridtype = lonlat
 xsize    = 7200
-ysize    = 3401
+ysize    = 3601
 xfirst   = -180.0
 xinc     = 0.05
-yfirst   = -80.0
+yfirst   = -90.0
 yinc     = 0.05
 EOF
 fi

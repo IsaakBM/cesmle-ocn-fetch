@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # ==============================================================================
-#  GLORYS12v1 monthly baseline builder + regrid to 0.05° (2006–2014)
+#  GLORYS12v1 monthly baseline builder + regrid to 0.05° (single year)
 #
 #  This code was created by Isaac Brito-Morales
 #  (ibrito@conservation.org)
@@ -11,9 +11,10 @@
 #  Use at your own risk. Caveat emptor.
 #
 #  Purpose:
-#    - Build monthly means from daily GLORYS12v1 files (2006–2014)
-#    - Select one variable at a time (VAR)
+#    - Build monthly means from daily GLORYS12v1 files
+#    - Process one variable (VAR) and one year (YEAR) at a time
 #    - Regrid monthly means to a uniform 0.05° lon/lat grid using remapbil
+#    - Run the 12 months of a year in parallel
 #    - Restartable, safe tmp handling
 #
 #  Intended to be run on Slurm-based HPC systems.
@@ -23,7 +24,7 @@
 #SBATCH --job-name=glorys_monmean_0p05
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=12
 #SBATCH --mem=128G
 #SBATCH -t 5-00:00:00
 #SBATCH --mail-type=END,FAIL
@@ -35,13 +36,21 @@
 set -euo pipefail
 
 # ==============================================================================
-# Required env var (passed at sbatch time)
-#   VAR: thetao | so | mlotst | uo | vo | zos | bottomT
+# Required env vars (passed at sbatch time)
+#   VAR : thetao | so | mlotst | uo | vo | zos | bottomT
+#   YEAR: 2006 ... 2014
 # ==============================================================================
 VAR="${VAR:-}"
-if [[ -z "$VAR" ]]; then
-  echo "ERROR: VAR must be set"
-  echo "Example: VAR=thetao sbatch glorys_monthly_0p05.slurm.sh"
+YEAR="${YEAR:-}"
+
+if [[ -z "$VAR" || -z "$YEAR" ]]; then
+  echo "ERROR: VAR and YEAR must be set"
+  echo "Example: VAR=thetao YEAR=2006 sbatch glorys_monthly_0p05.slurm.sh"
+  exit 1
+fi
+
+if ! [[ "$YEAR" =~ ^20(06|07|08|09|10|11|12|13|14)$ ]]; then
+  echo "ERROR: YEAR must be between 2006 and 2014"
   exit 1
 fi
 
@@ -61,16 +70,18 @@ mkdir -p "$LOGDIR"
 # Temp directory
 # ==============================================================================
 TMPBASE="${SLURM_TMPDIR:-${OUTROOT}/tmp}"
-TMPDIR="${TMPBASE}/glorys_${VAR}"
+TMPDIR="${TMPBASE}/glorys_${VAR}_${YEAR}"
 mkdir -p "$TMPDIR"
 
 # Free-space preflight
 MIN_FREE_GB=40
 FREE_GB=$(df -BG "$TMPBASE" | awk 'NR==2 {gsub("G","",$4); print $4}')
+
 if [[ -z "$FREE_GB" ]]; then
   echo "ERROR: Could not determine free space on: $TMPBASE"
   exit 1
 fi
+
 if [[ "$FREE_GB" -lt "$MIN_FREE_GB" ]]; then
   echo "ERROR: Low free space where TMP lives: ${FREE_GB}G free, need at least ${MIN_FREE_GB}G."
   echo "       Path checked: $TMPBASE"
@@ -94,15 +105,17 @@ EOF
 fi
 
 METHOD="remapbil"
+NPROC="${SLURM_CPUS_PER_TASK:-12}"
 
 echo "================================================="
 echo " GLORYS input   : $INROOT"
 echo " Variable       : $VAR"
-echo " Years          : 2006–2014"
+echo " Year           : $YEAR"
 echo " Output dir     : $OUTDIR"
 echo " Temp dir       : $TMPDIR"
 echo " Grid           : $GRIDFILE (0.05°, remapbil)"
-echo " CPUs           : ${SLURM_CPUS_PER_TASK:-4}"
+echo " CPUs           : ${SLURM_CPUS_PER_TASK:-12}"
+echo " Parallel months: $NPROC"
 echo " Free tmp fs    : ${FREE_GB}G (min ${MIN_FREE_GB}G)"
 echo "================================================="
 
@@ -131,8 +144,8 @@ process_month() {
     return 0
   fi
 
-  # Collect daily files (sorted)
   mapfile -t files < <(find "$inpath" -maxdepth 1 -type f -name "*.nc*" | sort)
+
   if [[ "${#files[@]}" -eq 0 ]]; then
     echo "WARN: No files found: $inpath"
     return 0
@@ -143,16 +156,10 @@ process_month() {
   local tmp_mon="${TMPDIR}/.${base}.monmean.nc"
   local tmp_out="${TMPDIR}/.${base}.out.nc"
 
-  # Ensure cleanup on failure
   trap 'rm -f "$tmp_merge" "$tmp_mon" "$tmp_out"' RETURN
 
-  # 1) merge daily files in this month, select VAR to reduce size
   /usr/bin/cdo -L -O -P 1 -selname,"${VAR}" -mergetime "${files[@]}" "$tmp_merge"
-
-  # 2) monthly mean (series is within one month, so output is one timestep)
   /usr/bin/cdo -L -O -P 1 monmean "$tmp_merge" "$tmp_mon"
-
-  # 3) regrid to 0.05°
   /usr/bin/cdo -L -O -P 1 ${METHOD},"${GRIDFILE}" "$tmp_mon" "$tmp_out"
 
   mv "$tmp_out" "$out"
@@ -161,13 +168,13 @@ process_month() {
   echo "DONE: $out"
 }
 
-# ==============================================================================
-# Main loop: 2006–2014, months 01–12
-# ==============================================================================
-for yyyy in $(seq 2006 2014); do
-  for mm in 01 02 03 04 05 06 07 08 09 10 11 12; do
-    process_month "$yyyy" "$mm"
-  done
-done
+export -f process_month
+export INROOT OUTROOT OUTDIR PARTS TMPDIR VAR GRIDFILE METHOD
 
-echo "All done: ${VAR} (2006–2014 monthly means at 0.05°)"
+# ==============================================================================
+# Main loop: one year only, months 01–12 in parallel
+# ==============================================================================
+printf "%s\n" 01 02 03 04 05 06 07 08 09 10 11 12 \
+  | xargs -I{} -P "$NPROC" bash -c 'process_month "$@"' _ "$YEAR" {}
+
+echo "All done: ${VAR} ${YEAR} (monthly means at 0.05°)"

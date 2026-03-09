@@ -24,12 +24,12 @@ YEARS=(
   #2006
   #2007
   #2008
-  2009
+  2009 #fail
   #2010 #done
-  2011
+  #2011 #fail
   #2012 #done
   #2013 #done
-  2014
+  #2014 #fail 
 )
 
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs

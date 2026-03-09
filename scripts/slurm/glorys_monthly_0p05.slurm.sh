@@ -24,8 +24,8 @@
 #SBATCH --job-name=glorys_monmean_0p05
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=6
-#SBATCH --mem=256G
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=512G
 #SBATCH -t 5-00:00:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=ibrito@eri.ucsb.edu
@@ -105,7 +105,7 @@ EOF
 fi
 
 METHOD="remapbil"
-NPROC="${SLURM_CPUS_PER_TASK:-6}"
+NPROC="${SLURM_CPUS_PER_TASK:-4}"
 
 echo "================================================="
 echo " GLORYS input   : $INROOT"
@@ -114,7 +114,7 @@ echo " Year           : $YEAR"
 echo " Output dir     : $OUTDIR"
 echo " Temp dir       : $TMPDIR"
 echo " Grid           : $GRIDFILE (0.05°, remapbil)"
-echo " CPUs           : ${SLURM_CPUS_PER_TASK:-6}"
+echo " CPUs           : ${SLURM_CPUS_PER_TASK:-4}"
 echo " Parallel months: $NPROC"
 echo " Free tmp fs    : ${FREE_GB}G (min ${MIN_FREE_GB}G)"
 echo "================================================="

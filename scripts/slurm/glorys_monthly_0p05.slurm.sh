@@ -15,7 +15,7 @@
 #    - Process one variable (VAR) and one year (YEAR) at a time
 #    - Regrid monthly means to a uniform 0.05° lon/lat grid using remapbil
 #    - Run the 12 months of a year in parallel
-#    - Restartable, safe tmp handling
+#    - Safe tmp handling
 #
 #  Intended to be run on Slurm-based HPC systems.
 # ==============================================================================
@@ -24,8 +24,8 @@
 #SBATCH --job-name=glorys_monmean_0p05
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=12
-#SBATCH --mem=128G
+#SBATCH --cpus-per-task=6
+#SBATCH --mem=256G
 #SBATCH -t 5-00:00:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=ibrito@eri.ucsb.edu
@@ -105,7 +105,7 @@ EOF
 fi
 
 METHOD="remapbil"
-NPROC="${SLURM_CPUS_PER_TASK:-12}"
+NPROC="${SLURM_CPUS_PER_TASK:-6}"
 
 echo "================================================="
 echo " GLORYS input   : $INROOT"
@@ -114,7 +114,7 @@ echo " Year           : $YEAR"
 echo " Output dir     : $OUTDIR"
 echo " Temp dir       : $TMPDIR"
 echo " Grid           : $GRIDFILE (0.05°, remapbil)"
-echo " CPUs           : ${SLURM_CPUS_PER_TASK:-12}"
+echo " CPUs           : ${SLURM_CPUS_PER_TASK:-6}"
 echo " Parallel months: $NPROC"
 echo " Free tmp fs    : ${FREE_GB}G (min ${MIN_FREE_GB}G)"
 echo "================================================="
@@ -133,11 +133,6 @@ process_month() {
 
   local inpath="${INROOT}/${yyyy}/${mm}"
   local out="${PARTS}/glorys12v1_${VAR}_${yyyy}${mm}.monmean.0p05.nc"
-
-  if [[ -s "$out" ]]; then
-    echo "SKIP (exists): $out"
-    return 0
-  fi
 
   if [[ ! -d "$inpath" ]]; then
     echo "WARN: Missing directory: $inpath"
@@ -158,11 +153,13 @@ process_month() {
 
   trap 'rm -f "$tmp_merge" "$tmp_mon" "$tmp_out"' RETURN
 
+  rm -f "$out"
+
   /usr/bin/cdo -L -O -P 1 -selname,"${VAR}" -mergetime "${files[@]}" "$tmp_merge"
   /usr/bin/cdo -L -O -P 1 monmean "$tmp_merge" "$tmp_mon"
   /usr/bin/cdo -L -O -P 1 ${METHOD},"${GRIDFILE}" "$tmp_mon" "$tmp_out"
 
-  mv "$tmp_out" "$out"
+  mv -f "$tmp_out" "$out"
 
   trap - RETURN
   echo "DONE: $out"

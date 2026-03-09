@@ -21,15 +21,15 @@ VARS=(
 )
 
 YEARS=(
-  #2006
-  #2007
-  #2008
-  2009 #fail
-  #2010 #done
-  #2011 #fail
-  #2012 #done
-  #2013 #done
-  #2014 #fail 
+  2006
+  2007
+  2008
+  #2009
+  #2010
+  #2011
+  #2012
+  #2013
+  #2014
 )
 
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs

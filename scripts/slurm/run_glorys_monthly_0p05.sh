@@ -11,8 +11,8 @@ SLURM_SCRIPT="${SCRIPT_DIR}/glorys_monthly_0p05.slurm.sh"
 # Control variables here, one at a time if preferred
 # ------------------------------------------------------------------------------
 VARS=(
-  thetao
-  #so
+  #thetao
+  so
   #mlotst
   #uo
   #vo
@@ -21,9 +21,9 @@ VARS=(
 )
 
 YEARS=(
-  #2006
-  #2007
-  #2008
+  2006
+  2007
+  2008
   2009
   2010
   2011

@@ -14,8 +14,8 @@ VARS=(
   #thetao
   #so
   #mlotst
-  uo
-  #vo
+  #uo
+  vo
   #zos
   #bottomT
 )

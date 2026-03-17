@@ -15,8 +15,8 @@ VARS=(
   #so
   #mlotst
   #uo
-  vo
-  #zos
+  #vo
+  zos
   #bottomT
 )
 

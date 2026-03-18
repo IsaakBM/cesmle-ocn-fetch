@@ -16,8 +16,8 @@ VARS=(
   #mlotst
   #uo
   #vo
-  zos
-  #bottomT
+  #zos
+  bottomT
 )
 
 YEARS=(

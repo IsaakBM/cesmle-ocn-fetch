@@ -17,10 +17,10 @@ SLURM_SCRIPT="${SCRIPT_DIR}/cesm_member_deltas_0p05.slurm.sh"
 # Control variables here, one at a time if preferred
 # ------------------------------------------------------------------------------
 VARS=(
-  O2
-  #SALT
-  #TEMP
-  #UVEL
+  #O2
+  SALT
+  TEMP
+  UVEL
 )
 
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs

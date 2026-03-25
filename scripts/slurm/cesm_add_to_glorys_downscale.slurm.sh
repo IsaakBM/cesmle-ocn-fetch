@@ -182,7 +182,7 @@ process_one_anomaly_file() {
   echo "[STEP2] Adding filled anomaly to GLORYS baseline"
 
   # ✅ FIXED HERE
-  python3 - <<PY
+  ppython3 - <<PY
 import xarray as xr
 
 baseline_file = "${BASELINE_FILE}"
@@ -192,17 +192,48 @@ out_file = "${out_file}"
 ds_base = xr.open_dataset(baseline_file)
 ds_anom = xr.open_dataset(anom_file)
 
-var_base = list(ds_base.data_vars)[0]
-var_anom = list(ds_anom.data_vars)[0]
+# Pick the real baseline variable, ignore bounds-like variables
+base_candidates = [
+    v for v in ds_base.data_vars
+    if "bnds" not in v.lower() and "bounds" not in v.lower()
+]
+if not base_candidates:
+    raise ValueError(f"No valid baseline data variable found in: {list(ds_base.data_vars)}")
+var_base = base_candidates[0]
+
+# Pick the real anomaly variable, ignore bounds-like variables
+anom_candidates = [
+    v for v in ds_anom.data_vars
+    if "bnds" not in v.lower() and "bounds" not in v.lower()
+]
+if not anom_candidates:
+    raise ValueError(f"No valid anomaly data variable found in: {list(ds_anom.data_vars)}")
+
+# Prefer the variable that has a vertical dimension
+zdim_names = ("depth", "depth_below_sea", "lev", "z_t")
+var_anom = None
+for v in anom_candidates:
+    dims_lower = tuple(d.lower() for d in ds_anom[v].dims)
+    if any(z in dims_lower for z in zdim_names):
+        var_anom = v
+        break
+
+if var_anom is None:
+    raise ValueError(
+        f"Could not find anomaly variable with vertical dimension. "
+        f"Candidates: {[(v, ds_anom[v].dims) for v in anom_candidates]}"
+    )
 
 da_base = ds_base[var_base]
 da_anom = ds_anom[var_anom]
 
-zdim_candidates = [d for d in da_anom.dims if d.lower() in ("depth", "depth_below_sea", "lev", "z_t")]
+zdim_candidates = [d for d in da_anom.dims if d.lower() in zdim_names]
 if not zdim_candidates:
     raise ValueError(f"Could not identify vertical dimension in anomaly dims: {da_anom.dims}")
 zdim = zdim_candidates[0]
 
+# Copy anomaly from the first valid CESM-derived layer (index 4, 5th level)
+# upward into the first 4 GLORYS levels
 da_anom_filled = da_anom.copy()
 top_template = da_anom.isel({zdim: 4})
 for i in range(4):

@@ -120,6 +120,11 @@ if [[ ! -d "${ANOM_DIR}" ]]; then
   exit 1
 fi
 
+if ! command -v python >/dev/null 2>&1; then
+  echo "ERROR: python is not available in PATH"
+  exit 1
+fi
+
 echo "============================================================"
 echo "Starting GLORYS + CESM member downscaling"
 echo "CESM VAR      : ${CESM_VAR}"
@@ -145,9 +150,8 @@ process_one_anomaly_file() {
   local anom_file="$1"
   local future_tag="$2"
 
-  local anom_name member_tag out_file tmp_filled tmp_out
+  local anom_name member_tag out_file
   local out_dir
-  local lvl1 lvl2 lvl3 lvl4 lvl5 lvlrest
 
   anom_name="$(basename "${anom_file}")"
 
@@ -165,50 +169,56 @@ process_one_anomaly_file() {
   esac
 
   member_tag="${anom_name%_delta_${future_tag}_minus_${BASE_TAG}_0p05.nc}"
-
   out_file="${out_dir}/${member_tag}_downscaled_${GLORYS_VAR}_${future_tag}.nc"
-  tmp_filled="${TMP_DIR}/${member_tag}_filled_${future_tag}.tmp.nc"
-  tmp_out="${TMP_DIR}/${member_tag}_downscaled_${future_tag}.tmp.nc"
-
-  lvl1="${TMP_DIR}/${member_tag}_lvl1.tmp.nc"
-  lvl2="${TMP_DIR}/${member_tag}_lvl2.tmp.nc"
-  lvl3="${TMP_DIR}/${member_tag}_lvl3.tmp.nc"
-  lvl4="${TMP_DIR}/${member_tag}_lvl4.tmp.nc"
-  lvl5="${TMP_DIR}/${member_tag}_lvl5.tmp.nc"
-  lvlrest="${TMP_DIR}/${member_tag}_lvlrest.tmp.nc"
 
   echo
   echo "[START] ${anom_name}"
 
-  rm -f "${tmp_filled}" "${tmp_out}" "${out_file}"
-  rm -f "${lvl1}" "${lvl2}" "${lvl3}" "${lvl4}" "${lvl5}" "${lvlrest}"
+  rm -f "${out_file}"
 
   echo "[STEP1] Filling top 4 shallow anomaly layers from first valid layer"
-
-  # Extract first valid CESM-derived anomaly layer, which sits at the GLORYS
-  # level near 5.078 m after the prior vertical alignment/remap workflow
-  cdo -L -O sellevidx,5 "${anom_file}" "${lvl5}"
-
-  # Copy that anomaly upward into the first 4 shallower GLORYS levels
-  cdo -L -O setlevel,0.494024992 "${lvl5}" "${lvl1}"
-  cdo -L -O setlevel,1.54137504  "${lvl5}" "${lvl2}"
-  cdo -L -O setlevel,2.64566898  "${lvl5}" "${lvl3}"
-  cdo -L -O setlevel,3.81949496  "${lvl5}" "${lvl4}"
-
-  # Keep the original anomaly field from level 5 downward
-  cdo -L -O sellevidx,5/50 "${anom_file}" "${lvlrest}"
-
-  # Rebuild the full 50-level anomaly field
-  cdo -L -O cat "${lvl1}" "${lvl2}" "${lvl3}" "${lvl4}" "${lvlrest}" "${tmp_filled}"
-
-  rm -f "${lvl1}" "${lvl2}" "${lvl3}" "${lvl4}" "${lvl5}" "${lvlrest}"
-
   echo "[STEP2] Adding filled anomaly to GLORYS baseline"
-  cdo -L -O add "${BASELINE_FILE}" "${tmp_filled}" "${tmp_out}"
-  mv -f "${tmp_out}" "${out_file}"
 
-  echo "[STEP3] Cleaning temp file"
-  rm -f "${tmp_filled}"
+  python - <<PY
+import xarray as xr
+
+baseline_file = "${BASELINE_FILE}"
+anom_file = "${anom_file}"
+out_file = "${out_file}"
+
+ds_base = xr.open_dataset(baseline_file)
+ds_anom = xr.open_dataset(anom_file)
+
+var_base = list(ds_base.data_vars)[0]
+var_anom = list(ds_anom.data_vars)[0]
+
+da_base = ds_base[var_base]
+da_anom = ds_anom[var_anom]
+
+zdim_candidates = [d for d in da_anom.dims if d.lower() in ("depth", "depth_below_sea", "lev", "z_t")]
+if not zdim_candidates:
+    raise ValueError(f"Could not identify vertical dimension in anomaly dims: {da_anom.dims}")
+zdim = zdim_candidates[0]
+
+# Copy anomaly from the first valid CESM-derived layer (index 4, the 5th level,
+# near GLORYS 5.078 m) upward into the first 4 GLORYS levels.
+da_anom_filled = da_anom.copy()
+top_template = da_anom.isel({zdim: 4})
+for i in range(4):
+    da_anom_filled[{zdim: i}] = top_template
+
+da_out = da_base + da_anom_filled
+da_out.name = var_base
+
+ds_out = ds_base.copy()
+ds_out[var_base] = da_out
+
+encoding = {var_base: {"zlib": True, "complevel": 1}}
+ds_out.to_netcdf(out_file, format="NETCDF4", encoding=encoding)
+
+ds_base.close()
+ds_anom.close()
+PY
 
   echo "[DONE ] ${out_file}"
 }

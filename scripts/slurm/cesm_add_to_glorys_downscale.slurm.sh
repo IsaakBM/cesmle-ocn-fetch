@@ -237,6 +237,12 @@ top_template = da_anom.isel({zdim: 4})
 for i in range(4):
     da_anom_filled[{zdim: i}] = top_template
 
+# Force anomaly coordinates to match baseline coordinates on shared dimensions
+for dim in da_base.dims:
+    if dim in da_anom_filled.dims and dim in da_base.coords:
+        da_anom_filled = da_anom_filled.assign_coords({dim: da_base.coords[dim]})
+
+# Add anomaly to baseline
 da_out = da_base + da_anom_filled
 da_out.name = var_base
 

@@ -223,3 +223,51 @@ PY
 
   echo "[DONE ] ${out_file}"
 }
+
+export BASELINE_FILE TMP_DIR OUT_2050_DIR OUT_2090_DIR
+export FUT1_TAG FUT2_TAG BASE_TAG GLORYS_VAR
+export -f process_one_anomaly_file
+
+# ------------------------------------------------------------------------------
+# Process one future window
+# ------------------------------------------------------------------------------
+process_window() {
+  local future_tag="$1"
+  local files=()
+
+  files=( "${ANOM_DIR}"/*"_delta_${future_tag}_minus_${BASE_TAG}_0p05.nc" )
+
+  if [[ ${#files[@]} -eq 0 ]]; then
+    echo "ERROR: No anomaly files found for ${future_tag} in:"
+    echo "  ${ANOM_DIR}"
+    exit 1
+  fi
+
+  echo
+  echo "------------------------------------------------------------"
+  echo "Processing future window: ${future_tag}"
+  echo "Found ${#files[@]} member anomaly files."
+  echo "------------------------------------------------------------"
+
+  local running=0
+  for f in "${files[@]}"; do
+    process_one_anomaly_file "${f}" "${future_tag}" &
+    ((running+=1))
+
+    if (( running >= MAX_JOBS )); then
+      wait -n
+      ((running-=1))
+    fi
+  done
+
+  wait
+}
+
+# ------------------------------------------------------------------------------
+# Main
+# ------------------------------------------------------------------------------
+process_window "${FUT1_TAG}"
+process_window "${FUT2_TAG}"
+
+echo
+echo "All downscaling completed for VAR=${CESM_VAR}"

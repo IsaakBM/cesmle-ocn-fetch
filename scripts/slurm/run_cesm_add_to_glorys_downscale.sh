@@ -18,7 +18,7 @@ SLURM_SCRIPT="${SCRIPT_DIR}/cesm_add_to_glorys_downscale.slurm.sh"
 # ------------------------------------------------------------------------------
 VARS=(
   TEMP
-  SALT
+  #SALT
   #UVEL
 )
 

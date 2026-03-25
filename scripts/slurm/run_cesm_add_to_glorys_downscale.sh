@@ -17,9 +17,9 @@ SLURM_SCRIPT="${SCRIPT_DIR}/cesm_add_to_glorys_downscale.slurm.sh"
 # Control variables here, one at a time if preferred
 # ------------------------------------------------------------------------------
 VARS=(
-  TEMP
-  SALT
-  #UVEL
+  #TEMP
+  #SALT
+  UVEL
 )
 
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs

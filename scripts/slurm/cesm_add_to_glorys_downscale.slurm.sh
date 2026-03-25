@@ -121,7 +121,6 @@ if [[ ! -d "${ANOM_DIR}" ]]; then
   exit 1
 fi
 
-# ✅ FIXED HERE
 if ! command -v python3 >/dev/null 2>&1; then
   echo "ERROR: python3 is not available in PATH"
   exit 1
@@ -181,8 +180,7 @@ process_one_anomaly_file() {
   echo "[STEP1] Filling top 4 shallow anomaly layers from first valid layer"
   echo "[STEP2] Adding filled anomaly to GLORYS baseline"
 
-  # ✅ FIXED HERE
-  ppython3 - <<PY
+  python3 - <<PY
 import xarray as xr
 
 baseline_file = "${BASELINE_FILE}"
@@ -256,7 +254,7 @@ PY
 }
 
 export BASELINE_FILE TMP_DIR OUT_2050_DIR OUT_2090_DIR
-export FUT1_TAG FUT2_TAG BASE_TAG GLORYS_VAR
+export FUT1_TAG FUT2_TAG BASE_TAG GLORYS_VAR ANOM_DIR MAX_JOBS
 export -f process_one_anomaly_file
 
 # ------------------------------------------------------------------------------

@@ -18,6 +18,7 @@
 #SBATCH --chdir=/home/sandbox-sparc/cesmle-ocn-fetch
 
 set -euo pipefail
+export OMP_NUM_THREADS=1
 shopt -s nullglob
 
 # ==============================================================================

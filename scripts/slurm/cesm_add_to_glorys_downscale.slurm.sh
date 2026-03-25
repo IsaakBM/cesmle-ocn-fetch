@@ -8,8 +8,8 @@
 #SBATCH --job-name=cesm_add
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=5
-#SBATCH --mem=512G
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=256G
 #SBATCH -t 5-00:00:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=ibrito@ucsb.edu
@@ -57,7 +57,7 @@ shopt -s nullglob
 # ------------------------------------------------------------------------------
 # Config
 # ------------------------------------------------------------------------------
-MAX_JOBS=5
+MAX_JOBS=2
 
 SB5_ROOT="/home/SB5"
 RCP85_ROOT="${SB5_ROOT}/rcp85"

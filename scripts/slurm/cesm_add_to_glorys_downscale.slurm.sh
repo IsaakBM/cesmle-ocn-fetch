@@ -120,8 +120,9 @@ if [[ ! -d "${ANOM_DIR}" ]]; then
   exit 1
 fi
 
-if ! command -v python >/dev/null 2>&1; then
-  echo "ERROR: python is not available in PATH"
+# ✅ FIXED HERE
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "ERROR: python3 is not available in PATH"
   exit 1
 fi
 
@@ -179,7 +180,8 @@ process_one_anomaly_file() {
   echo "[STEP1] Filling top 4 shallow anomaly layers from first valid layer"
   echo "[STEP2] Adding filled anomaly to GLORYS baseline"
 
-  python - <<PY
+  # ✅ FIXED HERE
+  python3 - <<PY
 import xarray as xr
 
 baseline_file = "${BASELINE_FILE}"
@@ -200,8 +202,6 @@ if not zdim_candidates:
     raise ValueError(f"Could not identify vertical dimension in anomaly dims: {da_anom.dims}")
 zdim = zdim_candidates[0]
 
-# Copy anomaly from the first valid CESM-derived layer (index 4, the 5th level,
-# near GLORYS 5.078 m) upward into the first 4 GLORYS levels.
 da_anom_filled = da_anom.copy()
 top_template = da_anom.isel({zdim: 4})
 for i in range(4):
@@ -222,51 +222,3 @@ PY
 
   echo "[DONE ] ${out_file}"
 }
-
-export BASELINE_FILE TMP_DIR OUT_2050_DIR OUT_2090_DIR
-export FUT1_TAG FUT2_TAG BASE_TAG GLORYS_VAR
-export -f process_one_anomaly_file
-
-# ------------------------------------------------------------------------------
-# Process one future window
-# ------------------------------------------------------------------------------
-process_window() {
-  local future_tag="$1"
-  local files=()
-
-  files=( "${ANOM_DIR}"/*"_delta_${future_tag}_minus_${BASE_TAG}_0p05.nc" )
-
-  if [[ ${#files[@]} -eq 0 ]]; then
-    echo "ERROR: No anomaly files found for ${future_tag} in:"
-    echo "  ${ANOM_DIR}"
-    exit 1
-  fi
-
-  echo
-  echo "------------------------------------------------------------"
-  echo "Processing future window: ${future_tag}"
-  echo "Found ${#files[@]} member anomaly files."
-  echo "------------------------------------------------------------"
-
-  local running=0
-  for f in "${files[@]}"; do
-    process_one_anomaly_file "${f}" "${future_tag}" &
-    ((running+=1))
-
-    if (( running >= MAX_JOBS )); then
-      wait -n
-      ((running-=1))
-    fi
-  done
-
-  wait
-}
-
-# ------------------------------------------------------------------------------
-# Main
-# ------------------------------------------------------------------------------
-process_window "${FUT1_TAG}"
-process_window "${FUT2_TAG}"
-
-echo
-echo "All downscaling completed for VAR=${CESM_VAR}"

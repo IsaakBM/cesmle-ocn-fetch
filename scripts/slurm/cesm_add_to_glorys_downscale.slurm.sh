@@ -147,6 +147,7 @@ process_one_anomaly_file() {
 
   local anom_name member_tag out_file tmp_filled tmp_out
   local out_dir
+  local lvl1 lvl2 lvl3 lvl4 lvl5 lvlrest
 
   anom_name="$(basename "${anom_file}")"
 
@@ -169,13 +170,38 @@ process_one_anomaly_file() {
   tmp_filled="${TMP_DIR}/${member_tag}_filled_${future_tag}.tmp.nc"
   tmp_out="${TMP_DIR}/${member_tag}_downscaled_${future_tag}.tmp.nc"
 
+  lvl1="${TMP_DIR}/${member_tag}_lvl1.tmp.nc"
+  lvl2="${TMP_DIR}/${member_tag}_lvl2.tmp.nc"
+  lvl3="${TMP_DIR}/${member_tag}_lvl3.tmp.nc"
+  lvl4="${TMP_DIR}/${member_tag}_lvl4.tmp.nc"
+  lvl5="${TMP_DIR}/${member_tag}_lvl5.tmp.nc"
+  lvlrest="${TMP_DIR}/${member_tag}_lvlrest.tmp.nc"
+
   echo
   echo "[START] ${anom_name}"
 
   rm -f "${tmp_filled}" "${tmp_out}" "${out_file}"
+  rm -f "${lvl1}" "${lvl2}" "${lvl3}" "${lvl4}" "${lvl5}" "${lvlrest}"
 
   echo "[STEP1] Filling top 4 shallow anomaly layers from first valid layer"
-  cdo -L -O expr,'if (isMissval(var1)) var1=var1(5)' "${anom_file}" "${tmp_filled}"
+
+  # Extract first valid CESM-derived anomaly layer, which sits at the GLORYS
+  # level near 5.078 m after the prior vertical alignment/remap workflow
+  cdo -L -O sellevidx,5 "${anom_file}" "${lvl5}"
+
+  # Copy that anomaly upward into the first 4 shallower GLORYS levels
+  cdo -L -O setlevel,0.494024992 "${lvl5}" "${lvl1}"
+  cdo -L -O setlevel,1.54137504  "${lvl5}" "${lvl2}"
+  cdo -L -O setlevel,2.64566898  "${lvl5}" "${lvl3}"
+  cdo -L -O setlevel,3.81949496  "${lvl5}" "${lvl4}"
+
+  # Keep the original anomaly field from level 5 downward
+  cdo -L -O sellevidx,5/50 "${anom_file}" "${lvlrest}"
+
+  # Rebuild the full 50-level anomaly field
+  cdo -L -O cat "${lvl1}" "${lvl2}" "${lvl3}" "${lvl4}" "${lvlrest}" "${tmp_filled}"
+
+  rm -f "${lvl1}" "${lvl2}" "${lvl3}" "${lvl4}" "${lvl5}" "${lvlrest}"
 
   echo "[STEP2] Adding filled anomaly to GLORYS baseline"
   cdo -L -O add "${BASELINE_FILE}" "${tmp_filled}" "${tmp_out}"

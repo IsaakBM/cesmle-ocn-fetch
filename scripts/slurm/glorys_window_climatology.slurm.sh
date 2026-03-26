@@ -10,7 +10,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=128G
-#SBATCH -t 3-00:00:00
+#SBATCH -t 7-00:00:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=ibrito@ucsb.edu
 #SBATCH --output=/home/sandbox-sparc/cesmle-ocn-fetch/logs/glorys_clim_%j.out
@@ -131,16 +131,13 @@ TMP_OUT="${TMP_DIR}/glorys12v1_${VAR}_clim_2006-2014.tmp.nc"
 echo "[STEP1] Removing old output if present"
 rm -f "${OUTFILE}" "${TMP_MERGED}" "${TMP_OUT}"
 
-echo "[STEP2] Merging monthly files"
-cdo -L -O mergetime "${VALID_FILES[@]}" "${TMP_MERGED}"
+echo "[STEP2] Computing climatological mean directly from monthly files"
+cdo -L -O timmean -mergetime "${VALID_FILES[@]}" "${TMP_OUT}"
 
-echo "[STEP3] Computing climatological mean over all monthly values"
-cdo -L -O timmean "${TMP_MERGED}" "${TMP_OUT}"
-
-echo "[STEP4] Writing final output"
+echo "[STEP3] Writing final output"
 mv -f "${TMP_OUT}" "${OUTFILE}"
 
-echo "[STEP5] Cleaning temp files"
+echo "[STEP4] Cleaning temp files"
 rm -f "${TMP_MERGED}"
 
 echo "[DONE ] ${OUTFILE}"

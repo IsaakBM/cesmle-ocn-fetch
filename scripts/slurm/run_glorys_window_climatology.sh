@@ -17,13 +17,13 @@ SLURM_SCRIPT="${SCRIPT_DIR}/glorys_window_climatology.slurm.sh"
 # Control variables here, one at a time if preferred
 # ------------------------------------------------------------------------------
 VARS=(
-  bottomT
-  mlotst
-  so
+  #bottomT
+  #mlotst
+  #so
   #thetao
   uo
-  vo
-  zos
+  #vo
+  #zos
 )
 
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs

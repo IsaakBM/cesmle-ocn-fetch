@@ -44,8 +44,8 @@ shopt -s nullglob
 
 SCRIPT_NAME="$(basename "$0")"
 DEFAULT_PATTERN="wget_script_*.sh"
-DEFAULT_OUTDIR="/home/sandbox-sparc/cesmle-ocn-fetch/esgf_downloads"
-DEFAULT_MANIFEST="/home/sandbox-sparc/cesmle-ocn-fetch/logs/esgf_manifest.csv"
+DEFAULT_OUTDIR="/home/sandbox-sparc/cesmle-ocn-fetch/data/downloads"
+DEFAULT_MANIFEST="/home/sandbox-sparc/cesmle-ocn-fetch/data/manifests/ipcc_esgf_manifest.csv"
 
 PATTERN="${PATTERN:-$DEFAULT_PATTERN}"
 OUTDIR="${OUTDIR:-$DEFAULT_OUTDIR}"
@@ -74,8 +74,8 @@ Options:
 
 Examples:
   ${SCRIPT_NAME} wget_script_2026-4-10_13-31-39.sh
-  ${SCRIPT_NAME} --manifest /path/to/manifest.csv /path/to/wget_scripts/
-  ${SCRIPT_NAME} --download --jobs 2 --outdir /home/SB5/ipcc /path/to/wget_scripts/
+  ${SCRIPT_NAME} --manifest /path/to/manifest.csv /path/to/ipcc_esgf_wget_scripts/
+  ${SCRIPT_NAME} --download --jobs 2 --outdir /home/SB5/ipcc /path/to/ipcc_esgf_wget_scripts/
 EOF
 }
 

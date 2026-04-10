@@ -62,9 +62,7 @@ __pycache__/
 .env
 config/*.env
 
-# never commit data (even if someone points OUTROOT into repo)
-data/
-**/data/
+# never commit large data files
 **/*.nc
 **/*.part
 

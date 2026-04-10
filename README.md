@@ -31,6 +31,10 @@ The core scientific idea implemented here is:
 
 ```text
 cesmle-ocn-fetch/
+├── data/                           # Tracked lightweight data layout for fetch workflows
+│   ├── ipcc_esgf_wget/             # ESGF/IPCC-generated wget shell scripts
+│   ├── manifests/                  # Parsed CSV manifests from wget scripts
+│   └── downloads/                  # Download destination for fetched files
 ├── docs/                           # Reference files used during setup/planning
 │   ├── CMIP6_MIP_tables.xlsx       # Variable/table reference workbook
 │   └── aws-cesm1-le.csv            # CESM-related reference table

@@ -27,33 +27,6 @@ The core scientific idea implemented here is:
 
 - `Downscaled field = GLORYS baseline climatology + CESM future anomaly`
 
-## Suggested Project Name
-
-If you want a clearer, more descriptive title than `cesmle-ocn-fetch`, I would
-recommend one of these:
-
-- `cesmle-glorys-downscaling`
-- `cesm-ocean-downscaling-pipeline`
-- `cesmle-ocean-climate-downscaling`
-
-My strongest recommendation is:
-
-`cesmle-glorys-downscaling`
-
-That name reflects what the repository actually does now, which is broader than
-"fetching".
-
-## What To Call The Structure In Your Screenshot
-
-What you showed is usually called one of these:
-
-- `project structure`
-- `directory tree`
-- `repository tree`
-- `folder tree`
-
-For a README section title, `Project Structure` is the most standard choice.
-
 ## Project Structure
 
 ```text
@@ -466,12 +439,3 @@ artifacts. The `.gitignore` excludes, among other things:
 
 That is why the working repository can appear almost empty even though the full
 pipeline is active on the cluster.
-
-## Recommended Next Documentation Improvements
-
-If you want, the next useful documentation additions would be:
-
-1. a short "quick start on cluster" section with exact `sbatch` examples;
-2. a "path migration checklist" for moving the workflow to a new HPC system;
-3. a table mapping each script to its input and output directories; and
-4. a simple workflow diagram in Mermaid.

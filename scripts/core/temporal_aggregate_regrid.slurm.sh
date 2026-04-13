@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # ==============================================================================
-#  Generic temporal aggregation + regridder (single year)
+#  Generic temporal aggregation + regridder
 #
 #  This code was created by Isaac Brito-Morales
 #  (ibrito@conservation.org)
@@ -13,9 +13,10 @@
 #  Purpose:
 #    - Build monthly means from daily files organized as YEAR/MONTH
 #    - Or skip temporal aggregation when inputs are already monthly
-#    - Process one variable (VAR) and one year (YEAR) at a time
-#    - Regrid monthly means to a target lon/lat grid using a chosen CDO method
-#    - Run the 12 months of a year in parallel
+#    - Or regrid one-or-more monthly time-series files directly
+#    - Process one variable (VAR) using either YEAR/MONTH or time-series input
+#    - Regrid outputs to a target lon/lat grid using a chosen CDO method
+#    - Run monthly or file-level work in parallel
 #    - Handle temp files safely
 #
 #  Intended to be run on Slurm-based HPC systems.
@@ -40,18 +41,20 @@ set -euo pipefail
 # Required env vars (passed at sbatch time)
 #   DATASET_LABEL : short dataset label for logs/messages
 #   VAR           : variable to process
-#   YEAR          : year to process
-#   INROOT        : input root with YEAR/MONTH subdirectories
+#   INROOT        : input root
 #   OUTROOT       : output root
 #   GRIDFILE      : CDO target grid file
 #
 # Optional env vars
-#   FILE_GLOB     : input file glob inside each month directory (default: *.nc*)
+#   INPUT_LAYOUT  : year_month | timeseries (default: year_month)
+#   YEAR          : year to process when INPUT_LAYOUT=year_month
+#   FILE_GLOB     : input file glob (default: *.nc*)
 #   METHOD        : CDO remapping method (default: remapbil)
 #   PARTS_SUBDIR  : output subdir under OUTROOT/VAR (default: parts)
 #   TMP_SUBDIR    : temp subdir under OUTROOT/VAR (default: tmp)
 #   MIN_FREE_GB   : minimum free space where TMP lives (default: 40)
 #   INPUT_TIMESTEP: daily | monthly | auto (default: auto)
+#                   used only for INPUT_LAYOUT=year_month
 # ==============================================================================
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"
@@ -60,6 +63,7 @@ INROOT="${INROOT:-}"
 OUTROOT="${OUTROOT:-}"
 GRIDFILE="${GRIDFILE:-}"
 
+INPUT_LAYOUT="${INPUT_LAYOUT:-year_month}"
 FILE_GLOB="${FILE_GLOB:-*.nc*}"
 METHOD="${METHOD:-remapbil}"
 PARTS_SUBDIR="${PARTS_SUBDIR:-parts}"
@@ -67,15 +71,25 @@ TMP_SUBDIR="${TMP_SUBDIR:-tmp}"
 MIN_FREE_GB="${MIN_FREE_GB:-40}"
 INPUT_TIMESTEP="${INPUT_TIMESTEP:-auto}"
 
-if [[ -z "$VAR" || -z "$YEAR" || -z "$INROOT" || -z "$OUTROOT" || -z "$GRIDFILE" ]]; then
+if [[ -z "$VAR" || -z "$INROOT" || -z "$OUTROOT" || -z "$GRIDFILE" ]]; then
   echo "ERROR: Missing required environment variables."
-  echo "Required: VAR, YEAR, INROOT, OUTROOT, GRIDFILE"
-  echo "Optional: DATASET_LABEL, FILE_GLOB, METHOD, PARTS_SUBDIR, TMP_SUBDIR, MIN_FREE_GB"
+  echo "Required: VAR, INROOT, OUTROOT, GRIDFILE"
+  echo "Optional: DATASET_LABEL, INPUT_LAYOUT, YEAR, FILE_GLOB, METHOD, PARTS_SUBDIR, TMP_SUBDIR, MIN_FREE_GB, INPUT_TIMESTEP"
+  exit 1
+fi
+
+if [[ "$INPUT_LAYOUT" != "year_month" && "$INPUT_LAYOUT" != "timeseries" ]]; then
+  echo "ERROR: INPUT_LAYOUT must be one of: year_month, timeseries"
   exit 1
 fi
 
 if [[ "$INPUT_TIMESTEP" != "daily" && "$INPUT_TIMESTEP" != "monthly" && "$INPUT_TIMESTEP" != "auto" ]]; then
   echo "ERROR: INPUT_TIMESTEP must be one of: daily, monthly, auto"
+  exit 1
+fi
+
+if [[ "$INPUT_LAYOUT" == "year_month" && -z "$YEAR" ]]; then
+  echo "ERROR: YEAR must be set when INPUT_LAYOUT=year_month"
   exit 1
 fi
 
@@ -103,7 +117,8 @@ mkdir -p "$LOGDIR"
 # Temp directory
 # ==============================================================================
 TMPBASE="${SLURM_TMPDIR:-${OUTROOT}/tmp}"
-TMPDIR="${TMPBASE}/${DATASET_LABEL}_${VAR}_${YEAR}_${TMP_SUBDIR}"
+TMP_TAG="${YEAR:-all}"
+TMPDIR="${TMPBASE}/${DATASET_LABEL}_${VAR}_${TMP_TAG}_${TMP_SUBDIR}"
 mkdir -p "$TMPDIR"
 
 # Free-space preflight
@@ -125,8 +140,11 @@ NPROC="${SLURM_CPUS_PER_TASK:-4}"
 echo "================================================="
 echo " DATASET        : $DATASET_LABEL"
 echo " Input root     : $INROOT"
+echo " Input layout   : $INPUT_LAYOUT"
 echo " Variable       : $VAR"
-echo " Year           : $YEAR"
+if [[ -n "$YEAR" ]]; then
+  echo " Year           : $YEAR"
+fi
 echo " File glob      : $FILE_GLOB"
 echo " Output dir     : $OUTDIR"
 echo " Parts dir      : $PARTS"
@@ -140,7 +158,7 @@ echo " Free tmp fs    : ${FREE_GB}G (min ${MIN_FREE_GB}G)"
 echo "================================================="
 
 # ==============================================================================
-# Build one month
+# Build one month from YEAR/MONTH input
 # ==============================================================================
 process_month() {
   local yyyy="$1"
@@ -199,13 +217,54 @@ process_month() {
   echo "DONE: $out"
 }
 
-export -f process_month
+# ==============================================================================
+# Regrid one time-series file directly
+# ==============================================================================
+process_timeseries_file() {
+  local in="$1"
+  local base stem out tmp
+
+  base="$(basename "$in")"
+  stem="${base%.nc}"
+  out="${PARTS}/${stem}.$(basename "$GRIDFILE" .txt).nc"
+  tmp="${TMPDIR}/.${stem}.out.nc"
+
+  trap 'rm -f "$tmp"' RETURN
+
+  if [[ ! -f "$in" ]]; then
+    echo "WARN: Missing file: $in"
+    return 0
+  fi
+
+  rm -f "$out"
+
+  echo "INFO: Regridding monthly time-series file: $base"
+  /usr/bin/cdo -L -O -P 1 ${METHOD},"${GRIDFILE}" -selname,"${VAR}" "$in" "$tmp"
+  mv -f "$tmp" "$out"
+
+  trap - RETURN
+  echo "DONE: $out"
+}
+
+export -f process_month process_timeseries_file
 export DATASET_LABEL INROOT OUTROOT OUTDIR PARTS TMPDIR VAR GRIDFILE METHOD FILE_GLOB INPUT_TIMESTEP
 
 # ==============================================================================
-# Main loop: one year only, months 01-12 in parallel
+# Main
 # ==============================================================================
-printf "%s\n" 01 02 03 04 05 06 07 08 09 10 11 12 \
-  | xargs -I{} -P "$NPROC" bash -c 'process_month "$@"' _ "$YEAR" {}
+if [[ "$INPUT_LAYOUT" == "year_month" ]]; then
+  printf "%s\n" 01 02 03 04 05 06 07 08 09 10 11 12 \
+    | xargs -I{} -P "$NPROC" bash -c 'process_month "$@"' _ "$YEAR" {}
+else
+  mapfile -t TS_FILES < <(find "$INROOT" -maxdepth 1 -type f -name "$FILE_GLOB" | sort)
+
+  if [[ "${#TS_FILES[@]}" -eq 0 ]]; then
+    echo "ERROR: No matching time-series files found in: $INROOT"
+    exit 1
+  fi
+
+  printf "%s\n" "${TS_FILES[@]}" \
+    | xargs -I{} -P "$NPROC" bash -c 'process_timeseries_file "$@"' _ {}
+fi
 
 echo "All done: ${DATASET_LABEL} ${VAR} ${YEAR} (temporal aggregation + regrid)"

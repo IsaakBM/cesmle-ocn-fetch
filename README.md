@@ -42,20 +42,30 @@ cesmle-ocn-fetch/
 │   └── *.nc                        # Example downscaled/anomaly/climatology NetCDF files
 ├── logs/                           # Slurm stdout/stderr targets (ignored by git)
 ├── scripts/                        # Main automation layer for the pipeline
-│   ├── bash/                       # Older/manual download and fetch scripts
+│   ├── bash/                       # Download, fetch, and utility shell scripts
 │   │   ├── download_cesmle*.sh     # CESM-LE download helpers
 │   │   ├── download_GLORYS_parallel.sh
+│   │   ├── process_esgf_wget_scripts.sh
 │   │   ├── bgc_monthly_download.slurm.sh
 │   │   └── z_cesm1_temp.sh
-│   └── slurm/                      # Main HPC production workflow scripts
-│       ├── regrid_cesm_pop_1deg*.sh
-│       ├── cesm_vertical_regrid.slurm.sh
-│       ├── glorys_monthly_0p05.slurm.sh
-│       ├── glorys_window_climatology.slurm.sh
-│       ├── cesm_window_climatologies.slurm.sh
-│       ├── cesm_member_deltas_0p05.slurm.sh
-│       ├── cesm_add_to_glorys_downscale.slurm.sh
-│       └── run_*.sh                # Submission wrappers for selected variables/jobs
+│   ├── core/                       # New reusable processing workers
+│   │   └── temporal_aggregate_regrid.slurm.sh
+│   ├── runners/                    # New dataset-specific job submitters
+│   │   ├── global_ocean_biogeochemistry_hindcast/
+│   │   │   └── run_temporal_aggregate_regrid.sh
+│   │   ├── cesm/
+│   │   ├── glorys/
+│   │   └── other_model/
+│   ├── slurm/                      # Existing production workflow scripts
+│   │   ├── regrid_cesm_pop_1deg*.sh
+│   │   ├── cesm_vertical_regrid.slurm.sh
+│   │   ├── glorys_monthly_0p05.slurm.sh
+│   │   ├── glorys_window_climatology.slurm.sh
+│   │   ├── cesm_window_climatologies.slurm.sh
+│   │   ├── cesm_member_deltas_0p05.slurm.sh
+│   │   ├── cesm_add_to_glorys_downscale.slurm.sh
+│   │   └── run_*.sh                # Submission wrappers for selected variables/jobs
+│   └── legacy/                     # Reserved for older scripts as they are migrated
 ├── .gitignore                      # Protects large data, NetCDFs, logs, and temp files
 ├── LICENSE
 └── README.md                       # Project documentation
@@ -161,8 +171,11 @@ GLORYS download script:
 - writes monthly manifests.
 
 These scripts are useful for data staging, but the current production
-downscaling flow is driven primarily by the Slurm scripts in
-[scripts/slurm](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm).
+downscaling flow is driven primarily by the scripts in
+[scripts/slurm](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm), while
+new reusable utilities are beginning to be added under
+[scripts/core](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core) and
+[scripts/runners](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners).
 
 ## 2. CESM horizontal regridding to 1 degree
 
@@ -329,7 +342,35 @@ match this final stage and are useful as reference artifacts.
 
 ## Main Scripts By Role
 
-### Production workflow scripts
+### New generalized script structure
+
+The repository is in transition toward a more reusable script layout:
+
+- [scripts/core](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core)
+  contains reusable worker scripts that perform one core operation.
+- [scripts/runners](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners)
+  contains dataset-specific submitters that configure variables, paths, and
+  years, then submit jobs to the core workers.
+- [scripts/slurm](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm)
+  still contains the older production workflow scripts and runners that remain
+  in active use.
+- [scripts/legacy](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/legacy)
+  is reserved for older scripts that may be moved out of the active path later.
+
+Current example in the new structure:
+
+- generic worker:
+  [temporal_aggregate_regrid.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/temporal_aggregate_regrid.slurm.sh)
+- dataset-specific runner:
+  [run_temporal_aggregate_regrid.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/global_ocean_biogeochemistry_hindcast/run_temporal_aggregate_regrid.sh)
+
+The generic temporal aggregation worker supports:
+
+- daily inputs that need monthly averaging before regridding;
+- monthly inputs that should skip temporal aggregation and only be regridded; and
+- auto-detection of those cases based on the number of files in each month.
+
+### Existing production workflow scripts
 
 Located in [scripts/slurm](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm):
 
@@ -358,7 +399,7 @@ Also in [scripts/slurm](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm):
 These are convenience scripts for selecting variables and submitting one or
 more jobs with `sbatch`.
 
-### Older acquisition/staging scripts
+### Download and utility scripts
 
 Located in [scripts/bash](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/bash):
 
@@ -369,6 +410,7 @@ Located in [scripts/bash](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/bash):
 - `download_cesmle_list_and_get.sh`
 - `download_GLORYS_parallel.sh`
 - `bgc_monthly_download.slurm.sh`
+- `process_esgf_wget_scripts.sh`
 
 These are useful references for data acquisition history and staging logic, but
 the main end-to-end downscaling logic lives under `scripts/slurm/`.

@@ -19,6 +19,8 @@ set -euo pipefail
 #   - No temporal aggregation is performed here.
 #   - The runner only harmonizes/regrids the monthly files to a common 1 x 1
 #     degree lon/lat grid.
+#   - Expected input layout:
+#       /home/SB5/ipcc_esgf_downloads/<scenario>/<variable>/*.nc
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -69,16 +71,22 @@ fi
 
 echo "Submitting IPCC/ESGF monthly regrid jobs with generic worker:"
 for scen in "${SCENARIOS[@]}"; do
-  INROOT="${INROOT_BASE}/${scen}"
   OUTROOT="${OUTROOT_BASE}/${scen}"
 
-  if [[ ! -d "$INROOT" ]]; then
-    echo "WARN: Scenario directory not found, skipping: $INROOT"
+  if [[ ! -d "${INROOT_BASE}/${scen}" ]]; then
+    echo "WARN: Scenario directory not found, skipping: ${INROOT_BASE}/${scen}"
     continue
   fi
 
   echo "Scenario: $scen"
   for v in "${VARS[@]}"; do
+    INROOT="${INROOT_BASE}/${scen}/${v}"
+
+    if [[ ! -d "$INROOT" ]]; then
+      echo "  WARN: Variable directory not found, skipping: $INROOT"
+      continue
+    fi
+
     jid=$(DATASET_LABEL="${DATASET_LABEL}_${scen}" \
       VAR="$v" \
       INROOT="$INROOT" \
@@ -87,7 +95,7 @@ for scen in "${SCENARIOS[@]}"; do
       INPUT_LAYOUT="$INPUT_LAYOUT" \
       INPUT_TIMESTEP="$INPUT_TIMESTEP" \
       METHOD="$METHOD" \
-      FILE_GLOB="*${v}*.nc" \
+      FILE_GLOB="*.nc" \
       PARTS_SUBDIR="$PARTS_SUBDIR" \
       TMP_SUBDIR="$TMP_SUBDIR" \
       MIN_FREE_GB="$MIN_FREE_GB" \

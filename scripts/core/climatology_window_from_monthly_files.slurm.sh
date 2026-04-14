@@ -46,8 +46,8 @@ shopt -s nullglob
 # Optional env vars
 #   TMP_DIR         : temp directory (default: <OUT_DIR>/tmp_clim)
 #   FILE_GLOB       : input file glob (default: *.nc)
-#   DATE_REGEX      : sed regex that extracts YYYYMM from filename
-#                     default: s/.*_\([0-9]\{6\}\)\..*/\1/p
+#   DATE_PATTERN    : grep -E pattern that extracts YYYYMM from filename
+#                     default: [0-9]{6}
 #   WINDOW_START    : start YYYYMM (default: 200601)
 #   WINDOW_END      : end YYYYMM (default: 201412)
 #   EXPECTED_N      : expected number of monthly files (default: 108)
@@ -60,7 +60,7 @@ OUT_DIR="${OUT_DIR:-}"
 
 TMP_DIR="${TMP_DIR:-}"
 FILE_GLOB="${FILE_GLOB:-*.nc}"
-DATE_REGEX="${DATE_REGEX:-s/.*_\([0-9]\{6\}\)\..*/\1/p}"
+DATE_PATTERN="${DATE_PATTERN:-[0-9]{6}}"
 WINDOW_START="${WINDOW_START:-200601}"
 WINDOW_END="${WINDOW_END:-201412}"
 EXPECTED_N="${EXPECTED_N:-108}"
@@ -69,7 +69,7 @@ OUT_PREFIX="${OUT_PREFIX:-}"
 if [[ -z "$VAR" || -z "$IN_DIR" || -z "$OUT_DIR" ]]; then
   echo "ERROR: Missing required environment variables."
   echo "Required: VAR, IN_DIR, OUT_DIR"
-  echo "Optional: DATASET_LABEL, TMP_DIR, FILE_GLOB, DATE_REGEX, WINDOW_START, WINDOW_END, EXPECTED_N, OUT_PREFIX"
+  echo "Optional: DATASET_LABEL, TMP_DIR, FILE_GLOB, DATE_PATTERN, WINDOW_START, WINDOW_END, EXPECTED_N, OUT_PREFIX"
   exit 1
 fi
 
@@ -101,6 +101,7 @@ echo "INPUT DIR   : ${IN_DIR}"
 echo "OUT DIR     : ${OUT_DIR}"
 echo "TMP DIR     : ${TMP_DIR}"
 echo "FILE GLOB   : ${FILE_GLOB}"
+echo "DATE PATTERN: ${DATE_PATTERN}"
 echo "WINDOW      : ${WINDOW_START} to ${WINDOW_END}"
 echo "OUT PREFIX  : ${OUT_PREFIX}"
 echo "============================================================"
@@ -115,7 +116,7 @@ for f in "${FILES[@]}"; do
   [[ -f "$f" ]] || continue
 
   bn="$(basename "$f")"
-  yyyymm="$(echo "$bn" | sed -n "${DATE_REGEX}")"
+  yyyymm="$(printf "%s\n" "$bn" | grep -oE "${DATE_PATTERN}" | head -n 1 || true)"
 
   if [[ -z "${yyyymm}" ]]; then
     continue

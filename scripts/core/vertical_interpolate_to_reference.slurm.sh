@@ -60,6 +60,7 @@ shopt -s nullglob
 #                        (default: auto from SOURCE_UNITS_IN/OUT)
 #   OUT_SUFFIX         : output suffix before .nc (default: on_reference)
 #   MAX_JOBS           : max parallel files (default: 5)
+#   OVERWRITE_OUTPUTS  : yes | no (default: yes)
 # ==============================================================================
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 IN_DIR="${IN_DIR:-}"
@@ -77,6 +78,7 @@ SOURCE_UNITS_OUT="${SOURCE_UNITS_OUT:-m}"
 SOURCE_SCALE="${SOURCE_SCALE:-}"
 OUT_SUFFIX="${OUT_SUFFIX:-on_reference}"
 MAX_JOBS="${MAX_JOBS:-5}"
+OVERWRITE_OUTPUTS="${OVERWRITE_OUTPUTS:-yes}"
 
 if [[ -z "$IN_DIR" || -z "$OUT_DIR" || -z "$TARGET_REF_FILE" ]]; then
   echo "ERROR: Missing required environment variables."
@@ -147,6 +149,7 @@ echo "SOURCE SCALE     : ${SOURCE_SCALE}"
 echo "FILE GLOB        : ${FILE_GLOB}"
 echo "OUT SUFFIX       : ${OUT_SUFFIX}"
 echo "MAX JOBS         : ${MAX_JOBS}"
+echo "OVERWRITE        : ${OVERWRITE_OUTPUTS}"
 echo "============================================================"
 
 # ------------------------------------------------------------------------------
@@ -211,8 +214,13 @@ process_one_file() {
   echo "[START] ${base}"
 
   if [[ -f "${outfile}" ]]; then
-    echo "[SKIP ] Output already exists: ${outfile}"
-    return 0
+    if [[ "${OVERWRITE_OUTPUTS}" == "yes" ]]; then
+      echo "[INFO ] Replacing existing output: ${outfile}"
+      rm -f "${outfile}"
+    else
+      echo "[SKIP ] Output already exists: ${outfile}"
+      return 0
+    fi
   fi
 
   if [[ -f "${tmpfile}" ]]; then
@@ -234,7 +242,7 @@ process_one_file() {
   echo "[DONE ] ${outfile}"
 }
 
-export TMP_DIR OUT_DIR TARGET_ZAXIS_FILE SOURCE_ZAXIS_FILE SOURCE_ZDIM_NAME SOURCE_UNITS_OUT OUT_SUFFIX
+export TMP_DIR OUT_DIR TARGET_ZAXIS_FILE SOURCE_ZAXIS_FILE SOURCE_ZDIM_NAME SOURCE_UNITS_OUT OUT_SUFFIX OVERWRITE_OUTPUTS
 export -f process_one_file
 
 FILES=( "${IN_DIR}"/${FILE_GLOB} )

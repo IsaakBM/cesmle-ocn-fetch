@@ -60,7 +60,8 @@ cesmle-ocn-fetch/
 │   │   ├── temporal_aggregate_regrid.slurm.sh
 │   │   ├── vertical_interpolate_to_reference.slurm.sh
 │   │   ├── climatology_window_from_monthly_files.slurm.sh
-│   │   └── climatology_window_from_timeseries.slurm.sh
+│   │   ├── climatology_window_from_timeseries.slurm.sh
+│   │   └── delta_from_climatologies.slurm.sh
 │   ├── runners/                    # Dataset-specific job submitters
 │   │   ├── global_ocean_biogeochemistry_hindcast/
 │   │   │   ├── run_temporal_aggregate_regrid.sh
@@ -69,7 +70,8 @@ cesmle-ocn-fetch/
 │   │   ├── ipcc_esgf/
 │   │   │   ├── run_temporal_aggregate_regrid.sh
 │   │   │   ├── run_vertical_interpolate_to_reference.sh
-│   │   │   └── run_climatology_window.sh
+│   │   │   ├── run_climatology_window.sh
+│   │   │   └── run_delta_from_climatologies.sh
 │   │   ├── cesm/
 │   │   ├── glorys/
 │   │   └── other_model/
@@ -126,6 +128,12 @@ Reusable worker scripts. These do the actual processing.
     time-series files
   - merges chunks when needed before selecting the target window
 
+- [delta_from_climatologies.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/delta_from_climatologies.slurm.sh)
+  - computes `future climatology - baseline climatology`
+  - can optionally regrid the resulting delta to a target grid
+  - keeps the subtraction logic generic while runners decide when regridding
+    is part of the dataset workflow
+
 ### `scripts/runners/`
 
 Dataset-specific submitters. These define:
@@ -169,6 +177,15 @@ Examples:
   `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/<var>/parts/*.nc`
 - IPCC/ESGF regridded monthly time-series:
   `/home/SB5/ipcc_esgf_monthly_1deg/<scenario>/<var>/parts/*.nc`
+
+Important note:
+
+- the temporal regrid worker can run with `METHOD=auto`
+- in auto mode it reads the source `gridtype` from the file metadata
+- curvilinear or unstructured grids use `remapdis`
+- regular lon/lat grids use `remapbil`
+- this matters for some native-grid ocean products where bilinear remapping
+  introduces seam artifacts that then propagate into later steps
 
 ### 2. Vertical Interpolation To GLORYS Levels
 
@@ -309,7 +326,9 @@ Current logic:
 2. reorganize by scenario and variable
 3. regrid monthly time-series to `1 x 1`
 4. vertically interpolate to GLORYS levels
-5. later compute climatology windows
+5. compute climatology windows from the vertically matched products
+6. compute future-minus-baseline deltas
+7. optionally regrid deltas to `0.25 x 0.25`
 
 Expected input organization:
 
@@ -336,14 +355,42 @@ Regridded monthly products are organized as:
     └── <var>/
         ├── parts/
         ├── on_glorys/
-        └── clim_windows/
+        ├── clim_windows/
+        ├── delta_windows/
+        └── delta_windows_0p25/
 ```
+
+Operational sequence for the current IPCC branch:
+
+1. run [run_temporal_aggregate_regrid.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_temporal_aggregate_regrid.sh)
+   - reads `/home/SB5/ipcc_esgf_downloads/<scenario>/<var>/`
+   - writes `/home/SB5/ipcc_esgf_monthly_1deg/<scenario>/<var>/parts/`
+   - uses `METHOD=auto`
+   - auto-selects `remapdis` for curvilinear/unstructured sources and
+     `remapbil` for regular lon/lat sources
+
+2. run [run_vertical_interpolate_to_reference.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_vertical_interpolate_to_reference.sh)
+   - reads `/parts/`
+   - writes `/on_glorys/`
+
+3. run [run_climatology_window.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_climatology_window.sh)
+   - reads `/on_glorys/`
+   - writes `/clim_windows/`
+   - historical baseline window: `2006-2014`
+   - future windows: `2050-2060`, `2090-2100`
+
+4. run [run_delta_from_climatologies.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh)
+   - computes:
+     `ssp585 future climatology - historical 2006-2014 climatology`
+   - writes `/delta_windows/`
+   - also writes `/delta_windows_0p25/` when delta regridding is enabled
 
 Relevant runners:
 
 - [run_temporal_aggregate_regrid.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_temporal_aggregate_regrid.sh)
 - [run_vertical_interpolate_to_reference.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_vertical_interpolate_to_reference.sh)
 - [run_climatology_window.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_climatology_window.sh)
+- [run_delta_from_climatologies.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh)
 
 ## Download And Utility Scripts
 
@@ -392,6 +439,15 @@ Examples:
   `ipcc_esgf_ssp585_chl_clim_2050-2060.nc`
   `ipcc_esgf_ssp585_chl_clim_2090-2100.nc`
 
+### Delta outputs
+
+Examples:
+
+- raw delta:
+  `ipcc_esgf_ssp585_chl_delta_2050-2060_minus_2006-2014.nc`
+- regridded delta:
+  `ipcc_esgf_ssp585_chl_delta_2050-2060_minus_2006-2014.grid_0p25_global.nc`
+
 ## Expected Cluster Paths
 
 Common paths used in the current workflows include:
@@ -427,6 +483,10 @@ To avoid confusion:
 
 - `temporal_aggregate_regrid.slurm.sh` is **not** a climatology script.
   It prepares monthly data and harmonizes grids.
+
+- when `temporal_aggregate_regrid.slurm.sh` runs with `METHOD=auto`, it chooses
+  the remap operator from the source `gridtype` metadata, not from the ESGF
+  filename label alone.
 
 - `climatology_window_from_monthly_files.slurm.sh` and
   `climatology_window_from_timeseries.slurm.sh` **are** climatology scripts.

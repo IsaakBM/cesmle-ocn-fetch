@@ -49,7 +49,11 @@ set -euo pipefail
 #   INPUT_LAYOUT  : year_month | timeseries (default: year_month)
 #   YEAR          : year to process when INPUT_LAYOUT=year_month
 #   FILE_GLOB     : input file glob (default: *.nc*)
-#   METHOD        : CDO remapping method (default: remapbil)
+#   METHOD        : CDO remapping method or auto (default: remapbil)
+#   AUTO_METHOD_DEFAULT     : method used in auto mode for regular grids
+#                             (default: remapbil)
+#   AUTO_METHOD_CURVILINEAR : method used in auto mode for curvilinear or
+#                             unstructured grids (default: remapdis)
 #   PARTS_SUBDIR  : output subdir under OUTROOT/VAR (default: parts)
 #   TMP_SUBDIR    : temp subdir under OUTROOT/VAR (default: tmp)
 #   MIN_FREE_GB   : minimum free space where TMP lives (default: 40)
@@ -66,6 +70,8 @@ GRIDFILE="${GRIDFILE:-}"
 INPUT_LAYOUT="${INPUT_LAYOUT:-year_month}"
 FILE_GLOB="${FILE_GLOB:-*.nc*}"
 METHOD="${METHOD:-remapbil}"
+AUTO_METHOD_DEFAULT="${AUTO_METHOD_DEFAULT:-remapbil}"
+AUTO_METHOD_CURVILINEAR="${AUTO_METHOD_CURVILINEAR:-remapdis}"
 PARTS_SUBDIR="${PARTS_SUBDIR:-parts}"
 TMP_SUBDIR="${TMP_SUBDIR:-tmp}"
 MIN_FREE_GB="${MIN_FREE_GB:-40}"
@@ -85,6 +91,11 @@ fi
 
 if [[ "$INPUT_TIMESTEP" != "daily" && "$INPUT_TIMESTEP" != "monthly" && "$INPUT_TIMESTEP" != "auto" ]]; then
   echo "ERROR: INPUT_TIMESTEP must be one of: daily, monthly, auto"
+  exit 1
+fi
+
+if [[ "$METHOD" != "auto" && "$METHOD" != remap* ]]; then
+  echo "ERROR: METHOD must be auto or a valid CDO remap operator name"
   exit 1
 fi
 
@@ -151,6 +162,10 @@ echo " Parts dir      : $PARTS"
 echo " Temp dir       : $TMPDIR"
 echo " Grid           : $GRIDFILE"
 echo " Method         : $METHOD"
+if [[ "$METHOD" == "auto" ]]; then
+  echo " Auto regular   : $AUTO_METHOD_DEFAULT"
+  echo " Auto curvilin  : $AUTO_METHOD_CURVILINEAR"
+fi
 echo " Input timestep : $INPUT_TIMESTEP"
 echo " CPUs           : ${SLURM_CPUS_PER_TASK:-4}"
 echo " Parallel months: $NPROC"
@@ -160,6 +175,37 @@ echo "================================================="
 # ==============================================================================
 # Build one month from YEAR/MONTH input
 # ==============================================================================
+detect_gridtype() {
+  local src="$1"
+  local gridtype
+
+  gridtype="$(/usr/bin/cdo -s griddes "$src" 2>/dev/null | awk '$1 == "gridtype" {print $3; exit}')"
+  if [[ -z "$gridtype" ]]; then
+    gridtype="unknown"
+  fi
+  printf '%s\n' "$gridtype"
+}
+
+resolve_method() {
+  local src="$1"
+  local gridtype
+
+  if [[ "$METHOD" != "auto" ]]; then
+    printf '%s\n' "$METHOD"
+    return 0
+  fi
+
+  gridtype="$(detect_gridtype "$src")"
+  case "$gridtype" in
+    curvilinear|unstructured)
+      printf '%s\n' "$AUTO_METHOD_CURVILINEAR"
+      ;;
+    *)
+      printf '%s\n' "$AUTO_METHOD_DEFAULT"
+      ;;
+  esac
+}
+
 process_month() {
   local yyyy="$1"
   local mm="$2"
@@ -185,6 +231,8 @@ process_month() {
   local tmp_out="${TMPDIR}/.${base}.out.nc"
   local source_file
   local mode
+  local method_to_use
+  local source_for_method
 
   trap 'rm -f "$tmp_merge" "$tmp_mon" "$tmp_out"' RETURN
 
@@ -201,15 +249,19 @@ process_month() {
 
   if [[ "$mode" == "monthly" ]]; then
     source_file="${files[0]}"
+    source_for_method="$source_file"
     echo "INFO: ${yyyy}-${mm} detected as monthly input; skipping monmean"
     /usr/bin/cdo -L -O -P 1 -selname,"${VAR}" "$source_file" "$tmp_mon"
   else
+    source_for_method="${files[0]}"
     echo "INFO: ${yyyy}-${mm} detected as daily input; computing monthly mean"
     /usr/bin/cdo -L -O -P 1 -selname,"${VAR}" -mergetime "${files[@]}" "$tmp_merge"
     /usr/bin/cdo -L -O -P 1 monmean "$tmp_merge" "$tmp_mon"
   fi
 
-  /usr/bin/cdo -L -O -P 1 ${METHOD},"${GRIDFILE}" "$tmp_mon" "$tmp_out"
+  method_to_use="$(resolve_method "$source_for_method")"
+  echo "INFO: ${yyyy}-${mm} remap method resolved to: $method_to_use"
+  /usr/bin/cdo -L -O -P 1 ${method_to_use},"${GRIDFILE}" "$tmp_mon" "$tmp_out"
 
   mv -f "$tmp_out" "$out"
 
@@ -222,7 +274,7 @@ process_month() {
 # ==============================================================================
 process_timeseries_file() {
   local in="$1"
-  local base stem out tmp
+  local base stem out tmp method_to_use
 
   base="$(basename "$in")"
   stem="${base%.nc}"
@@ -239,15 +291,17 @@ process_timeseries_file() {
   rm -f "$out"
 
   echo "INFO: Regridding monthly time-series file: $base"
-  /usr/bin/cdo -L -O -P 1 ${METHOD},"${GRIDFILE}" -selname,"${VAR}" "$in" "$tmp"
+  method_to_use="$(resolve_method "$in")"
+  echo "INFO: ${base} remap method resolved to: $method_to_use"
+  /usr/bin/cdo -L -O -P 1 ${method_to_use},"${GRIDFILE}" -selname,"${VAR}" "$in" "$tmp"
   mv -f "$tmp" "$out"
 
   trap - RETURN
   echo "DONE: $out"
 }
 
-export -f process_month process_timeseries_file
-export DATASET_LABEL INROOT OUTROOT OUTDIR PARTS TMPDIR VAR GRIDFILE METHOD FILE_GLOB INPUT_TIMESTEP
+export -f detect_gridtype resolve_method process_month process_timeseries_file
+export DATASET_LABEL INROOT OUTROOT OUTDIR PARTS TMPDIR VAR GRIDFILE METHOD AUTO_METHOD_DEFAULT AUTO_METHOD_CURVILINEAR FILE_GLOB INPUT_TIMESTEP
 
 # ==============================================================================
 # Main

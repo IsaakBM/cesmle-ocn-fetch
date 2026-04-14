@@ -80,7 +80,7 @@ for scen in "${SCENARIOS[@]}"; do
         WINDOW_START="$HIST_WINDOW_START" \
         WINDOW_END="$HIST_WINDOW_END" \
         MERGE_INPUTS="auto" \
-        OUT_PREFIX="${DATASET_LABEL}_${scen}_${v}" \
+        OUT_PREFIX="${DATASET_LABEL}_${v}" \
         sbatch --parsable \
         --job-name="clim_${scen}_${v}" \
         "$CORE_SCRIPT")
@@ -95,7 +95,7 @@ for scen in "${SCENARIOS[@]}"; do
         WINDOW_START="$FUT2050_WINDOW_START" \
         WINDOW_END="$FUT2050_WINDOW_END" \
         MERGE_INPUTS="auto" \
-        OUT_PREFIX="${DATASET_LABEL}_${scen}_${v}" \
+        OUT_PREFIX="${DATASET_LABEL}_${v}" \
         sbatch --parsable \
         --job-name="clim2050_${v}" \
         "$CORE_SCRIPT")
@@ -110,7 +110,7 @@ for scen in "${SCENARIOS[@]}"; do
         WINDOW_START="$FUT2090_WINDOW_START" \
         WINDOW_END="$FUT2090_WINDOW_END" \
         MERGE_INPUTS="auto" \
-        OUT_PREFIX="${DATASET_LABEL}_${scen}_${v}" \
+        OUT_PREFIX="${DATASET_LABEL}_${v}" \
         sbatch --parsable \
         --job-name="clim2090_${v}" \
         "$CORE_SCRIPT")

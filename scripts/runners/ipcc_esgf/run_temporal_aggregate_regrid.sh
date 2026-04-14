@@ -19,6 +19,11 @@ set -euo pipefail
 #   - No temporal aggregation is performed here.
 #   - The runner only harmonizes/regrids the monthly files to a common 1 x 1
 #     degree lon/lat grid.
+#   - The generic worker is run in auto remap mode:
+#       * curvilinear/unstructured sources -> remapdis
+#       * regular lon/lat sources          -> remapbil
+#     This keeps the runner safe for institutions that do not show the seam
+#     artifact while still fixing the problematic curvilinear cases.
 #   - Expected input layout:
 #       /home/SB5/ipcc_esgf_downloads/<scenario>/<variable>/*.nc
 # ==============================================================================
@@ -45,7 +50,9 @@ VARS=(
 DATASET_LABEL="ipcc_esgf"
 INROOT_BASE="/home/SB5/ipcc_esgf_downloads"
 OUTROOT_BASE="/home/SB5/ipcc_esgf_monthly_1deg"
-METHOD="remapbil"
+METHOD="auto"
+AUTO_METHOD_DEFAULT="remapbil"
+AUTO_METHOD_CURVILINEAR="remapdis"
 FILE_GLOB="*.nc"
 PARTS_SUBDIR="parts"
 TMP_SUBDIR="tmp"
@@ -95,6 +102,8 @@ for scen in "${SCENARIOS[@]}"; do
       INPUT_LAYOUT="$INPUT_LAYOUT" \
       INPUT_TIMESTEP="$INPUT_TIMESTEP" \
       METHOD="$METHOD" \
+      AUTO_METHOD_DEFAULT="$AUTO_METHOD_DEFAULT" \
+      AUTO_METHOD_CURVILINEAR="$AUTO_METHOD_CURVILINEAR" \
       FILE_GLOB="*.nc" \
       PARTS_SUBDIR="$PARTS_SUBDIR" \
       TMP_SUBDIR="$TMP_SUBDIR" \

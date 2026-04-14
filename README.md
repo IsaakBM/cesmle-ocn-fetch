@@ -1,31 +1,38 @@
 # CESM-LE Ocean Downscaling Pipeline
 
-This repository contains the workflow and batch scripts used to build
-downscaled ocean products by combining CESM Large Ensemble ocean anomalies with
-a GLORYS historical baseline.
+This repository contains HPC batch workflows for preparing, vertically matching,
+and computing climatologies from ocean model products used in downscaling
+workflows.
 
-The repository itself is intentionally lightweight: it stores orchestration
-scripts, helper files, and documentation, while the actual NetCDF inputs,
-intermediate products, and final outputs live on HPC systems and shared
-filesystems.
+The repository itself is lightweight. It stores scripts, helpers, and
+documentation. The actual NetCDF inputs, intermediate products, and final
+outputs live on cluster filesystems such as `/home/SB5`,
+`/home/sandbox-sparc`, and scratch space.
 
-## What This Project Does
+## What This Repository Does
 
-At a high level, this project:
+At a high level, the repository now supports three reusable processing stages:
 
-1. downloads or stages CESM-LE ocean variables and GLORYS ocean data on cluster
-   storage;
-2. converts GLORYS daily fields into monthly means and a baseline climatology;
-3. horizontally regrids CESM fields to a regular grid;
-4. vertically interpolates CESM fields onto GLORYS depth levels;
-5. computes CESM member-level climatologies and future-minus-baseline deltas;
-6. remaps CESM deltas to the GLORYS 0.05 degree grid; and
-7. adds those anomalies to the GLORYS baseline climatology to create
-   downscaled products for future time windows.
+1. monthly preparation and horizontal harmonization
+2. vertical interpolation to a GLORYS reference grid
+3. climatology windows from either monthly files or long time-series files
 
-The core scientific idea implemented here is:
+These stages sit inside a broader downscaling pipeline. After climatologies are
+computed, later steps can still include:
 
-- `Downscaled field = GLORYS baseline climatology + CESM future anomaly`
+4. anomalies and deltas between baseline and future climatology windows
+5. addition of anomalies to a historical baseline
+6. final downscaled products
+
+Those stages are reused across different dataset families:
+
+- GLORYS
+- CESM
+- Global Ocean Biogeochemistry Hindcast
+- IPCC/ESGF products
+
+The key point is that the newer code organization is based on **data structure**
+and **processing operation**, not on one script per dataset.
 
 ## Project Structure
 
@@ -40,366 +47,305 @@ cesmle-ocn-fetch/
 │   └── aws-cesm1-le.csv            # CESM-related reference table
 ├── legacy/                         # Old outputs/examples kept outside the main workflow
 │   └── *.nc                        # Example downscaled/anomaly/climatology NetCDF files
-├── logs/                           # Slurm stdout/stderr targets (ignored by git)
-├── scripts/                        # Main automation layer for the pipeline
+├── logs/                           # Slurm stdout/stderr targets
+├── scripts/
 │   ├── bash/                       # Download, fetch, and utility shell scripts
-│   │   ├── download_cesmle*.sh     # CESM-LE download helpers
+│   │   ├── download_cesmle*.sh
 │   │   ├── download_GLORYS_parallel.sh
 │   │   ├── process_esgf_wget_scripts.sh
+│   │   ├── process_esgf_wget_scripts_run_example.txt
 │   │   ├── bgc_monthly_download.slurm.sh
 │   │   └── z_cesm1_temp.sh
-│   ├── core/                       # New reusable processing workers
-│   │   └── temporal_aggregate_regrid.slurm.sh
-│   ├── runners/                    # New dataset-specific job submitters
+│   ├── core/                       # Reusable processing workers
+│   │   ├── temporal_aggregate_regrid.slurm.sh
+│   │   ├── vertical_interpolate_to_reference.slurm.sh
+│   │   ├── climatology_window_from_monthly_files.slurm.sh
+│   │   └── climatology_window_from_timeseries.slurm.sh
+│   ├── runners/                    # Dataset-specific job submitters
 │   │   ├── global_ocean_biogeochemistry_hindcast/
-│   │   │   └── run_temporal_aggregate_regrid.sh
+│   │   │   ├── run_temporal_aggregate_regrid.sh
+│   │   │   ├── run_vertical_interpolate_to_reference.sh
+│   │   │   └── run_climatology_window.sh
+│   │   ├── ipcc_esgf/
+│   │   │   ├── run_temporal_aggregate_regrid.sh
+│   │   │   ├── run_vertical_interpolate_to_reference.sh
+│   │   │   └── run_climatology_window.sh
 │   │   ├── cesm/
 │   │   ├── glorys/
 │   │   └── other_model/
-│   ├── slurm/                      # Existing production workflow scripts
-│   │   ├── regrid_cesm_pop_1deg*.sh
-│   │   ├── cesm_vertical_regrid.slurm.sh
-│   │   ├── glorys_monthly_0p05.slurm.sh
-│   │   ├── glorys_window_climatology.slurm.sh
-│   │   ├── cesm_window_climatologies.slurm.sh
-│   │   ├── cesm_member_deltas_0p05.slurm.sh
-│   │   ├── cesm_add_to_glorys_downscale.slurm.sh
-│   │   └── run_*.sh                # Submission wrappers for selected variables/jobs
+│   ├── slurm/                      # Older production scripts still kept in place
 │   └── legacy/                     # Reserved for older scripts as they are migrated
-├── .gitignore                      # Protects large data, NetCDFs, logs, and temp files
+├── .gitignore
 ├── LICENSE
-└── README.md                       # Project documentation
+└── README.md
 ```
 
 ## Repository Philosophy
 
-This repository is not a self-contained local analysis package. It is a
-cluster-oriented workflow repository.
+This is a cluster-oriented workflow repository.
 
 That means:
 
-- the code assumes access to Slurm;
-- large data are expected to exist on HPC/shared filesystems, not in git;
-- most paths are hard-coded for cluster environments;
-- local checkout is mainly for editing scripts and documentation; and
-- seeing "no data" locally is expected and not a problem.
+- the code assumes Slurm;
+- large data are expected on HPC/shared filesystems, not in git;
+- local checkout is mainly for editing scripts and docs;
+- many paths are cluster-specific;
+- empty local data directories are expected and normal.
 
-## Expected Storage Layout On Cluster Systems
+## Main Script Organization
 
-The scripts assume one or more cluster filesystems with layouts similar to:
+The newer structure is organized around **what kind of operation is being
+performed**.
+
+### `scripts/core/`
+
+Reusable worker scripts. These do the actual processing.
+
+- [temporal_aggregate_regrid.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/temporal_aggregate_regrid.slurm.sh)
+  - generic monthly preparation and horizontal harmonization
+  - supports two input layouts:
+    - `year_month`
+    - `timeseries`
+  - supports:
+    - daily input that must be aggregated to monthly
+    - already-monthly input that skips aggregation
+    - direct regridding/harmonization to a target grid
+
+- [vertical_interpolate_to_reference.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/vertical_interpolate_to_reference.slurm.sh)
+  - generic vertical interpolation to a reference vertical grid
+  - can reuse or create shared z-axis descriptors
+  - supports source-unit conversion such as `cm -> m`
+  - writes vertically matched outputs such as `on_glorys/`
+
+- [climatology_window_from_monthly_files.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/climatology_window_from_monthly_files.slurm.sh)
+  - computes a climatology from many monthly files
+  - intended for layouts like one file per month in a `parts/` directory
+
+- [climatology_window_from_timeseries.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/climatology_window_from_timeseries.slurm.sh)
+  - computes a climatology from one long time-series file or a few chunked
+    time-series files
+  - merges chunks when needed before selecting the target window
+
+### `scripts/runners/`
+
+Dataset-specific submitters. These define:
+
+- variables
+- scenarios
+- windows
+- input/output paths
+- dataset-specific assumptions
+
+and then call the generic workers in `scripts/core/` using `sbatch`.
+
+### `scripts/slurm/`
+
+Older production scripts are still kept here and remain useful references.
+These are not removed yet because they document the original working workflows
+and still help validate the newer abstractions.
+
+## Workflow Logic
+
+The current logic is easiest to understand in three immediate processing layers,
+followed by the later downscaling stages.
+
+### 1. Monthly Preparation / Grid Harmonization
+
+This stage creates or prepares monthly files on a common horizontal grid.
+
+Use:
+
+- [temporal_aggregate_regrid.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/temporal_aggregate_regrid.slurm.sh)
+
+This stage is the generalized version of what older scripts such as
+[glorys_monthly_0p05.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/glorys_monthly_0p05.slurm.sh)
+were doing.
+
+Typical outputs live in `parts/`.
+
+Examples:
+
+- Hindcast monthly outputs:
+  `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/<var>/parts/*.nc`
+- IPCC/ESGF regridded monthly time-series:
+  `/home/SB5/ipcc_esgf_monthly_1deg/<scenario>/<var>/parts/*.nc`
+
+### 2. Vertical Interpolation To GLORYS Levels
+
+This stage takes horizontally harmonized files and interpolates them onto the
+GLORYS vertical grid.
+
+Use:
+
+- [vertical_interpolate_to_reference.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/vertical_interpolate_to_reference.slurm.sh)
+
+Typical outputs live in `on_glorys/`.
+
+Examples:
+
+- Hindcast:
+  `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/<var>/on_glorys/*.nc`
+- IPCC/ESGF:
+  `/home/SB5/ipcc_esgf_monthly_1deg/<scenario>/<var>/on_glorys/*.nc`
+
+This stage is the generalized version of the old CESM vertical-matching idea
+implemented in
+[cesm_vertical_regrid.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/cesm_vertical_regrid.slurm.sh).
+
+### 3. Climatology Windows
+
+This stage produces one mean over a requested time window from monthly data.
+
+There are two cases.
+
+#### Many monthly files
+
+Use:
+
+- [climatology_window_from_monthly_files.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/climatology_window_from_monthly_files.slurm.sh)
+
+This is the GLORYS-style or hindcast-style case:
+
+- one file per month
+- many files in `parts/`
+- then merge and compute `timmean`
+
+#### Long monthly time-series files
+
+Use:
+
+- [climatology_window_from_timeseries.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/climatology_window_from_timeseries.slurm.sh)
+
+This is the CESM-style or IPCC/ESGF-style case:
+
+- one long monthly time-series file
+- or a few chunked monthly time-series files
+- merge chunks if needed
+- select the date window
+- compute `timmean`
+
+### 4. Later Downscaling Stages
+
+The newer generalized scripts now cover the preparation and climatology parts of
+the workflow, but the repository still includes the later downscaling logic that
+follows after climatologies are available.
+
+Those later stages include:
+
+- future-minus-baseline anomalies or deltas
+- remapping of anomaly products where needed
+- addition of anomalies to a baseline field
+- final downscaled output generation
+
+The original CESM-to-GLORYS production scripts for these later stages are still
+kept in [scripts/slurm](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm),
+including:
+
+- [cesm_member_deltas_0p05.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/cesm_member_deltas_0p05.slurm.sh)
+- [cesm_add_to_glorys_downscale.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/cesm_add_to_glorys_downscale.slurm.sh)
+
+So the generalized `core/` plus `runners/` structure should be read as the
+front half of the full pipeline, not as a replacement for the existence of the
+later anomaly/delta/downscaling steps.
+
+## Dataset Mapping
+
+### GLORYS
+
+Typical older logic:
+
+1. monthly means at `0.05°`
+2. baseline climatology from monthly files
+
+Closest modern abstraction:
+
+- monthly prep/harmonization:
+  [temporal_aggregate_regrid.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/temporal_aggregate_regrid.slurm.sh)
+- climatology from monthly files:
+  [climatology_window_from_monthly_files.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/climatology_window_from_monthly_files.slurm.sh)
+
+### CESM
+
+Typical older logic:
+
+1. horizontal regrid
+2. vertical interpolation to GLORYS levels
+3. climatology windows from member time-series files
+4. deltas between future and baseline climatologies
+5. addition of deltas to the GLORYS baseline
+
+Closest modern abstraction:
+
+- vertical interpolation:
+  [vertical_interpolate_to_reference.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/vertical_interpolate_to_reference.slurm.sh)
+- climatology from time-series files:
+  [climatology_window_from_timeseries.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/climatology_window_from_timeseries.slurm.sh)
+
+### Global Ocean Biogeochemistry Hindcast
+
+Current logic:
+
+1. monthly inputs already organized by `YEAR/MONTH`
+2. prepare/harmonize monthly outputs at `0.25 x 0.25`
+3. vertically interpolate to GLORYS levels
+4. later compute climatology windows
+
+Relevant runners:
+
+- [run_temporal_aggregate_regrid.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/global_ocean_biogeochemistry_hindcast/run_temporal_aggregate_regrid.sh)
+- [run_vertical_interpolate_to_reference.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/global_ocean_biogeochemistry_hindcast/run_vertical_interpolate_to_reference.sh)
+- [run_climatology_window.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/global_ocean_biogeochemistry_hindcast/run_climatology_window.sh)
+
+Important note:
+
+- `spco2` is a surface field and is not appropriate for the vertical
+  interpolation step.
+
+### IPCC / ESGF
+
+Current logic:
+
+1. download ESGF/IPCC files
+2. reorganize by scenario and variable
+3. regrid monthly time-series to `1 x 1`
+4. vertically interpolate to GLORYS levels
+5. later compute climatology windows
+
+Expected input organization:
 
 ```text
-/home/sandbox-sparc/cesmle-ocn-fetch/       # repo checkout on cluster
-/home/sandbox-sparc/cesmle-ocn-fetch/cesm/  # staged CESM raw files
-/home/sandbox-sparc/cesmle-ocn-fetch/glorys12v1/
-/home/SB5/                                  # large shared output area
-/scratch/sparc/<user>/                      # scratch space for temp/regridding
+/home/SB5/ipcc_esgf_downloads/
+├── historical/
+│   ├── chl/
+│   └── o2/
+└── ssp585/
+    ├── chl/
+    └── o2/
 ```
 
-Common output locations referenced in the scripts include:
-
-- `/home/SB5/glorys12v1_monthly_0p05`
-- `/home/SB5/rcp85/<VAR>`
-- `/home/SB5/downscaled_rcp85/<GLORYS_VAR>`
-- `/home/SB5/tmp`
-
-Because these paths are embedded in the job scripts, moving the pipeline to a
-new machine usually requires path editing before execution.
-
-## Main Variables In The Workflow
-
-### CESM variables
-
-- `TEMP`
-- `SALT`
-- `O2`
-- `UVEL`
-
-### GLORYS variables
-
-- `thetao`
-- `so`
-- `uo`
-- `vo`
-- `mlotst`
-- `zos`
-- `bottomT`
-
-### Variable mapping used in the final downscaling step
-
-- `TEMP -> thetao`
-- `SALT -> so`
-- `UVEL -> uo`
-
-`O2` appears in earlier CESM preprocessing/climatology steps, but it is not
-currently included in the final GLORYS-addition downscaling script.
-
-## Time Windows Used By The Pipeline
-
-The scripts consistently use these windows:
-
-- baseline: `2006-01` to `2014-12`
-- mid-century future: `2050-01` to `2060-12`
-- late-century future: `2090-01` to `2100-12`
-
-For historical raw CESM inputs, the horizontal regridding scripts also refer to
-the historical span:
-
-- historical CESM: `1920-01` to `2005-12`
-
-## End-To-End Workflow
-
-## 1. Raw data acquisition
-
-Older download helpers in [scripts/bash](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/bash)
-handle remote data acquisition.
-
-CESM download scripts:
-
-- probe NCAR/RDA-hosted CESM-LE ocean monthly files;
-- support historical and RCP8.5-style scenario file naming;
-- can work by directory scraping or by probing expected file names;
-- support resumable downloads and retry logic in some versions; and
-- write manifests of discovered files.
-
-GLORYS download script:
-
-- uses the `copernicusmarine` CLI;
-- downloads daily GLORYS12v1 files by month;
-- organizes them by `year/month`;
-- can flatten nested output directories; and
-- writes monthly manifests.
-
-These scripts are useful for data staging, but the current production
-downscaling flow is driven primarily by the scripts in
-[scripts/slurm](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm), while
-new reusable utilities are beginning to be added under
-[scripts/core](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core) and
-[scripts/runners](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners).
-
-## 2. CESM horizontal regridding to 1 degree
-
-Primary scripts:
-
-- [scripts/slurm/regrid_cesm_pop_1deg.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/regrid_cesm_pop_1deg.slurm.sh)
-- [scripts/slurm/regrid_cesm_pop_1deg_homeout.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/regrid_cesm_pop_1deg_homeout.slurm.sh)
-
-Purpose:
-
-- reads raw CESM ocean files;
-- selects one variable at a time;
-- remaps to a regular `360 x 180` global grid using `cdo remapbil`;
-- stores per-file regridded outputs in `parts/`; and
-- for RCP85 files, merges split time chunks into `merged/` products.
-
-Important details:
-
-- controlled by environment variables `SCEN` and `VAR`;
-- accepts `hist` and `rcp85` scenarios;
-- uses conservative parallelism to avoid I/O and HDF5 instability; and
-- includes free-space checks before large jobs begin.
-
-The `run_regrid*.sh` scripts are lightweight submitter wrappers that choose
-variables and job ordering.
-
-## 3. GLORYS monthly means at 0.05 degree
-
-Primary script:
-
-- [scripts/slurm/glorys_monthly_0p05.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/glorys_monthly_0p05.slurm.sh)
-
-Purpose:
-
-- reads daily GLORYS files for a single variable and year;
-- merges daily files within each month;
-- computes monthly means with `cdo monmean`; and
-- remaps monthly results to a regular global `0.05 degree` lon/lat grid.
-
-Output organization:
-
-- outputs live under `/home/SB5/glorys12v1_monthly_0p05/<VAR>/parts`
-- one output file is created per month
-
-This step provides the monthly baseline products used later to build the GLORYS
-climatology.
-
-## 4. GLORYS baseline climatology
-
-Primary script:
-
-- [scripts/slurm/glorys_window_climatology.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/glorys_window_climatology.slurm.sh)
-
-Purpose:
-
-- reads all monthly GLORYS products from `2006-01` through `2014-12`;
-- merges them in time; and
-- computes a single mean field over the full window with `cdo timmean`.
-
-This is described in the script as a "Bio-ORACLE-style" climatology:
-
-- one mean over all monthly values in the baseline window;
-- one output file per variable; and
-- no monthly climatology cycle is produced here.
-
-Result:
-
-- `glorys12v1_<VAR>_clim_2006-2014.nc`
-
-## 5. CESM vertical interpolation onto GLORYS depth levels
-
-Primary script:
-
-- [scripts/slurm/cesm_vertical_regrid.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/cesm_vertical_regrid.slurm.sh)
-
-Purpose:
-
-- reads CESM files already regridded and merged;
-- extracts/defines a GLORYS vertical axis template;
-- converts CESM `z_t` depth units from centimeters to meters; and
-- vertically interpolates CESM data onto GLORYS depth levels using `cdo intlevel`.
-
-Important implementation detail:
-
-- the script builds shared helper files under `/home/SB5/tmp`:
-  - `glorys_zaxis.txt`
-  - `cesm_zaxis_m.txt`
-
-Result:
-
-- vertically aligned CESM files under `/home/SB5/rcp85/<VAR>/on_glorys`
-
-## 6. CESM member climatologies
-
-Primary script:
-
-- [scripts/slurm/cesm_window_climatologies.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/cesm_window_climatologies.slurm.sh)
-
-Purpose:
-
-- reads CESM files already interpolated onto GLORYS levels;
-- computes one mean per ensemble member for each time window; and
-- writes separate baseline, 2050s, and 2090s climatology files.
-
-Outputs per member:
-
-- `_clim_2006-2014.nc`
-- `_clim_2050-2060.nc`
-- `_clim_2090-2100.nc`
-
-This is also a full-window mean approach rather than a monthly climatology
-approach.
-
-## 7. CESM future-minus-baseline deltas and remap to 0.05 degree
-
-Primary script:
-
-- [scripts/slurm/cesm_member_deltas_0p05.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/cesm_member_deltas_0p05.slurm.sh)
-
-Purpose:
-
-- pairs each future CESM member climatology with the matching baseline file;
-- computes anomalies as `future - baseline` with `cdo sub`; and
-- remaps those anomalies to the GLORYS `0.05 degree` grid.
-
-Outputs:
-
-- raw member anomalies in `member_deltas/`
-- remapped anomalies in `member_deltas_0p05/`
-
-Time windows processed:
-
-- `2050-2060 minus 2006-2014`
-- `2090-2100 minus 2006-2014`
-
-## 8. Final downscaling by adding CESM anomalies to GLORYS
-
-Primary script:
-
-- [scripts/slurm/cesm_add_to_glorys_downscale.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/cesm_add_to_glorys_downscale.slurm.sh)
-
-Purpose:
-
-- reads the GLORYS baseline climatology;
-- reads CESM member anomaly fields already remapped to `0.05 degree`;
-- adjusts the shallowest GLORYS levels in the anomaly field; and
-- adds the anomaly to the GLORYS baseline to generate a downscaled future field.
-
-Important scientific/technical detail:
-
-- the script fills the first `4` shallow GLORYS levels using the first valid
-  CESM-derived anomaly layer, described in the code as the level near
-  `5.078 m`;
-- this is done before the anomaly is added to the baseline; and
-- output is written one file per member per future window.
-
-Outputs look like:
-
-- `<member>_downscaled_thetao_2050-2060.nc`
-- `<member>_downscaled_thetao_2090-2100.nc`
-
-The example NetCDF files in [legacy](/Users/ibrito/Desktop/cesmle-ocn-fetch/legacy)
-match this final stage and are useful as reference artifacts.
-
-## Main Scripts By Role
-
-### New generalized script structure
-
-The repository is in transition toward a more reusable script layout:
-
-- [scripts/core](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core)
-  contains reusable worker scripts that perform one core operation.
-- [scripts/runners](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners)
-  contains dataset-specific submitters that configure variables, paths, and
-  years, then submit jobs to the core workers.
-- [scripts/slurm](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm)
-  still contains the older production workflow scripts and runners that remain
-  in active use.
-- [scripts/legacy](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/legacy)
-  is reserved for older scripts that may be moved out of the active path later.
-
-Current example in the new structure:
-
-- generic worker:
-  [temporal_aggregate_regrid.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/temporal_aggregate_regrid.slurm.sh)
-- dataset-specific runner:
-  [run_temporal_aggregate_regrid.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/global_ocean_biogeochemistry_hindcast/run_temporal_aggregate_regrid.sh)
-
-The generic temporal aggregation worker supports:
-
-- daily inputs that need monthly averaging before regridding;
-- monthly inputs that should skip temporal aggregation and only be regridded; and
-- auto-detection of those cases based on the number of files in each month.
-
-### Existing production workflow scripts
-
-Located in [scripts/slurm](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm):
-
-- `regrid_cesm_pop_1deg*.slurm.sh`
-- `cesm_vertical_regrid.slurm.sh`
-- `glorys_monthly_0p05.slurm.sh`
-- `glorys_window_climatology.slurm.sh`
-- `cesm_window_climatologies.slurm.sh`
-- `cesm_member_deltas_0p05.slurm.sh`
-- `cesm_add_to_glorys_downscale.slurm.sh`
-
-### Job submission wrappers
-
-Also in [scripts/slurm](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm):
-
-- `run_regrid.sh`
-- `run_regrid_deps.sh`
-- `run_regrid_homeout.sh`
-- `run_glorys_monthly_0p05.sh`
-- `run_glorys_window_climatology.sh`
-- `run_cesm_vertical_regrid.sh`
-- `run_cesm_window_climatologies.sh`
-- `run_cesm_member_deltas_0p05.sh`
-- `run_cesm_add_to_glorys_downscale.sh`
-
-These are convenience scripts for selecting variables and submitting one or
-more jobs with `sbatch`.
-
-### Download and utility scripts
+Regridded monthly products are organized as:
+
+```text
+/home/SB5/ipcc_esgf_monthly_1deg/
+├── historical/
+│   └── <var>/
+│       ├── parts/
+│       ├── on_glorys/
+│       └── clim_windows/
+└── ssp585/
+    └── <var>/
+        ├── parts/
+        ├── on_glorys/
+        └── clim_windows/
+```
+
+Relevant runners:
+
+- [run_temporal_aggregate_regrid.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_temporal_aggregate_regrid.sh)
+- [run_vertical_interpolate_to_reference.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_vertical_interpolate_to_reference.sh)
+- [run_climatology_window.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_climatology_window.sh)
+
+## Download And Utility Scripts
 
 Located in [scripts/bash](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/bash):
 
@@ -412,76 +358,83 @@ Located in [scripts/bash](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/bash):
 - `bgc_monthly_download.slurm.sh`
 - `process_esgf_wget_scripts.sh`
 
-These are useful references for data acquisition history and staging logic, but
-the main end-to-end downscaling logic lives under `scripts/slurm/`.
+These are for acquisition, staging, and utilities. They are not the main
+scientific processing workers.
 
-## Typical Execution Order
+## Example Output Patterns
 
-For the current production-style workflow, the logical order is:
+### Monthly preparation outputs
 
-1. stage CESM and GLORYS data on cluster filesystems;
-2. run GLORYS monthly processing at `0.05 degree`;
-3. build the GLORYS baseline climatology;
-4. regrid CESM horizontally to `1 degree`;
-5. merge CESM scenario chunks when needed;
-6. vertically interpolate CESM onto GLORYS depth levels;
-7. compute CESM member climatologies;
-8. compute CESM deltas and remap them to `0.05 degree`; and
-9. add CESM anomalies to GLORYS to generate downscaled outputs.
+Examples:
+
+- hindcast:
+  `global_ocean_biogeochemistry_hindcast_chl_200601.monmean.grid_0p25_global.nc`
+- IPCC/ESGF:
+  `chl_Omon_CNRM-ESM2-1_historical_r1i1p1f2_gn_200001-201412.grid_1deg_global.nc`
+
+### Vertical interpolation outputs
+
+Examples:
+
+- hindcast:
+  `<monthly_file>_on_glorys.nc`
+- IPCC/ESGF:
+  `<timeseries_file>_on_glorys.nc`
+
+### Climatology outputs
+
+Examples:
+
+- monthly-files climatology:
+  `global_ocean_biogeochemistry_hindcast_chl_clim_2006-2014.nc`
+- time-series climatology:
+  `ipcc_esgf_historical_chl_clim_2006-2014.nc`
+  `ipcc_esgf_ssp585_chl_clim_2050-2060.nc`
+  `ipcc_esgf_ssp585_chl_clim_2090-2100.nc`
+
+## Expected Cluster Paths
+
+Common paths used in the current workflows include:
+
+- `/home/sandbox-sparc/cesmle-ocn-fetch`
+- `/home/sandbox-sparc/cesmle-ocn-fetch/bgc_monthly_0p25`
+- `/home/SB5/glorys12v1_monthly_0p05`
+- `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25`
+- `/home/SB5/ipcc_esgf_downloads`
+- `/home/SB5/ipcc_esgf_monthly_1deg`
+- `/home/SB5/rcp85`
+- `/home/SB5/downscaled_rcp85`
+- `/home/SB5/tmp`
+
+Because these are embedded in scripts and runners, moving the workflow to a new
+system requires path updates.
 
 ## Software Assumptions
 
 The scripts assume the cluster environment provides:
 
 - `bash`
-- `sbatch` and `squeue` from Slurm
+- `sbatch`, `squeue`
 - `cdo`
 - `curl`
 - `find`, `grep`, `awk`, `sed`, `xargs`
-- `python3`
-- `xarray` for the final anomaly-addition step
-- optionally `copernicusmarine` for GLORYS downloads
+- `python3` for some older scripts
+- NetCDF support compatible with CDO
 
-Some scripts also assume:
+## Important Current Distinctions
 
-- `conda` environments may be available;
-- `SLURM_TMPDIR` may exist on compute nodes; and
-- NetCDF/HDF5 behavior may require conservative parallelism.
+To avoid confusion:
 
-## Restartability And Safety Features
+- `temporal_aggregate_regrid.slurm.sh` is **not** a climatology script.
+  It prepares monthly data and harmonizes grids.
 
-Several scripts are written to be restart-friendly. Common patterns include:
+- `climatology_window_from_monthly_files.slurm.sh` and
+  `climatology_window_from_timeseries.slurm.sh` **are** climatology scripts.
+  They compute period means from monthly data.
 
-- skip outputs that already exist;
-- write to temporary files before moving final outputs into place;
-- separate `parts/`, `merged/`, and `tmp/` directories;
-- preflight free-space checks on scratch or temp filesystems; and
-- conservative CPU settings to reduce file I/O crashes.
+- `vertical_interpolate_to_reference.slurm.sh` is the step that creates
+  `on_glorys/` outputs before vertically matched climatologies are computed.
 
-This is especially important because these jobs operate on very large NetCDF
-files in shared HPC environments.
-
-## Important Limitations
-
-Before reusing or extending the pipeline, keep in mind:
-
-- many paths are hard-coded for specific cluster environments;
-- this repository does not include a portable config system;
-- the current workflow is strongly tied to Slurm;
-- local execution without the cluster data layout will not work out of the box;
-- some scripts represent older experiments or transitional versions; and
-- the README documents the workflow as currently inferred from the scripts, not
-  from a separate formal methods document.
-
-## Notes On Git Tracking
-
-The repository is configured to avoid committing large data and generated
-artifacts. The `.gitignore` excludes, among other things:
-
-- NetCDF files (`*.nc`)
-- partial download files (`*.part`)
-- logs
-- large data directories such as `cesm/`, `glorys12v1/`, and `legacy/`
-
-That is why the working repository can appear almost empty even though the full
-pipeline is active on the cluster.
+- The downscaling part of the overall workflow still continues after
+  climatologies. Climatologies are not the final product; they are the inputs to
+  later anomaly, delta, and downscaling stages.

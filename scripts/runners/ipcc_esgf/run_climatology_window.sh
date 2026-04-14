@@ -14,9 +14,10 @@ set -euo pipefail
 #
 # Notes:
 #   - This runner is intended for already-monthly ESGF/IPCC time-series files
-#     already harmonized to a common 1 x 1 degree grid.
+#     already harmonized to a common 1 x 1 degree grid and vertically
+#     interpolated to GLORYS levels.
 #   - Expected input layout:
-#       /home/SB5/ipcc_esgf_monthly_1deg/<scenario>/<variable>/parts/*.nc
+#       /home/SB5/ipcc_esgf_monthly_1deg/<scenario>/<variable>/on_glorys/*.nc
 #   - Historical is typically one long file.
 #   - SSP585 may contain multiple time chunks, which are merged automatically
 #     before the climatology window is selected and averaged.
@@ -60,7 +61,7 @@ echo "Submitting IPCC/ESGF climatology window jobs with generic worker:"
 for scen in "${SCENARIOS[@]}"; do
   echo "Scenario: $scen"
   for v in "${VARS[@]}"; do
-    IN_DIR="${INROOT_BASE}/${scen}/${v}/parts"
+    IN_DIR="${INROOT_BASE}/${scen}/${v}/on_glorys"
     OUT_DIR="${INROOT_BASE}/${scen}/${v}/clim_windows"
     TMP_DIR="${INROOT_BASE}/${scen}/${v}/tmp_clim"
 

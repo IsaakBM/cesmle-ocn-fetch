@@ -35,7 +35,6 @@ VARS=(
   o2
   nppv
   fe
-  spco2
   ph
   phyc
 )

@@ -94,7 +94,7 @@ for v in "${VARS[@]}"; do
       TMP_DIR="$TMP_DIR" \
       FUTURE_TAG="$FUT2050_TAG" \
       BASELINE_TAG="$BASELINE_TAG" \
-      OUT_PREFIX="${DATASET_LABEL}_ssp585_${v}" \
+      OUT_PREFIX="${DATASET_LABEL}_${v}" \
       REGRID_DELTA="yes" \
       GRIDFILE="$GRIDFILE" \
       METHOD="$METHOD" \
@@ -117,7 +117,7 @@ for v in "${VARS[@]}"; do
       TMP_DIR="$TMP_DIR" \
       FUTURE_TAG="$FUT2090_TAG" \
       BASELINE_TAG="$BASELINE_TAG" \
-      OUT_PREFIX="${DATASET_LABEL}_ssp585_${v}" \
+      OUT_PREFIX="${DATASET_LABEL}_${v}" \
       REGRID_DELTA="yes" \
       GRIDFILE="$GRIDFILE" \
       METHOD="$METHOD" \

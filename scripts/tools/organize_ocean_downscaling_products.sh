@@ -49,6 +49,30 @@ copy_all_from_dir() {
   echo "[COPY] ${src_dir}/*.nc -> ${dest_dir}/"
 }
 
+copy_future_products() {
+  local var="$1"
+  local window="$2"
+
+  local new_0p25="${DOWNSCALED_ROOT}/${var}/0p25/${window}"
+  local new_0p05="${DOWNSCALED_ROOT}/${var}/0p05/${window}"
+  local legacy_window="${DOWNSCALED_ROOT}/${var}/${window}"
+
+  # Newer IPCC-to-hindcast layout with explicit resolutions.
+  if [[ -d "${new_0p25}" || -d "${new_0p05}" ]]; then
+    copy_all_from_dir "${new_0p25}" "${FUTURE_DIR}/${var}/${window}/0p25"
+    copy_all_from_dir "${new_0p05}" "${FUTURE_DIR}/${var}/${window}/0p05"
+    return 0
+  fi
+
+  # Older CESM-style layout with files directly inside the window folder.
+  if [[ -d "${legacy_window}" ]]; then
+    copy_all_from_dir "${legacy_window}" "${FUTURE_DIR}/${var}/${window}"
+    return 0
+  fi
+
+  echo "[WARN] No recognized future layout for var=${var}, window=${window}" >&2
+}
+
 echo "============================================================"
 echo "Building curated ocean downscaling product tree"
 echo "ROOT          : ${ROOT}"
@@ -78,12 +102,7 @@ copy_one \
 echo "[STEP2] Copying future/downscaled products"
 for var in chl o2 so thetao uo; do
   for window in 2050-2060 2090-2100; do
-    copy_all_from_dir \
-      "${DOWNSCALED_ROOT}/${var}/0p25/${window}" \
-      "${FUTURE_DIR}/${var}/${window}/0p25"
-    copy_all_from_dir \
-      "${DOWNSCALED_ROOT}/${var}/0p05/${window}" \
-      "${FUTURE_DIR}/${var}/${window}/0p05"
+    copy_future_products "${var}" "${window}"
   done
 done
 

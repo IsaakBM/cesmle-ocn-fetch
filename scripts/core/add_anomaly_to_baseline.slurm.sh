@@ -256,27 +256,47 @@ filled_top_count = 0
 first_valid_index = None
 
 if fill_top_missing:
-    reduce_dims = [d for d in da_anom.dims if d != zdim]
-    if not reduce_dims:
+    other_dims = [d for d in da_anom.dims if d != zdim]
+    if not other_dims:
         raise ValueError(f"Anomaly must have dimensions beyond vertical dim {zdim}")
 
-    level_all_nan = da_anom.isnull().all(dim=reduce_dims).values
-    nlev = level_all_nan.shape[0]
+    transposed = da_anom.transpose(zdim, *other_dims)
+    arr = transposed.values
+    nlev = arr.shape[0]
+    flat = arr.reshape(nlev, -1)
 
-    for idx in range(nlev):
-        if not bool(level_all_nan[idx]):
-            first_valid_index = idx
-            break
+    first_valid_indices = np.full(flat.shape[1], -1, dtype=int)
 
-    if first_valid_index is None:
-        raise ValueError("All anomaly levels are missing; cannot fill top layers.")
+    for col in range(flat.shape[1]):
+        valid = np.where(np.isfinite(flat[:, col]))[0]
+        if valid.size > 0:
+            first_valid_indices[col] = int(valid[0])
 
-    if first_valid_index > 0:
-        donor = da_anom.isel({zdim: first_valid_index})
-        for idx in range(first_valid_index):
-            if bool(level_all_nan[idx]):
-                da_anom_filled[{zdim: idx}] = donor
+    if np.all(first_valid_indices < 0):
+        raise ValueError("All anomaly columns are missing; cannot fill top layers.")
+
+    for col in range(flat.shape[1]):
+        donor_idx = first_valid_indices[col]
+        if donor_idx <= 0:
+            continue
+        donor_val = flat[donor_idx, col]
+        for idx in range(donor_idx):
+            if not np.isfinite(flat[idx, col]):
+                flat[idx, col] = donor_val
                 filled_top_count += 1
+
+    filled_arr = flat.reshape(arr.shape)
+    da_anom_filled = xr.DataArray(
+        filled_arr,
+        coords=transposed.coords,
+        dims=transposed.dims,
+        attrs=da_anom.attrs,
+        name=da_anom.name,
+    ).transpose(*da_anom.dims)
+
+    valid_indices = first_valid_indices[first_valid_indices >= 0]
+    if valid_indices.size > 0:
+        first_valid_index = int(valid_indices.min())
 
 for dim in da_base.dims:
     if dim in da_anom_filled.dims and dim in da_base.coords:

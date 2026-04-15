@@ -139,9 +139,9 @@ Reusable worker scripts. These do the actual processing.
 
 - [add_anomaly_to_baseline.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/add_anomaly_to_baseline.slurm.sh)
   - reads one baseline climatology and one anomaly/delta file
-  - dynamically fills only the top anomaly levels that are missing, using the
+  - first computes baseline plus anomaly
+  - then dynamically fills missing top layers in the final output, using the
     first deeper level that contains valid values
-  - adds anomaly to baseline to create the downscaled future field
   - writes the native output
   - can optionally regrid the final downscaled product to another grid
 
@@ -415,8 +415,9 @@ Current logic:
 
 1. use hindcast climatology at `0.25 x 0.25` as the baseline
 2. use IPCC/ESGF deltas at `0.25 x 0.25` as the anomaly field
-3. dynamically fill only the top missing anomaly layers
-4. add the filled anomaly to the baseline
+3. add the anomaly field to the baseline
+4. if the final product still has missing top layers, fill them from the first
+   deeper level with valid values
 5. write the native downscaled output at `0.25 x 0.25`
 6. optionally regrid the downscaled product to `0.05 x 0.05`
 
@@ -454,18 +455,20 @@ Operational sequence for this final stage:
 1. run [run_add_anomaly_to_baseline.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline.sh)
    - reads hindcast baseline climatology files from `clim_windows/`
    - reads IPCC/ESGF delta files from `delta_windows_0p25/`
-   - fills top missing anomaly layers dynamically
+   - first computes baseline plus anomaly
+   - then fills top missing layers dynamically in the final output
    - writes the native downscaled output at `0.25`
    - also writes a `0.05` product using `remapdis`
 
 Important note:
 
 - the top-layer fill is now dynamic rather than hard-coded
-- if only the first anomaly level is missing, only that level is filled
-- if the first several anomaly levels are missing, all missing top levels are
+- it is applied after baseline plus anomaly, on the final downscaled output
+- if only the first top layer is missing, only that layer is filled
+- if the first several top layers are missing, all missing top layers are
   filled from the first deeper level that contains valid values
 - this generalizes the older CESM-to-GLORYS logic, where the top 4 levels were
-  always replaced from a fixed deeper layer
+  always replaced from a fixed deeper layer before addition
 
 Relevant runner:
 

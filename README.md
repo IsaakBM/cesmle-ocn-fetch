@@ -61,7 +61,8 @@ cesmle-ocn-fetch/
 │   │   ├── vertical_interpolate_to_reference.slurm.sh
 │   │   ├── climatology_window_from_monthly_files.slurm.sh
 │   │   ├── climatology_window_from_timeseries.slurm.sh
-│   │   └── delta_from_climatologies.slurm.sh
+│   │   ├── delta_from_climatologies.slurm.sh
+│   │   └── add_anomaly_to_baseline.slurm.sh
 │   ├── runners/                    # Dataset-specific job submitters
 │   │   ├── global_ocean_biogeochemistry_hindcast/
 │   │   │   ├── run_temporal_aggregate_regrid.sh
@@ -72,6 +73,8 @@ cesmle-ocn-fetch/
 │   │   │   ├── run_vertical_interpolate_to_reference.sh
 │   │   │   ├── run_climatology_window.sh
 │   │   │   └── run_delta_from_climatologies.sh
+│   │   ├── ipcc_esgf_to_hindcast/
+│   │   │   └── run_add_anomaly_to_baseline.sh
 │   │   ├── cesm/
 │   │   ├── glorys/
 │   │   └── other_model/
@@ -133,6 +136,14 @@ Reusable worker scripts. These do the actual processing.
   - can optionally regrid the resulting delta to a target grid
   - keeps the subtraction logic generic while runners decide when regridding
     is part of the dataset workflow
+
+- [add_anomaly_to_baseline.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/add_anomaly_to_baseline.slurm.sh)
+  - reads one baseline climatology and one anomaly/delta file
+  - dynamically fills only the top anomaly levels that are missing, using the
+    first deeper level that contains valid values
+  - adds anomaly to baseline to create the downscaled future field
+  - writes the native output
+  - can optionally regrid the final downscaled product to another grid
 
 ### `scripts/runners/`
 
@@ -254,6 +265,12 @@ Those later stages include:
 - addition of anomalies to a baseline field
 - final downscaled output generation
 
+In the newer generalized structure, those later-stage operations are now
+represented by:
+
+- [delta_from_climatologies.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/delta_from_climatologies.slurm.sh)
+- [add_anomaly_to_baseline.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/add_anomaly_to_baseline.slurm.sh)
+
 The original CESM-to-GLORYS production scripts for these later stages are still
 kept in [scripts/slurm](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm),
 including:
@@ -262,8 +279,8 @@ including:
 - [cesm_add_to_glorys_downscale.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/cesm_add_to_glorys_downscale.slurm.sh)
 
 So the generalized `core/` plus `runners/` structure should be read as the
-front half of the full pipeline, not as a replacement for the existence of the
-later anomaly/delta/downscaling steps.
+full pipeline structure, with the newer generalized code increasingly covering
+the later anomaly/delta/downscaling steps as well.
 
 ## Dataset Mapping
 
@@ -392,6 +409,68 @@ Relevant runners:
 - [run_climatology_window.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_climatology_window.sh)
 - [run_delta_from_climatologies.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh)
 
+### IPCC / ESGF To Hindcast Downscaling
+
+Current logic:
+
+1. use hindcast climatology at `0.25 x 0.25` as the baseline
+2. use IPCC/ESGF deltas at `0.25 x 0.25` as the anomaly field
+3. dynamically fill only the top missing anomaly layers
+4. add the filled anomaly to the baseline
+5. write the native downscaled output at `0.25 x 0.25`
+6. optionally regrid the downscaled product to `0.05 x 0.05`
+
+Expected inputs:
+
+- hindcast baseline climatologies:
+  `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/<var>/clim_windows/*.nc`
+- IPCC/ESGF deltas already regridded to `0.25 x 0.25`:
+  `/home/SB5/ipcc_esgf_monthly_1deg/ssp585/<var>/delta_windows_0p25/*.nc`
+
+Downscaled outputs are organized as:
+
+```text
+/home/SB5/downscaled_rcp85/
+├── chl/
+│   ├── 0p25/
+│   │   ├── 2050-2060/
+│   │   └── 2090-2100/
+│   ├── 0p05/
+│   │   ├── 2050-2060/
+│   │   └── 2090-2100/
+│   └── tmp_add/
+└── o2/
+    ├── 0p25/
+    │   ├── 2050-2060/
+    │   └── 2090-2100/
+    ├── 0p05/
+    │   ├── 2050-2060/
+    │   └── 2090-2100/
+    └── tmp_add/
+```
+
+Operational sequence for this final stage:
+
+1. run [run_add_anomaly_to_baseline.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline.sh)
+   - reads hindcast baseline climatology files from `clim_windows/`
+   - reads IPCC/ESGF delta files from `delta_windows_0p25/`
+   - fills top missing anomaly layers dynamically
+   - writes the native downscaled output at `0.25`
+   - also writes a `0.05` product using `remapdis`
+
+Important note:
+
+- the top-layer fill is now dynamic rather than hard-coded
+- if only the first anomaly level is missing, only that level is filled
+- if the first several anomaly levels are missing, all missing top levels are
+  filled from the first deeper level that contains valid values
+- this generalizes the older CESM-to-GLORYS logic, where the top 4 levels were
+  always replaced from a fixed deeper layer
+
+Relevant runner:
+
+- [run_add_anomaly_to_baseline.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline.sh)
+
 ## Download And Utility Scripts
 
 Located in [scripts/bash](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/bash):
@@ -448,6 +527,15 @@ Examples:
 - regridded delta:
   `ipcc_esgf_ssp585_chl_delta_2050-2060_minus_2006-2014.grid_0p25_global.nc`
 
+### Downscaled outputs
+
+Examples:
+
+- native `0.25` downscaled output:
+  `ipcc_esgf_to_hindcast_chl_downscaled_2050-2060.nc`
+- regridded `0.05` downscaled output:
+  `ipcc_esgf_to_hindcast_chl_downscaled_2050-2060_grid_0p05_global.nc`
+
 ## Expected Cluster Paths
 
 Common paths used in the current workflows include:
@@ -494,6 +582,13 @@ To avoid confusion:
 
 - `vertical_interpolate_to_reference.slurm.sh` is the step that creates
   `on_glorys/` outputs before vertically matched climatologies are computed.
+
+- `delta_from_climatologies.slurm.sh` computes future-minus-baseline anomaly
+  products; it does not add them to a baseline.
+
+- `add_anomaly_to_baseline.slurm.sh` is the addition/downscaling step.
+  It combines a baseline climatology with an anomaly/delta field and can also
+  produce an optional remapped final product.
 
 - The downscaling part of the overall workflow still continues after
   climatologies. Climatologies are not the final product; they are the inputs to

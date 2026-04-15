@@ -568,6 +568,49 @@ The scripts assume the cluster environment provides:
 - `python3` for some older scripts
 - NetCDF support compatible with CDO
 
+## Methodological Assumptions
+
+The current downscaling workflow makes several explicit methodological
+assumptions that should be kept in mind when interpreting the outputs.
+
+- Future change is represented as a climatological anomaly or delta:
+  `future climatology - historical climatology`
+
+- The final downscaled future field is constructed as:
+  `baseline climatology + anomaly/delta`
+
+- The hindcast climatology is treated as the historical baseline for the
+  IPCC-to-hindcast downscaling branch.
+
+- Vertical matching to the GLORYS reference grid is performed before the
+  climatology and delta steps for branches where comparable vertical structure
+  is required.
+
+- Horizontal remapping method is not assumed to be universal across all model
+  products:
+  curvilinear or unstructured native grids may require `remapdis`, while
+  regular lon/lat grids may still be handled with `remapbil`.
+
+- Regridding choices are treated as workflow assumptions, not purely technical
+  details, because they can introduce or remove visible artifacts such as seams.
+
+- Missing top layers are handled pragmatically in the final downscaled product:
+  after baseline plus anomaly is computed, any missing top layer or layers are
+  filled from the first deeper level that contains valid values in that same
+  output column.
+
+- The top-layer fill is intended to stabilize shallow output structure where the
+  source products do not provide complete surface information. It is therefore a
+  methodological choice, not just a file-repair step.
+
+- Mask consistency across baseline, climatology, delta, and downscaled products
+  matters. Older or stale files with outdated naming conventions can produce
+  misleading results if later runners pick them up by wildcard.
+
+- This workflow is a statistical downscaling approach built from climatologies,
+  anomalies, interpolation, and remapping. It is not a dynamical ocean-model
+  simulation.
+
 ## Important Current Distinctions
 
 To avoid confusion:

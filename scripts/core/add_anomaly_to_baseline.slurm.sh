@@ -11,9 +11,9 @@
 #
 #  Purpose:
 #    - Read one baseline climatology file and one anomaly/delta file
-#    - Dynamically fill missing top anomaly layers using the first deeper layer
-#      that contains valid values
 #    - Add the filled anomaly to the baseline
+#    - Dynamically fill missing top layers in the final output using the first
+#      deeper layer that contains valid values
 #    - Write the native-resolution output
 #    - Optionally regrid the downscaled output to a second target grid
 #
@@ -51,6 +51,7 @@ export OMP_NUM_THREADS=1
 #   OUT_SUFFIX         : native output suffix (default: downscaled)
 #   WRITE_NATIVE_OUTPUT: yes | no (default: yes)
 #   FILL_TOP_MISSING   : yes | no (default: yes)
+#                        applied to the final output after baseline + anomaly
 #   WRITE_FILLED_ANOM  : yes | no (default: no)
 #   FILLED_ANOM_DIR    : output dir for debug filled anomalies
 #   REGRID_OUTPUT      : yes | no (default: no)
@@ -198,7 +199,7 @@ if [[ "$REGRID_OUTPUT" == "yes" ]]; then
   rm -f "${TMP_REGRID}" "${REGRID_FILE}"
 fi
 
-echo "[STEP2] Filling top missing anomaly layers dynamically and adding to baseline"
+echo "[STEP2] Adding anomaly to baseline and filling top missing output layers dynamically"
 python3 - <<PY
 import numpy as np
 import xarray as xr
@@ -251,16 +252,28 @@ if not zdim_candidates:
     raise ValueError(f"Could not identify vertical dimension in anomaly dims: {da_anom.dims}")
 zdim = zdim_candidates[0]
 
-da_anom_filled = da_anom.copy()
+da_anom_aligned = da_anom.copy()
+for dim in da_base.dims:
+    if dim in da_anom_aligned.dims and dim in da_base.coords:
+        da_anom_aligned = da_anom_aligned.assign_coords({dim: da_base.coords[dim]})
+
+da_out = da_base + da_anom_aligned
+da_out.name = base_var
+
 filled_top_count = 0
 first_valid_index = None
 
 if fill_top_missing:
-    other_dims = [d for d in da_anom.dims if d != zdim]
-    if not other_dims:
-        raise ValueError(f"Anomaly must have dimensions beyond vertical dim {zdim}")
+    zdim_out_candidates = [d for d in da_out.dims if d.lower() in zdim_names]
+    if not zdim_out_candidates:
+        raise ValueError(f"Could not identify vertical dimension in output dims: {da_out.dims}")
+    zdim_out = zdim_out_candidates[0]
 
-    transposed = da_anom.transpose(zdim, *other_dims)
+    other_dims = [d for d in da_out.dims if d != zdim_out]
+    if not other_dims:
+        raise ValueError(f"Output must have dimensions beyond vertical dim {zdim_out}")
+
+    transposed = da_out.transpose(zdim_out, *other_dims)
     arr = transposed.values
     nlev = arr.shape[0]
     flat = arr.reshape(nlev, -1)
@@ -271,9 +284,6 @@ if fill_top_missing:
         valid = np.where(np.isfinite(flat[:, col]))[0]
         if valid.size > 0:
             first_valid_indices[col] = int(valid[0])
-
-    if np.all(first_valid_indices < 0):
-        raise ValueError("All anomaly columns are missing; cannot fill top layers.")
 
     for col in range(flat.shape[1]):
         donor_idx = first_valid_indices[col]
@@ -286,24 +296,17 @@ if fill_top_missing:
                 filled_top_count += 1
 
     filled_arr = flat.reshape(arr.shape)
-    da_anom_filled = xr.DataArray(
+    da_out = xr.DataArray(
         filled_arr,
         coords=transposed.coords,
         dims=transposed.dims,
-        attrs=da_anom.attrs,
-        name=da_anom.name,
-    ).transpose(*da_anom.dims)
+        attrs=da_out.attrs,
+        name=da_out.name,
+    ).transpose(*da_base.dims)
 
     valid_indices = first_valid_indices[first_valid_indices >= 0]
     if valid_indices.size > 0:
         first_valid_index = int(valid_indices.min())
-
-for dim in da_base.dims:
-    if dim in da_anom_filled.dims and dim in da_base.coords:
-        da_anom_filled = da_anom_filled.assign_coords({dim: da_base.coords[dim]})
-
-da_out = da_base + da_anom_filled
-da_out.name = base_var
 
 ds_out = ds_base.copy()
 ds_out[base_var] = da_out
@@ -322,7 +325,7 @@ if write_native:
 if write_filled_anom:
     filled_name = f"{anom_var}_filled"
     ds_filled = ds_anom.copy()
-    ds_filled[filled_name] = da_anom_filled.rename(filled_name)
+    ds_filled[filled_name] = da_anom_aligned.rename(filled_name)
     ds_filled.to_netcdf(filled_anom_file, format="NETCDF4")
 
 ds_base.close()

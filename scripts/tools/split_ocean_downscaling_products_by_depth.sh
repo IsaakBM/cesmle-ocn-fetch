@@ -42,6 +42,8 @@ shopt -s nullglob
 #   TMP_DIR       : temp / bookkeeping directory
 #                   (default: <OUT_ROOT>/tmp_split_bydepth)
 #   MIN_DECIMALS  : minimum decimals in depth token (default: 2)
+#   INTEGER_WIDTH : zero-padded width for the integer part of depth tokens
+#                   (default: 4)
 #   COPY_2D_FILES : yes | no
 #                   yes -> copy 2D files unchanged into mirrored structure
 #                   no  -> skip files without a vertical axis
@@ -51,6 +53,7 @@ IN_ROOT="${IN_ROOT:-/home/SB5/ocean_downscaling_products}"
 OUT_ROOT="${OUT_ROOT:-/home/SB5/ocean_downscaling_products_bydepth}"
 TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_split_bydepth}"
 MIN_DECIMALS="${MIN_DECIMALS:-2}"
+INTEGER_WIDTH="${INTEGER_WIDTH:-4}"
 COPY_2D_FILES="${COPY_2D_FILES:-yes}"
 
 if [[ ! -d "${IN_ROOT}" ]]; then
@@ -93,13 +96,16 @@ PY
 
 depth_token_from_value() {
   local raw_value="$1"
-  python3 - "$raw_value" "$MIN_DECIMALS" <<'PY'
+  python3 - "$raw_value" "$MIN_DECIMALS" "$INTEGER_WIDTH" <<'PY'
 import sys
 
 value = float(sys.argv[1])
 min_decimals = int(sys.argv[2])
+integer_width = int(sys.argv[3])
+
 formatted = f"{value:.{min_decimals}f}"
-token = formatted.replace(".", "p")
+int_part, frac_part = formatted.split(".")
+token = f"{int(int_part):0{integer_width}d}p{frac_part}"
 print(f"{token}m")
 PY
 }
@@ -175,6 +181,7 @@ echo "IN ROOT         : ${IN_ROOT}"
 echo "OUT ROOT        : ${OUT_ROOT}"
 echo "TMP DIR         : ${TMP_DIR}"
 echo "MIN DECIMALS    : ${MIN_DECIMALS}"
+echo "INTEGER WIDTH   : ${INTEGER_WIDTH}"
 echo "COPY 2D FILES   : ${COPY_2D_FILES}"
 echo "============================================================"
 

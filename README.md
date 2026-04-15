@@ -106,7 +106,7 @@ performed**.
 
 Reusable worker scripts. These do the actual processing.
 
-- [temporal_aggregate_regrid.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/temporal_aggregate_regrid.slurm.sh)
+- [temporal_aggregate_regrid.slurm.sh](scripts/core/temporal_aggregate_regrid.slurm.sh)
   - generic monthly preparation and horizontal harmonization
   - supports two input layouts:
     - `year_month`
@@ -116,28 +116,28 @@ Reusable worker scripts. These do the actual processing.
     - already-monthly input that skips aggregation
     - direct regridding/harmonization to a target grid
 
-- [vertical_interpolate_to_reference.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/vertical_interpolate_to_reference.slurm.sh)
+- [vertical_interpolate_to_reference.slurm.sh](scripts/core/vertical_interpolate_to_reference.slurm.sh)
   - generic vertical interpolation to a reference vertical grid
   - can reuse or create shared z-axis descriptors
   - supports source-unit conversion such as `cm -> m`
   - writes vertically matched outputs such as `on_glorys/`
 
-- [climatology_window_from_monthly_files.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/climatology_window_from_monthly_files.slurm.sh)
+- [climatology_window_from_monthly_files.slurm.sh](scripts/core/climatology_window_from_monthly_files.slurm.sh)
   - computes a climatology from many monthly files
   - intended for layouts like one file per month in a `parts/` directory
 
-- [climatology_window_from_timeseries.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/climatology_window_from_timeseries.slurm.sh)
+- [climatology_window_from_timeseries.slurm.sh](scripts/core/climatology_window_from_timeseries.slurm.sh)
   - computes a climatology from one long time-series file or a few chunked
     time-series files
   - merges chunks when needed before selecting the target window
 
-- [delta_from_climatologies.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/delta_from_climatologies.slurm.sh)
+- [delta_from_climatologies.slurm.sh](scripts/core/delta_from_climatologies.slurm.sh)
   - computes `future climatology - baseline climatology`
   - can optionally regrid the resulting delta to a target grid
   - keeps the subtraction logic generic while runners decide when regridding
     is part of the dataset workflow
 
-- [add_anomaly_to_baseline.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/add_anomaly_to_baseline.slurm.sh)
+- [add_anomaly_to_baseline.slurm.sh](scripts/core/add_anomaly_to_baseline.slurm.sh)
   - reads one baseline climatology and one anomaly/delta file
   - first computes baseline plus anomaly
   - then dynamically fills missing top layers in the final output, using the
@@ -174,10 +174,10 @@ This stage creates or prepares monthly files on a common horizontal grid.
 
 Use:
 
-- [temporal_aggregate_regrid.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/temporal_aggregate_regrid.slurm.sh)
+- [temporal_aggregate_regrid.slurm.sh](scripts/core/temporal_aggregate_regrid.slurm.sh)
 
 This stage is the generalized version of what older scripts such as
-[glorys_monthly_0p05.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/glorys_monthly_0p05.slurm.sh)
+[glorys_monthly_0p05.slurm.sh](scripts/slurm/glorys_monthly_0p05.slurm.sh)
 were doing.
 
 Typical outputs live in `parts/`.
@@ -205,7 +205,7 @@ GLORYS vertical grid.
 
 Use:
 
-- [vertical_interpolate_to_reference.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/vertical_interpolate_to_reference.slurm.sh)
+- [vertical_interpolate_to_reference.slurm.sh](scripts/core/vertical_interpolate_to_reference.slurm.sh)
 
 Typical outputs live in `on_glorys/`.
 
@@ -218,7 +218,7 @@ Examples:
 
 This stage is the generalized version of the old CESM vertical-matching idea
 implemented in
-[cesm_vertical_regrid.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/cesm_vertical_regrid.slurm.sh).
+[cesm_vertical_regrid.slurm.sh](scripts/slurm/cesm_vertical_regrid.slurm.sh).
 
 ### 3. Climatology Windows
 
@@ -230,7 +230,7 @@ There are two cases.
 
 Use:
 
-- [climatology_window_from_monthly_files.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/climatology_window_from_monthly_files.slurm.sh)
+- [climatology_window_from_monthly_files.slurm.sh](scripts/core/climatology_window_from_monthly_files.slurm.sh)
 
 This is the GLORYS-style or hindcast-style case:
 
@@ -242,7 +242,7 @@ This is the GLORYS-style or hindcast-style case:
 
 Use:
 
-- [climatology_window_from_timeseries.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/climatology_window_from_timeseries.slurm.sh)
+- [climatology_window_from_timeseries.slurm.sh](scripts/core/climatology_window_from_timeseries.slurm.sh)
 
 This is the CESM-style or IPCC/ESGF-style case:
 
@@ -268,15 +268,15 @@ Those later stages include:
 In the newer generalized structure, those later-stage operations are now
 represented by:
 
-- [delta_from_climatologies.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/delta_from_climatologies.slurm.sh)
-- [add_anomaly_to_baseline.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/add_anomaly_to_baseline.slurm.sh)
+- [delta_from_climatologies.slurm.sh](scripts/core/delta_from_climatologies.slurm.sh)
+- [add_anomaly_to_baseline.slurm.sh](scripts/core/add_anomaly_to_baseline.slurm.sh)
 
 The original CESM-to-GLORYS production scripts for these later stages are still
-kept in [scripts/slurm](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm),
+kept in [scripts/slurm](scripts/slurm),
 including:
 
-- [cesm_member_deltas_0p05.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/cesm_member_deltas_0p05.slurm.sh)
-- [cesm_add_to_glorys_downscale.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/slurm/cesm_add_to_glorys_downscale.slurm.sh)
+- [cesm_member_deltas_0p05.slurm.sh](scripts/slurm/cesm_member_deltas_0p05.slurm.sh)
+- [cesm_add_to_glorys_downscale.slurm.sh](scripts/slurm/cesm_add_to_glorys_downscale.slurm.sh)
 
 So the generalized `core/` plus `runners/` structure should be read as the
 full pipeline structure, with the newer generalized code increasingly covering
@@ -294,9 +294,9 @@ Typical older logic:
 Closest modern abstraction:
 
 - monthly prep/harmonization:
-  [temporal_aggregate_regrid.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/temporal_aggregate_regrid.slurm.sh)
+  [temporal_aggregate_regrid.slurm.sh](scripts/core/temporal_aggregate_regrid.slurm.sh)
 - climatology from monthly files:
-  [climatology_window_from_monthly_files.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/climatology_window_from_monthly_files.slurm.sh)
+  [climatology_window_from_monthly_files.slurm.sh](scripts/core/climatology_window_from_monthly_files.slurm.sh)
 
 ### CESM
 
@@ -311,9 +311,9 @@ Typical older logic:
 Closest modern abstraction:
 
 - vertical interpolation:
-  [vertical_interpolate_to_reference.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/vertical_interpolate_to_reference.slurm.sh)
+  [vertical_interpolate_to_reference.slurm.sh](scripts/core/vertical_interpolate_to_reference.slurm.sh)
 - climatology from time-series files:
-  [climatology_window_from_timeseries.slurm.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/core/climatology_window_from_timeseries.slurm.sh)
+  [climatology_window_from_timeseries.slurm.sh](scripts/core/climatology_window_from_timeseries.slurm.sh)
 
 ### Global Ocean Biogeochemistry Hindcast
 
@@ -326,9 +326,9 @@ Current logic:
 
 Relevant runners:
 
-- [run_temporal_aggregate_regrid.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/global_ocean_biogeochemistry_hindcast/run_temporal_aggregate_regrid.sh)
-- [run_vertical_interpolate_to_reference.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/global_ocean_biogeochemistry_hindcast/run_vertical_interpolate_to_reference.sh)
-- [run_climatology_window.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/global_ocean_biogeochemistry_hindcast/run_climatology_window.sh)
+- [run_temporal_aggregate_regrid.sh](scripts/runners/global_ocean_biogeochemistry_hindcast/run_temporal_aggregate_regrid.sh)
+- [run_vertical_interpolate_to_reference.sh](scripts/runners/global_ocean_biogeochemistry_hindcast/run_vertical_interpolate_to_reference.sh)
+- [run_climatology_window.sh](scripts/runners/global_ocean_biogeochemistry_hindcast/run_climatology_window.sh)
 
 Important note:
 
@@ -379,24 +379,24 @@ Regridded monthly products are organized as:
 
 Operational sequence for the current IPCC branch:
 
-1. run [run_temporal_aggregate_regrid.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_temporal_aggregate_regrid.sh)
+1. run [run_temporal_aggregate_regrid.sh](scripts/runners/ipcc_esgf/run_temporal_aggregate_regrid.sh)
    - reads `/home/SB5/ipcc_esgf_downloads/<scenario>/<var>/`
    - writes `/home/SB5/ipcc_esgf_monthly_1deg/<scenario>/<var>/parts/`
    - uses `METHOD=auto`
    - auto-selects `remapdis` for curvilinear/unstructured sources and
      `remapbil` for regular lon/lat sources
 
-2. run [run_vertical_interpolate_to_reference.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_vertical_interpolate_to_reference.sh)
+2. run [run_vertical_interpolate_to_reference.sh](scripts/runners/ipcc_esgf/run_vertical_interpolate_to_reference.sh)
    - reads `/parts/`
    - writes `/on_glorys/`
 
-3. run [run_climatology_window.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_climatology_window.sh)
+3. run [run_climatology_window.sh](scripts/runners/ipcc_esgf/run_climatology_window.sh)
    - reads `/on_glorys/`
    - writes `/clim_windows/`
    - historical baseline window: `2006-2014`
    - future windows: `2050-2060`, `2090-2100`
 
-4. run [run_delta_from_climatologies.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh)
+4. run [run_delta_from_climatologies.sh](scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh)
    - computes:
      `ssp585 future climatology - historical 2006-2014 climatology`
    - writes `/delta_windows/`
@@ -404,10 +404,10 @@ Operational sequence for the current IPCC branch:
 
 Relevant runners:
 
-- [run_temporal_aggregate_regrid.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_temporal_aggregate_regrid.sh)
-- [run_vertical_interpolate_to_reference.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_vertical_interpolate_to_reference.sh)
-- [run_climatology_window.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_climatology_window.sh)
-- [run_delta_from_climatologies.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh)
+- [run_temporal_aggregate_regrid.sh](scripts/runners/ipcc_esgf/run_temporal_aggregate_regrid.sh)
+- [run_vertical_interpolate_to_reference.sh](scripts/runners/ipcc_esgf/run_vertical_interpolate_to_reference.sh)
+- [run_climatology_window.sh](scripts/runners/ipcc_esgf/run_climatology_window.sh)
+- [run_delta_from_climatologies.sh](scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh)
 
 ### IPCC / ESGF To Hindcast Downscaling
 
@@ -452,7 +452,7 @@ Downscaled outputs are organized as:
 
 Operational sequence for this final stage:
 
-1. run [run_add_anomaly_to_baseline.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline.sh)
+1. run [run_add_anomaly_to_baseline.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline.sh)
    - reads hindcast baseline climatology files from `clim_windows/`
    - reads IPCC/ESGF delta files from `delta_windows_0p25/`
    - first computes baseline plus anomaly
@@ -472,11 +472,11 @@ Important note:
 
 Relevant runner:
 
-- [run_add_anomaly_to_baseline.sh](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline.sh)
+- [run_add_anomaly_to_baseline.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline.sh)
 
 ## Download And Utility Scripts
 
-Located in [scripts/bash](/Users/ibrito/Desktop/cesmle-ocn-fetch/scripts/bash):
+Located in [scripts/bash](scripts/bash):
 
 - `download_cesmle.sh`
 - `download_cesmle_list_parallel.sh`

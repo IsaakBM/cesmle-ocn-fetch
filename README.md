@@ -75,11 +75,16 @@ cesmle-ocn-fetch/
 │   │   │   └── run_delta_from_climatologies.sh
 │   │   ├── ipcc_esgf_to_hindcast/
 │   │   │   └── run_add_anomaly_to_baseline.sh
+│   │   ├── cesm/
+│   │   │   ├── run_temporal_aggregate_regrid.sh
+│   │   │   ├── run_vertical_interpolate_to_reference.sh
+│   │   │   ├── run_climatology_window.sh
+│   │   │   ├── run_delta_from_climatologies.sh
+│   │   │   └── run_add_anomaly_to_baseline.sh
 │   │   ├── products/
 │   │   │   ├── run_organize_ocean_downscaling_products.sh
 │   │   │   ├── run_split_ocean_downscaling_products_by_depth.sh
 │   │   │   └── run_export_ocean_downscaling_products_bydepth_to_csv.sh
-│   │   ├── cesm/
 │   │   ├── glorys/
 │   │   └── other_model/
 │   ├── slurm/                      # Older production scripts still kept in place
@@ -349,10 +354,44 @@ Typical older logic:
 
 Closest modern abstraction:
 
+- horizontal regrid:
+  [temporal_aggregate_regrid.slurm.sh](scripts/core/temporal_aggregate_regrid.slurm.sh)
 - vertical interpolation:
   [vertical_interpolate_to_reference.slurm.sh](scripts/core/vertical_interpolate_to_reference.slurm.sh)
 - climatology from time-series files:
   [climatology_window_from_timeseries.slurm.sh](scripts/core/climatology_window_from_timeseries.slurm.sh)
+- delta from climatologies:
+  [delta_from_climatologies.slurm.sh](scripts/core/delta_from_climatologies.slurm.sh)
+- baseline plus anomaly:
+  [add_anomaly_to_baseline.slurm.sh](scripts/core/add_anomaly_to_baseline.slurm.sh)
+
+Modern CESM runners now live in:
+
+- [run_temporal_aggregate_regrid.sh](scripts/runners/cesm/run_temporal_aggregate_regrid.sh)
+- [run_vertical_interpolate_to_reference.sh](scripts/runners/cesm/run_vertical_interpolate_to_reference.sh)
+- [run_climatology_window.sh](scripts/runners/cesm/run_climatology_window.sh)
+- [run_delta_from_climatologies.sh](scripts/runners/cesm/run_delta_from_climatologies.sh)
+- [run_add_anomaly_to_baseline.sh](scripts/runners/cesm/run_add_anomaly_to_baseline.sh)
+
+Current CESM logic in the new runner architecture:
+
+1. regrid CESM monthly POP time-series to `1 degree`
+2. vertically interpolate them to GLORYS depth levels
+3. compute member-specific climatology windows from the regridded and
+   vertically matched time series
+4. compute member-specific future-minus-baseline deltas
+5. add those deltas to the GLORYS baseline for the mapped variables
+
+Important notes:
+
+- the current modern CESM runner family is centered on the `rcp85` branch,
+  matching the old downstream CESM workflow organization
+- the add-to-baseline stage currently preserves the old variable mapping:
+  - `TEMP -> thetao`
+  - `SALT -> so`
+  - `UVEL -> uo`
+- the newer CESM climatology, delta, and addition runners now build explicit
+  expected member filenames rather than relying on wildcard first-match logic
 
 ### Global Ocean Biogeochemistry Hindcast
 

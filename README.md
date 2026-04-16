@@ -138,6 +138,8 @@ Reusable worker scripts. These do the actual processing.
 - [climatology_window_from_monthly_files.slurm.sh](scripts/core/climatology_window_from_monthly_files.slurm.sh)
   - computes a climatology from many monthly files
   - intended for layouts like one file per month in a `parts/` directory
+  - can dynamically fill missing top climatology layers from the first deeper
+    valid layer in each water column
 
 - [climatology_window_from_timeseries.slurm.sh](scripts/core/climatology_window_from_timeseries.slurm.sh)
   - computes a climatology from one long time-series file or a few chunked
@@ -767,6 +769,11 @@ assumptions that should be kept in mind when interpreting the outputs.
   after baseline plus anomaly is computed, any missing top layer or layers are
   filled from the first deeper level that contains valid values in that same
   output column.
+
+- Baseline climatologies built from monthly files can also apply the same
+  top-gap fill logic after climatology generation. This allows baseline
+  products such as hindcast biogeochemistry climatologies to stabilize missing
+  shallow layers without changing the upstream monthly/intermediate files.
 
 - The top-layer fill is intended to stabilize shallow output structure where the
   source products do not provide complete surface information. It is therefore a

@@ -53,11 +53,6 @@ if [[ ! -f "$GRIDFILE" ]]; then
   exit 1
 fi
 
-find_first_match() {
-  local pattern="$1"
-  find ${pattern} -maxdepth 0 -type f 2>/dev/null | sort | head -n 1
-}
-
 echo "Submitting IPCC/ESGF delta jobs with generic worker:"
 for v in "${VARS[@]}"; do
   HIST_DIR="${ROOT}/historical/${v}/clim_windows"
@@ -65,6 +60,10 @@ for v in "${VARS[@]}"; do
   OUT_DIR="${ROOT}/ssp585/${v}/delta_windows"
   TMP_DIR="${ROOT}/ssp585/${v}/tmp_delta"
   REGRID_OUT_DIR="${ROOT}/ssp585/${v}/delta_windows_0p25"
+  BASELINE_FILE="${HIST_DIR}/${DATASET_LABEL}_historical_${v}_clim_${BASELINE_TAG}.nc"
+  FUT2050_FILE="${SSP_DIR}/${DATASET_LABEL}_ssp585_${v}_clim_${FUT2050_TAG}.nc"
+  FUT2090_FILE="${SSP_DIR}/${DATASET_LABEL}_ssp585_${v}_clim_${FUT2090_TAG}.nc"
+  DELTA_PREFIX="${DATASET_LABEL}_ssp585_${v}"
 
   if [[ ! -d "$HIST_DIR" ]]; then
     echo "WARN: Historical climatology directory not found, skipping: $HIST_DIR"
@@ -76,16 +75,12 @@ for v in "${VARS[@]}"; do
     continue
   fi
 
-  BASELINE_FILE="$(find_first_match "${HIST_DIR}/*${v}*clim_${BASELINE_TAG}.nc")"
-  FUT2050_FILE="$(find_first_match "${SSP_DIR}/*${v}*clim_${FUT2050_TAG}.nc")"
-  FUT2090_FILE="$(find_first_match "${SSP_DIR}/*${v}*clim_${FUT2090_TAG}.nc")"
-
-  if [[ -z "$BASELINE_FILE" ]]; then
-    echo "WARN: Missing baseline climatology for VAR=${v}"
+  if [[ ! -f "$BASELINE_FILE" ]]; then
+    echo "WARN: Missing baseline climatology for VAR=${v}: ${BASELINE_FILE}"
     continue
   fi
 
-  if [[ -n "$FUT2050_FILE" ]]; then
+  if [[ -f "$FUT2050_FILE" ]]; then
     jid2050=$(DATASET_LABEL="${DATASET_LABEL}_ssp585" \
       VAR="$v" \
       BASELINE_FILE="$BASELINE_FILE" \
@@ -94,7 +89,7 @@ for v in "${VARS[@]}"; do
       TMP_DIR="$TMP_DIR" \
       FUTURE_TAG="$FUT2050_TAG" \
       BASELINE_TAG="$BASELINE_TAG" \
-      OUT_PREFIX="${DATASET_LABEL}_${v}" \
+      OUT_PREFIX="${DELTA_PREFIX}" \
       REGRID_DELTA="yes" \
       GRIDFILE="$GRIDFILE" \
       METHOD="$METHOD" \
@@ -105,10 +100,10 @@ for v in "${VARS[@]}"; do
       "$CORE_SCRIPT")
     echo "  submitted VAR=${v} WINDOW=${FUT2050_TAG} as jobid=${jid2050}"
   else
-    echo "WARN: Missing 2050 climatology for VAR=${v}"
+    echo "WARN: Missing 2050 climatology for VAR=${v}: ${FUT2050_FILE}"
   fi
 
-  if [[ -n "$FUT2090_FILE" ]]; then
+  if [[ -f "$FUT2090_FILE" ]]; then
     jid2090=$(DATASET_LABEL="${DATASET_LABEL}_ssp585" \
       VAR="$v" \
       BASELINE_FILE="$BASELINE_FILE" \
@@ -117,7 +112,7 @@ for v in "${VARS[@]}"; do
       TMP_DIR="$TMP_DIR" \
       FUTURE_TAG="$FUT2090_TAG" \
       BASELINE_TAG="$BASELINE_TAG" \
-      OUT_PREFIX="${DATASET_LABEL}_${v}" \
+      OUT_PREFIX="${DELTA_PREFIX}" \
       REGRID_DELTA="yes" \
       GRIDFILE="$GRIDFILE" \
       METHOD="$METHOD" \
@@ -128,7 +123,7 @@ for v in "${VARS[@]}"; do
       "$CORE_SCRIPT")
     echo "  submitted VAR=${v} WINDOW=${FUT2090_TAG} as jobid=${jid2090}"
   else
-    echo "WARN: Missing 2090 climatology for VAR=${v}"
+    echo "WARN: Missing 2090 climatology for VAR=${v}: ${FUT2090_FILE}"
   fi
 done
 

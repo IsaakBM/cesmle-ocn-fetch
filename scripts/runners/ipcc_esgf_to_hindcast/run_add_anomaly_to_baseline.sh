@@ -59,16 +59,12 @@ if [[ ! -f "$REGRID_GRIDFILE" ]]; then
   exit 1
 fi
 
-find_first_match() {
-  local pattern="$1"
-  find ${pattern} -maxdepth 0 -type f 2>/dev/null | sort | head -n 1
-}
-
 echo "Submitting IPCC ESGF to hindcast downscaling jobs with generic worker:"
 for v in "${VARS[@]}"; do
   BASELINE_DIR="${HINDCAST_ROOT}/${v}/clim_windows"
   DELTA_025_DIR="${DELTA_ROOT}/${v}/delta_windows_0p25"
   TMP_DIR="${OUTROOT}/${v}/tmp_add"
+  BASELINE_FILE="${BASELINE_DIR}/global_ocean_biogeochemistry_hindcast_${v}_clim_${BASELINE_TAG}.nc"
 
   if [[ ! -d "$BASELINE_DIR" ]]; then
     echo "WARN: Hindcast climatology directory not found, skipping: $BASELINE_DIR"
@@ -80,16 +76,15 @@ for v in "${VARS[@]}"; do
     continue
   fi
 
-  BASELINE_FILE="$(find_first_match "${BASELINE_DIR}/*${v}*clim_${BASELINE_TAG}.nc")"
-  if [[ -z "$BASELINE_FILE" ]]; then
-    echo "WARN: Missing hindcast baseline climatology for VAR=${v}"
+  if [[ ! -f "$BASELINE_FILE" ]]; then
+    echo "WARN: Missing hindcast baseline climatology for VAR=${v}: ${BASELINE_FILE}"
     continue
   fi
 
   for window in "${WINDOWS[@]}"; do
-    DELTA_FILE="$(find_first_match "${DELTA_025_DIR}/*${v}*delta_${window}_minus_${BASELINE_TAG}*grid_0p25_global.nc")"
-    if [[ -z "$DELTA_FILE" ]]; then
-      echo "WARN: Missing delta for VAR=${v} WINDOW=${window}"
+    DELTA_FILE="${DELTA_025_DIR}/ipcc_esgf_ssp585_${v}_delta_${window}_minus_${BASELINE_TAG}_grid_0p25_global.nc"
+    if [[ ! -f "$DELTA_FILE" ]]; then
+      echo "WARN: Missing delta for VAR=${v} WINDOW=${window}: ${DELTA_FILE}"
       continue
     fi
 

@@ -52,6 +52,9 @@ shopt -s nullglob
 #   WINDOW_END      : end YYYYMM (default: 201412)
 #   EXPECTED_N      : expected number of monthly files (default: 108)
 #   OUT_PREFIX      : output filename prefix (default: <DATASET_LABEL>_<VAR>)
+#   FILL_TOP_MISSING: yes | no (default: yes)
+#                     after climatology generation, fill missing top layers in
+#                     each water column from the first deeper valid layer
 # ==============================================================================
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"
@@ -65,6 +68,7 @@ WINDOW_START="${WINDOW_START:-200601}"
 WINDOW_END="${WINDOW_END:-201412}"
 EXPECTED_N="${EXPECTED_N:-108}"
 OUT_PREFIX="${OUT_PREFIX:-}"
+FILL_TOP_MISSING="${FILL_TOP_MISSING:-yes}"
 
 if [[ -z "$VAR" || -z "$IN_DIR" || -z "$OUT_DIR" ]]; then
   echo "ERROR: Missing required environment variables."
@@ -91,6 +95,11 @@ if [[ -z "$OUT_PREFIX" ]]; then
   OUT_PREFIX="${DATASET_LABEL}_${VAR}"
 fi
 
+if [[ "$FILL_TOP_MISSING" != "yes" && "$FILL_TOP_MISSING" != "no" ]]; then
+  echo "ERROR: FILL_TOP_MISSING must be yes or no"
+  exit 1
+fi
+
 mkdir -p "${OUT_DIR}" "${TMP_DIR}"
 
 echo "============================================================"
@@ -104,6 +113,7 @@ echo "FILE GLOB   : ${FILE_GLOB}"
 echo "DATE PATTERN: ${DATE_PATTERN}"
 echo "WINDOW      : ${WINDOW_START} to ${WINDOW_END}"
 echo "OUT PREFIX  : ${OUT_PREFIX}"
+echo "FILL TOP    : ${FILL_TOP_MISSING}"
 echo "============================================================"
 
 # ------------------------------------------------------------------------------
@@ -153,17 +163,106 @@ fi
 # ------------------------------------------------------------------------------
 OUTFILE="${OUT_DIR}/${OUT_PREFIX}_clim_${WINDOW_START:0:4}-${WINDOW_END:0:4}.nc"
 TMP_OUT="${TMP_DIR}/${OUT_PREFIX}_clim_${WINDOW_START:0:4}-${WINDOW_END:0:4}.tmp.nc"
+TMP_FILLED="${TMP_DIR}/${OUT_PREFIX}_clim_${WINDOW_START:0:4}-${WINDOW_END:0:4}.filled.tmp.nc"
 
 # ------------------------------------------------------------------------------
 # Processing
 # ------------------------------------------------------------------------------
 echo "[STEP1] Removing old output if present"
-rm -f "${OUTFILE}" "${TMP_OUT}"
+rm -f "${OUTFILE}" "${TMP_OUT}" "${TMP_FILLED}"
 
 echo "[STEP2] Computing climatological mean directly from monthly files"
 cdo -L -O timmean -mergetime "${VALID_FILES[@]}" "${TMP_OUT}"
 
-echo "[STEP3] Writing final output"
+if [[ "$FILL_TOP_MISSING" == "yes" ]]; then
+  echo "[STEP3] Filling missing top climatology layers dynamically"
+  python3 - <<PY
+import numpy as np
+import xarray as xr
+
+infile = "${TMP_OUT}"
+outfile = "${TMP_FILLED}"
+var_hint = "${VAR}"
+
+ds = xr.open_dataset(infile)
+
+def pick_main_var(ds, var_hint):
+    if var_hint in ds.data_vars:
+        return var_hint
+    candidates = [
+        v for v in ds.data_vars
+        if "bnds" not in v.lower() and "bounds" not in v.lower()
+    ]
+    if not candidates:
+        raise ValueError(f"No valid data variable found in dataset: {list(ds.data_vars)}")
+    return candidates[0]
+
+main_var = pick_main_var(ds, var_hint)
+da = ds[main_var]
+zdim_names = ("depth", "depth_below_sea", "lev", "z_t")
+zdim_candidates = [d for d in da.dims if d.lower() in zdim_names]
+
+filled_top_count = 0
+first_valid_index = None
+
+if zdim_candidates:
+    zdim = zdim_candidates[0]
+    other_dims = [d for d in da.dims if d != zdim]
+    if other_dims:
+        transposed = da.transpose(zdim, *other_dims)
+        arr = transposed.values
+        nlev = arr.shape[0]
+        flat = arr.reshape(nlev, -1)
+
+        first_valid_indices = np.full(flat.shape[1], -1, dtype=int)
+        for col in range(flat.shape[1]):
+            valid = np.where(np.isfinite(flat[:, col]))[0]
+            if valid.size > 0:
+                first_valid_indices[col] = int(valid[0])
+
+        for col in range(flat.shape[1]):
+            donor_idx = first_valid_indices[col]
+            if donor_idx <= 0:
+                continue
+            donor_val = flat[donor_idx, col]
+            for idx in range(donor_idx):
+                if not np.isfinite(flat[idx, col]):
+                    flat[idx, col] = donor_val
+                    filled_top_count += 1
+
+        filled_arr = flat.reshape(arr.shape)
+        da_filled = xr.DataArray(
+            filled_arr,
+            coords=transposed.coords,
+            dims=transposed.dims,
+            attrs=da.attrs,
+            name=da.name,
+        ).transpose(*da.dims)
+
+        valid_indices = first_valid_indices[first_valid_indices >= 0]
+        if valid_indices.size > 0:
+            first_valid_index = int(valid_indices.min())
+
+        ds[main_var] = da_filled
+    else:
+        zdim = zdim_candidates[0]
+else:
+    zdim = None
+
+encoding = {main_var: {"zlib": True, "complevel": 1}}
+
+print(f"MAIN VAR           : {main_var}")
+print(f"VERTICAL DIM       : {zdim}")
+print(f"FIRST VALID INDEX  : {first_valid_index}")
+print(f"TOP LEVELS FILLED  : {filled_top_count}")
+
+ds.to_netcdf(outfile, format="NETCDF4", encoding=encoding)
+ds.close()
+PY
+  mv -f "${TMP_FILLED}" "${TMP_OUT}"
+fi
+
+echo "[STEP4] Writing final output"
 mv -f "${TMP_OUT}" "${OUTFILE}"
 
 echo "[DONE ] ${OUTFILE}"

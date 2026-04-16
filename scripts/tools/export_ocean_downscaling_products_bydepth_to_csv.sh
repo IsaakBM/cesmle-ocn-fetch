@@ -16,7 +16,7 @@
 #        /home/SB5/ocean_downscaling_products_bydepth_txt
 #    - Export each 2D NetCDF file to a plain CSV table
 #    - Write CSV columns as:
-#        x,y,<variable>_<units>
+#        x,y,depth,<variable>_<units>
 #
 #  Intended to be run on Slurm-based HPC systems.
 # ==============================================================================
@@ -152,6 +152,19 @@ with xr.open_dataset(infile) as ds:
     else:
         raise SystemExit(f"Unsupported coordinate dimensionality in {infile}")
 
+    depth_value = np.nan
+    for depth_name in ["depth", "depth_below_sea", "lev", "z_t"]:
+        if depth_name in ds.coords:
+            depth_da = ds[depth_name].squeeze(drop=True)
+            if depth_da.ndim == 0:
+                depth_value = float(depth_da.values)
+                break
+        elif depth_name in ds:
+            depth_da = ds[depth_name].squeeze(drop=True)
+            if depth_da.ndim == 0:
+                depth_value = float(depth_da.values)
+                break
+
     values = da.values
     if values.ndim != 2:
         raise SystemExit(f"Expected a 2D variable in {infile}, got ndim={values.ndim}")
@@ -168,6 +181,7 @@ with xr.open_dataset(infile) as ds:
         {
             "x": xx.ravel(),
             "y": yy.ravel(),
+            "depth": np.full(xx.size, depth_value),
             value_column: values.ravel(),
         }
     )

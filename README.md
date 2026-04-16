@@ -75,10 +75,18 @@ cesmle-ocn-fetch/
 │   │   │   └── run_delta_from_climatologies.sh
 │   │   ├── ipcc_esgf_to_hindcast/
 │   │   │   └── run_add_anomaly_to_baseline.sh
+│   │   ├── products/
+│   │   │   ├── run_organize_ocean_downscaling_products.sh
+│   │   │   ├── run_split_ocean_downscaling_products_by_depth.sh
+│   │   │   └── run_export_ocean_downscaling_products_bydepth_to_csv.sh
 │   │   ├── cesm/
 │   │   ├── glorys/
 │   │   └── other_model/
 │   ├── slurm/                      # Older production scripts still kept in place
+│   ├── tools/                      # Packaging/export/organization utilities
+│   │   ├── organize_ocean_downscaling_products.sh
+│   │   ├── split_ocean_downscaling_products_by_depth.sh
+│   │   └── export_ocean_downscaling_products_bydepth_to_csv.sh
 │   └── legacy/                     # Reserved for older scripts as they are migrated
 ├── .gitignore
 ├── LICENSE
@@ -156,6 +164,37 @@ Dataset-specific submitters. These define:
 - dataset-specific assumptions
 
 and then call the generic workers in `scripts/core/` using `sbatch`.
+
+### `scripts/tools/`
+
+Utility workflows that are still cluster-oriented, but are better understood as
+packaging/export/organization steps than as reusable scientific operators.
+
+- [organize_ocean_downscaling_products.sh](scripts/tools/organize_ocean_downscaling_products.sh)
+  - builds a curated copy-only product tree under:
+    `/home/SB5/ocean_downscaling_products`
+  - organizes products into:
+    - `baseline/`
+    - `future/`
+  - supports both newer `0p25/0p05` future layouts and older CESM-style
+    window-folder layouts
+
+- [split_ocean_downscaling_products_by_depth.sh](scripts/tools/split_ocean_downscaling_products_by_depth.sh)
+  - reads curated 3D products from:
+    `/home/SB5/ocean_downscaling_products`
+  - mirrors them into:
+    `/home/SB5/ocean_downscaling_products_bydepth`
+  - writes one NetCDF file per depth layer
+  - includes a zero-padded depth token in filenames such as:
+    `depth_0005p08m`
+
+- [export_ocean_downscaling_products_bydepth_to_csv.sh](scripts/tools/export_ocean_downscaling_products_bydepth_to_csv.sh)
+  - reads by-depth NetCDF files from:
+    `/home/SB5/ocean_downscaling_products_bydepth`
+  - mirrors them into:
+    `/home/SB5/ocean_downscaling_products_bydepth_txt`
+  - exports CSV columns as:
+    `x,y,depth,<variable>_<units>`
 
 ### `scripts/slurm/`
 
@@ -401,6 +440,8 @@ Operational sequence for the current IPCC branch:
      `ssp585 future climatology - historical 2006-2014 climatology`
    - writes `/delta_windows/`
    - also writes `/delta_windows_0p25/` when delta regridding is enabled
+   - now targets exact expected climatology filenames instead of picking the
+     first wildcard match in the directory
 
 Relevant runners:
 
@@ -459,6 +500,8 @@ Operational sequence for this final stage:
    - then fills top missing layers dynamically in the final output
    - writes the native downscaled output at `0.25`
    - also writes a `0.05` product using `remapdis`
+   - now targets exact expected hindcast baseline and delta filenames instead
+     of selecting the first wildcard match
 
 Important note:
 
@@ -473,6 +516,93 @@ Important note:
 Relevant runner:
 
 - [run_add_anomaly_to_baseline.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline.sh)
+
+### Curated Product Trees
+
+After the main scientific workflow produces the final downscaled outputs, the
+repository now also supports curated delivery/export trees.
+
+#### Curated 3D product tree
+
+Built with:
+
+- [organize_ocean_downscaling_products.sh](scripts/tools/organize_ocean_downscaling_products.sh)
+- [run_organize_ocean_downscaling_products.sh](scripts/runners/products/run_organize_ocean_downscaling_products.sh)
+
+Expected output root:
+
+```text
+/home/SB5/ocean_downscaling_products/
+├── baseline/
+│   ├── chl/
+│   ├── o2/
+│   ├── so/
+│   ├── thetao/
+│   └── uo/
+└── future/
+    ├── chl/
+    ├── o2/
+    ├── so/
+    ├── thetao/
+    └── uo/
+```
+
+Notes:
+
+- `baseline/` stores curated climatological reference products
+- `future/` stores curated future/downscaled products
+- the tool copies files; it does not move or delete the original workflow trees
+
+#### Curated by-depth NetCDF tree
+
+Built with:
+
+- [split_ocean_downscaling_products_by_depth.sh](scripts/tools/split_ocean_downscaling_products_by_depth.sh)
+- [run_split_ocean_downscaling_products_by_depth.sh](scripts/runners/products/run_split_ocean_downscaling_products_by_depth.sh)
+
+Expected output root:
+
+```text
+/home/SB5/ocean_downscaling_products_bydepth/
+├── baseline/
+└── future/
+```
+
+Notes:
+
+- mirrors the curated `baseline/future` structure
+- each 3D NetCDF file becomes one 2D NetCDF file per depth layer
+- depth is encoded in the filename with a zero-padded safe token such as:
+  - `depth_0000p49m`
+  - `depth_0005p08m`
+  - `depth_0453p94m`
+  - `depth_5727p92m`
+
+#### Curated by-depth CSV tree
+
+Built with:
+
+- [export_ocean_downscaling_products_bydepth_to_csv.sh](scripts/tools/export_ocean_downscaling_products_bydepth_to_csv.sh)
+- [run_export_ocean_downscaling_products_bydepth_to_csv.sh](scripts/runners/products/run_export_ocean_downscaling_products_bydepth_to_csv.sh)
+
+Expected output root:
+
+```text
+/home/SB5/ocean_downscaling_products_bydepth_txt/
+├── baseline/
+└── future/
+```
+
+Notes:
+
+- mirrors the by-depth NetCDF tree
+- exports each by-depth NetCDF file to one CSV
+- CSV columns are:
+  - `x`
+  - `y`
+  - `depth`
+  - `<variable>_<units>`
+- singleton dimensions such as `time=1` are squeezed before export
 
 ## Download And Utility Scripts
 

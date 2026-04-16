@@ -25,7 +25,7 @@
 #SBATCH --job-name=bydepth_csv
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=6
 #SBATCH --mem=128G
 #SBATCH -t 1-00:00:00
 #SBATCH --mail-type=END,FAIL
@@ -54,6 +54,7 @@ IN_ROOT="${IN_ROOT:-/home/SB5/ocean_downscaling_products_bydepth}"
 OUT_ROOT="${OUT_ROOT:-/home/SB5/ocean_downscaling_products_bydepth_txt}"
 TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_export_csv}"
 DROP_MISSING="${DROP_MISSING:-yes}"
+NPROC="${SLURM_CPUS_PER_TASK:-6}"
 
 if [[ ! -d "${IN_ROOT}" ]]; then
   echo "ERROR: IN_ROOT does not exist: ${IN_ROOT}"
@@ -210,6 +211,7 @@ echo "IN ROOT         : ${IN_ROOT}"
 echo "OUT ROOT        : ${OUT_ROOT}"
 echo "TMP DIR         : ${TMP_DIR}"
 echo "DROP MISSING    : ${DROP_MISSING}"
+echo "PARALLEL FILES  : ${NPROC}"
 echo "============================================================"
 
 mapfile -t files < <(find "${IN_ROOT}" -type f -name "*.nc" | sort)
@@ -219,8 +221,14 @@ if (( ${#files[@]} == 0 )); then
 fi
 
 for infile in "${files[@]}"; do
-  process_one_file "${infile}"
+  :
 done
+
+export IN_ROOT OUT_ROOT TMP_DIR DROP_MISSING
+export -f process_one_file
+
+printf '%s\0' "${files[@]}" \
+  | xargs -0 -n 1 -P "${NPROC}" bash -c 'process_one_file "$1"' _
 
 echo
 echo "All by-depth CSV exports completed."

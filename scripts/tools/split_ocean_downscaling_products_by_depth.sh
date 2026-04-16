@@ -22,7 +22,7 @@
 #SBATCH --job-name=split_bydepth
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=6
 #SBATCH --mem=128G
 #SBATCH -t 1-00:00:00
 #SBATCH --mail-type=END,FAIL
@@ -55,6 +55,7 @@ TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_split_bydepth}"
 MIN_DECIMALS="${MIN_DECIMALS:-2}"
 INTEGER_WIDTH="${INTEGER_WIDTH:-4}"
 COPY_2D_FILES="${COPY_2D_FILES:-yes}"
+NPROC="${SLURM_CPUS_PER_TASK:-6}"
 
 if [[ ! -d "${IN_ROOT}" ]]; then
   echo "ERROR: IN_ROOT does not exist: ${IN_ROOT}"
@@ -202,6 +203,7 @@ echo "TMP DIR         : ${TMP_DIR}"
 echo "MIN DECIMALS    : ${MIN_DECIMALS}"
 echo "INTEGER WIDTH   : ${INTEGER_WIDTH}"
 echo "COPY 2D FILES   : ${COPY_2D_FILES}"
+echo "PARALLEL FILES  : ${NPROC}"
 echo "============================================================"
 
 mapfile -t files < <(find "${IN_ROOT}" -type f -name "*.nc" | sort)
@@ -211,8 +213,14 @@ if (( ${#files[@]} == 0 )); then
 fi
 
 for infile in "${files[@]}"; do
-  process_one_file "${infile}"
+  :
 done
+
+export IN_ROOT OUT_ROOT TMP_DIR MIN_DECIMALS INTEGER_WIDTH COPY_2D_FILES
+export -f find_vertical_dim depth_token_from_value extract_all_levels process_one_file
+
+printf '%s\0' "${files[@]}" \
+  | xargs -0 -n 1 -P "${NPROC}" bash -c 'process_one_file "$1"' _
 
 echo
 echo "All by-depth splitting completed."

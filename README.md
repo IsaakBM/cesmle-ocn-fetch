@@ -45,8 +45,10 @@ cesmle-ocn-fetch/
 ├── docs/                           # Reference files used during setup/planning
 │   ├── CMIP6_MIP_tables.xlsx       # Variable/table reference workbook
 │   └── aws-cesm1-le.csv            # CESM-related reference table
-├── legacy/                         # Old outputs/examples kept outside the main workflow
-│   └── *.nc                        # Example downscaled/anomaly/climatology NetCDF files
+├── legacy/                         # Archived outputs and pre-refactor workflow code
+│   ├── *.nc                        # Example downscaled/anomaly/climatology NetCDF files
+│   └── scripts/
+│       └── slurm/                  # Archived pre-refactor Slurm workflow scripts
 ├── logs/                           # Slurm stdout/stderr targets
 ├── scripts/
 │   ├── bash/                       # Download, fetch, and utility shell scripts
@@ -86,13 +88,13 @@ cesmle-ocn-fetch/
 │   │   │   ├── run_split_ocean_downscaling_products_by_depth.sh
 │   │   │   └── run_export_ocean_downscaling_products_bydepth_to_csv.sh
 │   │   ├── glorys/
+│   │   │   ├── run_temporal_aggregate_regrid.sh
+│   │   │   └── run_climatology_window.sh
 │   │   └── other_model/
-│   ├── slurm/                      # Older production scripts still kept in place
 │   ├── tools/                      # Packaging/export/organization utilities
 │   │   ├── organize_ocean_downscaling_products.sh
 │   │   ├── split_ocean_downscaling_products_by_depth.sh
 │   │   └── export_ocean_downscaling_products_bydepth_to_csv.sh
-│   └── legacy/                     # Reserved for older scripts as they are migrated
 ├── .gitignore
 ├── LICENSE
 └── README.md
@@ -203,11 +205,11 @@ packaging/export/organization steps than as reusable scientific operators.
   - exports CSV columns as:
     `x,y,depth,<variable>_<units>`
 
-### `scripts/slurm/`
+### `legacy/scripts/slurm/`
 
-Older production scripts are still kept here and remain useful references.
-These are not removed yet because they document the original working workflows
-and still help validate the newer abstractions.
+Archived pre-refactor workflow scripts kept for provenance and reference.
+These are not the active workflow surface anymore, but they remain tracked so
+the original production implementations are still documented in the repository.
 
 ## Workflow Logic
 
@@ -223,7 +225,7 @@ Use:
 - [temporal_aggregate_regrid.slurm.sh](scripts/core/temporal_aggregate_regrid.slurm.sh)
 
 This stage is the generalized version of what older scripts such as
-[glorys_monthly_0p05.slurm.sh](scripts/slurm/glorys_monthly_0p05.slurm.sh)
+[glorys_monthly_0p05.slurm.sh](legacy/scripts/slurm/glorys_monthly_0p05.slurm.sh)
 were doing.
 
 Typical outputs live in `parts/`.
@@ -264,7 +266,7 @@ Examples:
 
 This stage is the generalized version of the old CESM vertical-matching idea
 implemented in
-[cesm_vertical_regrid.slurm.sh](scripts/slurm/cesm_vertical_regrid.slurm.sh).
+[cesm_vertical_regrid.slurm.sh](legacy/scripts/slurm/cesm_vertical_regrid.slurm.sh).
 
 ### 3. Climatology Windows
 
@@ -318,11 +320,11 @@ represented by:
 - [add_anomaly_to_baseline.slurm.sh](scripts/core/add_anomaly_to_baseline.slurm.sh)
 
 The original CESM-to-GLORYS production scripts for these later stages are still
-kept in [scripts/slurm](scripts/slurm),
+kept in [legacy/scripts/slurm](legacy/scripts/slurm),
 including:
 
-- [cesm_member_deltas_0p05.slurm.sh](scripts/slurm/cesm_member_deltas_0p05.slurm.sh)
-- [cesm_add_to_glorys_downscale.slurm.sh](scripts/slurm/cesm_add_to_glorys_downscale.slurm.sh)
+- [cesm_member_deltas_0p05.slurm.sh](legacy/scripts/slurm/cesm_member_deltas_0p05.slurm.sh)
+- [cesm_add_to_glorys_downscale.slurm.sh](legacy/scripts/slurm/cesm_add_to_glorys_downscale.slurm.sh)
 
 So the generalized `core/` plus `runners/` structure should be read as the
 full pipeline structure, with the newer generalized code increasingly covering
@@ -343,6 +345,24 @@ Closest modern abstraction:
   [temporal_aggregate_regrid.slurm.sh](scripts/core/temporal_aggregate_regrid.slurm.sh)
 - climatology from monthly files:
   [climatology_window_from_monthly_files.slurm.sh](scripts/core/climatology_window_from_monthly_files.slurm.sh)
+
+Modern GLORYS runners now live in:
+
+- [run_temporal_aggregate_regrid.sh](scripts/runners/glorys/run_temporal_aggregate_regrid.sh)
+- [run_climatology_window.sh](scripts/runners/glorys/run_climatology_window.sh)
+
+Current GLORYS logic in the new runner architecture:
+
+1. aggregate daily GLORYS files to monthly means and harmonize them to `0.05°`
+2. compute one `2006-2014` baseline climatology per variable from the monthly
+   files
+
+Important notes:
+
+- the modern GLORYS runner family is intentionally minimal because this branch
+  is a baseline-only workflow in the current repository
+- it now follows the same lightweight-runner plus generic-core structure as the
+  other dataset families
 
 ### CESM
 

@@ -110,23 +110,44 @@ print(f"{token}m")
 PY
 }
 
-extract_one_level() {
+extract_all_levels() {
   local infile="$1"
-  local outfile="$2"
-  local zdim="$3"
-  local zero_based_index="$4"
+  local out_dir="$2"
+  local base="$3"
+  local zdim="$4"
 
-  python3 - "$infile" "$outfile" "$zdim" "$zero_based_index" <<'PY'
+  python3 - "$infile" "$out_dir" "$base" "$zdim" "$MIN_DECIMALS" "$INTEGER_WIDTH" <<'PY'
+import os
 import sys
 import xarray as xr
 
-infile, outfile, zdim, idx = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+infile, out_dir, base, zdim = sys.argv[1:5]
+min_decimals = int(sys.argv[5])
+integer_width = int(sys.argv[6])
+
+def depth_token(value: float) -> str:
+    formatted = f"{float(value):.{min_decimals}f}"
+    int_part, frac_part = formatted.split(".")
+    return f"{int(int_part):0{integer_width}d}p{frac_part}m"
 
 with xr.open_dataset(infile) as ds:
-    # Keep the selected vertical coordinate as a scalar coordinate so later
-    # export steps can recover the exact depth directly from the file.
-    out = ds.isel({zdim: idx}, drop=False)
-    out.to_netcdf(outfile)
+    if zdim not in ds.coords:
+        raise ValueError(f"Vertical coordinate {zdim!r} not found in coords for {infile}")
+
+    levels = ds.coords[zdim].values
+    if getattr(levels, "ndim", 0) == 0:
+        levels = [levels.item()]
+
+    for idx, level_value in enumerate(levels):
+        token = depth_token(float(level_value))
+        outfile = os.path.join(out_dir, f"{base}_depth_{token}.nc")
+        if os.path.exists(outfile):
+          os.remove(outfile)
+        # Keep the selected vertical coordinate as a scalar coordinate so later
+        # export steps can recover the exact depth directly from the file.
+        out = ds.isel({zdim: idx}, drop=False)
+        out.to_netcdf(outfile)
+        print(f"[DONE ] {outfile}")
 PY
 }
 
@@ -141,6 +162,11 @@ process_one_file() {
 
   mkdir -p "${out_dir}"
 
+  if [[ ! -f "${infile}" ]]; then
+    echo "[WARN] Source file disappeared before processing: ${rel_path}"
+    return 0
+  fi
+
   zdim="$(find_vertical_dim "${infile}")"
   if [[ -z "${zdim}" ]]; then
     if [[ "${COPY_2D_FILES}" == "yes" ]]; then
@@ -152,8 +178,8 @@ process_one_file() {
     return 0
   fi
 
-  mapfile -t levels < <(cdo showlevel "${infile}" | tr ' ' '\n' | awk 'NF')
-  if (( ${#levels[@]} == 0 )); then
+  nlevels="$(cdo showlevel "${infile}" | tr ' ' '\n' | awk 'NF' | wc -l | tr -d ' ')"
+  if [[ -z "${nlevels}" || "${nlevels}" == "0" ]]; then
     echo "[WARN] No levels returned by cdo showlevel for: ${rel_path}"
     if [[ "${COPY_2D_FILES}" == "yes" ]]; then
       cp -p "${infile}" "${out_dir}/"
@@ -164,17 +190,8 @@ process_one_file() {
 
   echo
   echo "[START] ${rel_path}"
-  echo "        zdim=${zdim} nlevels=${#levels[@]}"
-
-  for idx in "${!levels[@]}"; do
-    level_value="${levels[$idx]}"
-    level_token="$(depth_token_from_value "${level_value}")"
-    outfile="${out_dir}/${base}_depth_${level_token}.nc"
-
-    rm -f "${outfile}"
-    extract_one_level "${infile}" "${outfile}" "${zdim}" "${idx}"
-    echo "[DONE ] ${outfile}"
-  done
+  echo "        zdim=${zdim} nlevels=${nlevels}"
+  extract_all_levels "${infile}" "${out_dir}" "${base}" "${zdim}"
 }
 
 echo "============================================================"

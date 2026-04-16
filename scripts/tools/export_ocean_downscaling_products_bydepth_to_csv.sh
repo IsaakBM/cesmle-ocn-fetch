@@ -124,6 +124,9 @@ with xr.open_dataset(infile) as ds:
         main_var = data_vars[0]
 
     da = ds[main_var]
+    # By-depth files can still carry singleton dimensions such as time=1.
+    # Collapse those before checking for the final horizontal field.
+    da = da.squeeze(drop=True)
 
     x_name = None
     y_name = None

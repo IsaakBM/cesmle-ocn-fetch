@@ -109,6 +109,12 @@ def sanitize_units(units: str) -> str:
     text = re.sub(r"[^A-Za-z0-9+-]", "", text)
     return text or "unitless"
 
+def depth_from_filename(path: str):
+    match = re.search(r"_depth_(\d+)p(\d+)m\.nc$", path)
+    if not match:
+        return np.nan
+    return float(f"{int(match.group(1))}.{match.group(2)}")
+
 with xr.open_dataset(infile) as ds:
     data_vars = [v for v in ds.data_vars if v not in ignored_vars]
     if not data_vars:
@@ -164,6 +170,9 @@ with xr.open_dataset(infile) as ds:
             if depth_da.ndim == 0:
                 depth_value = float(depth_da.values)
                 break
+
+    if np.isnan(depth_value):
+        depth_value = depth_from_filename(infile)
 
     values = da.values
     if values.ndim != 2:

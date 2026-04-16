@@ -123,7 +123,9 @@ import xarray as xr
 infile, outfile, zdim, idx = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 
 with xr.open_dataset(infile) as ds:
-    out = ds.isel({zdim: idx}, drop=True)
+    # Keep the selected vertical coordinate as a scalar coordinate so later
+    # export steps can recover the exact depth directly from the file.
+    out = ds.isel({zdim: idx}, drop=False)
     out.to_netcdf(outfile)
 PY
 }

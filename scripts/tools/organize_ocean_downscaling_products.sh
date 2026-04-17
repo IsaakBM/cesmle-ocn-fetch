@@ -8,7 +8,8 @@ ROOT="/home/SB5/ocean_downscaling_products"
 BASELINE_DIR="${ROOT}/baseline"
 FUTURE_DIR="${ROOT}/future"
 
-HINDCAST_ROOT="/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25"
+HINDCAST_0P25_ROOT="/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25"
+HINDCAST_0P05_ROOT="/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05"
 GLORYS_ROOT="/home/SB5/glorys12v1_monthly_0p05"
 DOWNSCALED_ROOT="/home/SB5/downscaled_rcp85"
 
@@ -73,31 +74,55 @@ copy_future_products() {
   echo "[WARN] No recognized future layout for var=${var}, window=${window}" >&2
 }
 
+copy_baseline_product() {
+  local src="$1"
+  local var="$2"
+  local resolution="$3"
+
+  copy_one "${src}" "${BASELINE_DIR}/${var}/${resolution}"
+}
+
 echo "============================================================"
 echo "Building curated ocean downscaling product tree"
 echo "ROOT          : ${ROOT}"
 echo "BASELINE DIR  : ${BASELINE_DIR}"
 echo "FUTURE DIR    : ${FUTURE_DIR}"
+echo "HINDCAST 0.25 : ${HINDCAST_0P25_ROOT}"
+echo "HINDCAST 0.05 : ${HINDCAST_0P05_ROOT}"
+echo "GLORYS 0.05   : ${GLORYS_ROOT}"
 echo "============================================================"
 
 mkdir -p "${BASELINE_DIR}" "${FUTURE_DIR}"
 
 echo "[STEP1] Copying baseline climatologies"
-copy_one \
-  "${HINDCAST_ROOT}/chl/clim_windows/global_ocean_biogeochemistry_hindcast_chl_clim_2006-2014.nc" \
-  "${BASELINE_DIR}/chl"
-copy_one \
-  "${HINDCAST_ROOT}/o2/clim_windows/global_ocean_biogeochemistry_hindcast_o2_clim_2006-2014.nc" \
-  "${BASELINE_DIR}/o2"
-copy_one \
+copy_baseline_product \
+  "${HINDCAST_0P25_ROOT}/chl/clim_windows/global_ocean_biogeochemistry_hindcast_chl_clim_2006-2014.nc" \
+  "chl" \
+  "0p25"
+copy_baseline_product \
+  "${HINDCAST_0P05_ROOT}/chl/clim_windows/global_ocean_biogeochemistry_hindcast_chl_clim_2006-2014_grid_0p05_global.nc" \
+  "chl" \
+  "0p05"
+copy_baseline_product \
+  "${HINDCAST_0P25_ROOT}/o2/clim_windows/global_ocean_biogeochemistry_hindcast_o2_clim_2006-2014.nc" \
+  "o2" \
+  "0p25"
+copy_baseline_product \
+  "${HINDCAST_0P05_ROOT}/o2/clim_windows/global_ocean_biogeochemistry_hindcast_o2_clim_2006-2014_grid_0p05_global.nc" \
+  "o2" \
+  "0p05"
+copy_baseline_product \
   "${GLORYS_ROOT}/thetao/clim_windows/glorys12v1_thetao_clim_2006-2014.nc" \
-  "${BASELINE_DIR}/thetao"
-copy_one \
+  "thetao" \
+  "0p05"
+copy_baseline_product \
   "${GLORYS_ROOT}/so/clim_windows/glorys12v1_so_clim_2006-2014.nc" \
-  "${BASELINE_DIR}/so"
-copy_one \
+  "so" \
+  "0p05"
+copy_baseline_product \
   "${GLORYS_ROOT}/uo/clim_windows/glorys12v1_uo_clim_2006-2014.nc" \
-  "${BASELINE_DIR}/uo"
+  "uo" \
+  "0p05"
 
 echo "[STEP2] Copying future/downscaled products"
 for var in chl o2 so thetao uo; do

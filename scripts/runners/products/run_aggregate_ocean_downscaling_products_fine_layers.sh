@@ -11,7 +11,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOL_SCRIPT="${SCRIPT_DIR}/../../tools/aggregate_ocean_downscaling_products_by_depth_bins.sh"
 LOG_DIR="/home/sandbox-sparc/cesmle-ocn-fetch/logs"
-OUT_ROOT="/home/SB5/ocean_downscaling_products_layers"
+SOURCE_ROOT="${SOURCE_ROOT:-/home/SB5/ocean_downscaling_products}"
+TARGET_ROOT="${TARGET_ROOT:-/home/SB5/ocean_downscaling_products_layers}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -20,10 +21,35 @@ if [[ ! -x "${TOOL_SCRIPT}" ]]; then
   exit 1
 fi
 
-echo "Submitting curated ocean product fine depth-layer aggregation job:"
-jid=$(
-  sbatch --parsable --export=ALL,BIN_SET=fine,OUT_ROOT="${OUT_ROOT}" "${TOOL_SCRIPT}"
-)
+if [[ ! -d "${SOURCE_ROOT}" ]]; then
+  echo "ERROR: SOURCE_ROOT does not exist: ${SOURCE_ROOT}"
+  exit 1
+fi
 
-echo "  submitted as jobid=${jid}"
+mapfile -t SUBTREES < <(
+  find "${SOURCE_ROOT}/baseline" "${SOURCE_ROOT}/future" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort
+)
+if (( ${#SUBTREES[@]} == 0 )); then
+  echo "ERROR: No baseline/future variable directories found under: ${SOURCE_ROOT}"
+  exit 1
+fi
+
+echo "Submitting curated ocean product fine depth-layer aggregation jobs by subtree:"
+echo "SOURCE ROOT: ${SOURCE_ROOT}"
+echo "TARGET ROOT: ${TARGET_ROOT}"
+for subtree in "${SUBTREES[@]}"; do
+  rel_path="${subtree#${SOURCE_ROOT}/}"
+  out_subtree="${TARGET_ROOT}/${rel_path}"
+  job_tag="$(echo "${rel_path}" | tr '/' '_' | tr -cd '[:alnum:]_')"
+  jid=$(
+    sbatch --parsable \
+      --job-name="fine_${job_tag}" \
+      --output="${LOG_DIR}/fine_layers_${job_tag}_%j.out" \
+      --error="${LOG_DIR}/fine_layers_${job_tag}_%j.err" \
+      --export=ALL,BIN_SET=fine,IN_ROOT="${subtree}",OUT_ROOT="${out_subtree}" \
+      "${TOOL_SCRIPT}"
+  )
+  echo "  submitted SUBTREE=${rel_path} as jobid=${jid}"
+done
+
 echo "Done."

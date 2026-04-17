@@ -22,7 +22,8 @@ shopt -s nullglob
 #   GRIDFILE                : target 0.05 grid description
 #                             (default: /home/SB5/glorys12v1_monthly_0p05/grid_0p05_global.txt)
 #   VARS                    : space-separated variable list
-#                             (default: "chl o2")
+#                             (default: auto-detect all variable directories
+#                             under IN_ROOT)
 #   METHOD                  : auto | cdo remap operator
 #                             (default: auto)
 #   AUTO_METHOD_DEFAULT     : remap op for regular lat/lon sources
@@ -37,7 +38,7 @@ shopt -s nullglob
 IN_ROOT="${IN_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25}"
 OUT_ROOT="${OUT_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05}"
 GRIDFILE="${GRIDFILE:-/home/SB5/glorys12v1_monthly_0p05/grid_0p05_global.txt}"
-VARS="${VARS:-chl o2}"
+VARS="${VARS:-}"
 METHOD="${METHOD:-auto}"
 AUTO_METHOD_DEFAULT="${AUTO_METHOD_DEFAULT:-remapbil}"
 AUTO_METHOD_CURVILINEAR="${AUTO_METHOD_CURVILINEAR:-remapdis}"
@@ -131,15 +132,26 @@ echo "OUT ROOT               : ${OUT_ROOT}"
 echo "GRIDFILE               : ${GRIDFILE}"
 echo "METHOD                 : ${METHOD}"
 if [[ "${METHOD}" == "auto" ]]; then
-echo "AUTO regular           : ${AUTO_METHOD_DEFAULT}"
+  echo "AUTO regular           : ${AUTO_METHOD_DEFAULT}"
   echo "AUTO curvilinear       : ${AUTO_METHOD_CURVILINEAR}"
 fi
-echo "VARS                   : ${VARS}"
 echo "OVERWRITE              : ${OVERWRITE}"
 echo "PARALLEL FILES         : ${NPROC}"
 echo "============================================================"
 
-for var in ${VARS}; do
+if [[ -z "${VARS}" ]]; then
+  mapfile -t VAR_LIST < <(find "${IN_ROOT}" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
+  if (( ${#VAR_LIST[@]} == 0 )); then
+    echo "ERROR: No variable directories found under: ${IN_ROOT}"
+    exit 1
+  fi
+  echo "VARS (auto-detected)   : ${VAR_LIST[*]}"
+else
+  read -r -a VAR_LIST <<< "${VARS}"
+  echo "VARS                   : ${VAR_LIST[*]}"
+fi
+
+for var in "${VAR_LIST[@]}"; do
   src_dir="${IN_ROOT}/${var}/clim_windows"
   if [[ ! -d "${src_dir}" ]]; then
     echo "[WARN] Missing climatology directory for var=${var}: ${src_dir}"

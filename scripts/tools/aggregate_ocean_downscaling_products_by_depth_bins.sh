@@ -25,7 +25,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=6
-#SBATCH --mem=128G
+#SBATCH --mem=512G
 #SBATCH -t 1-00:00:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=ibrito@ucsb.edu

@@ -199,6 +199,8 @@ packaging/export/organization steps than as reusable scientific operators.
     `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25`
   - writes derived hindcast baseline climatologies to:
     `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05`
+  - auto-detects variable directories by requiring a `clim_windows/`
+    subdirectory under the hindcast root
   - remaps with `cdo`
   - uses the same grid-type-based method resolution pattern used elsewhere in
     the repository:
@@ -688,6 +690,9 @@ Notes:
   hindcast `0.25 x 0.25` climatology tree
 - keeps the same variable-folder and `clim_windows/` structure under a new
   top-level root
+- the runner submits one Slurm job per variable directory
+- variable directories are auto-detected by requiring `clim_windows/`, so
+  temporary folders such as `tmp/` are excluded
 - output filenames add the suffix `_grid_0p05_global.nc`
 - uses `cdo` remapping
 - uses the repository-standard grid-type detection logic:

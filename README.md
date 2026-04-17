@@ -85,6 +85,7 @@ cesmle-ocn-fetch/
 │   │   │   └── run_add_anomaly_to_baseline.sh
 │   │   ├── products/
 │   │   │   ├── run_organize_ocean_downscaling_products.sh
+│   │   │   ├── run_remap_hindcast_baseline_to_0p05.sh
 │   │   │   ├── run_aggregate_ocean_downscaling_products_fine_layers.sh
 │   │   │   ├── run_aggregate_ocean_downscaling_products_pelagic_layers.sh
 │   │   │   ├── run_split_ocean_downscaling_products_by_depth.sh
@@ -95,6 +96,7 @@ cesmle-ocn-fetch/
 │   │   └── other_model/
 │   ├── tools/                      # Packaging/export/organization utilities
 │   │   ├── organize_ocean_downscaling_products.sh
+│   │   ├── remap_hindcast_baseline_to_0p05.sh
 │   │   ├── aggregate_ocean_downscaling_products_by_depth_bins.sh
 │   │   ├── split_ocean_downscaling_products_by_depth.sh
 │   │   └── export_ocean_downscaling_products_bydepth_to_csv.sh
@@ -188,8 +190,21 @@ packaging/export/organization steps than as reusable scientific operators.
   - organizes products into:
     - `baseline/`
     - `future/`
+  - supports resolution-aware curated baseline products where available
   - supports both newer `0p25/0p05` future layouts and older CESM-style
     window-folder layouts
+
+- [remap_hindcast_baseline_to_0p05.sh](scripts/tools/remap_hindcast_baseline_to_0p05.sh)
+  - reads hindcast baseline climatologies from:
+    `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25`
+  - writes derived hindcast baseline climatologies to:
+    `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05`
+  - remaps with `cdo`
+  - uses the same grid-type-based method resolution pattern used elsewhere in
+    the repository:
+    - `remapbil` for regular lon/lat sources
+    - `remapdis` for curvilinear or unstructured sources
+  - parallelizes at the file level by default
 
 - [split_ocean_downscaling_products_by_depth.sh](scripts/tools/split_ocean_downscaling_products_by_depth.sh)
   - reads curated 3D products from:
@@ -622,10 +637,17 @@ Expected output root:
 /home/SB5/ocean_downscaling_products/
 ├── baseline/
 │   ├── chl/
+│   │   ├── 0p25/
+│   │   └── 0p05/
 │   ├── o2/
+│   │   ├── 0p25/
+│   │   └── 0p05/
 │   ├── so/
+│   │   └── 0p05/
 │   ├── thetao/
+│   │   └── 0p05/
 │   └── uo/
+│       └── 0p05/
 └── future/
     ├── chl/
     ├── o2/
@@ -637,8 +659,41 @@ Expected output root:
 Notes:
 
 - `baseline/` stores curated climatological reference products
+- baseline products are now organized by resolution when available
+- `chl` and `o2` can include both `0p25` and derived `0p05` hindcast baseline
+  products
+- `thetao`, `so`, and `uo` currently contribute `0p05` baseline products from
+  the GLORYS reference branch
 - `future/` stores curated future/downscaled products
 - the tool copies files; it does not move or delete the original workflow trees
+
+#### Derived hindcast baseline 0.05 tree
+
+Built with:
+
+- [remap_hindcast_baseline_to_0p05.sh](scripts/tools/remap_hindcast_baseline_to_0p05.sh)
+- [run_remap_hindcast_baseline_to_0p05.sh](scripts/runners/products/run_remap_hindcast_baseline_to_0p05.sh)
+
+Expected output root:
+
+```text
+/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05/
+└── <var>/
+    └── clim_windows/
+```
+
+Notes:
+
+- derives `0.05 x 0.05` hindcast baseline climatologies from the existing
+  hindcast `0.25 x 0.25` climatology tree
+- keeps the same variable-folder and `clim_windows/` structure under a new
+  top-level root
+- output filenames add the suffix `_grid_0p05_global.nc`
+- uses `cdo` remapping
+- uses the repository-standard grid-type detection logic:
+  - `remapbil` for regular lon/lat sources
+  - `remapdis` for curvilinear/unstructured sources
+- parallelizes at the file level by default, using the allocated Slurm CPUs
 
 #### Curated depth-layer NetCDF tree
 

@@ -194,6 +194,7 @@ packaging/export/organization steps than as reusable scientific operators.
   - mirrors them into:
     `/home/SB5/ocean_downscaling_products_bydepth`
   - writes one NetCDF file per depth layer
+  - parallelizes at the file level using the allocated Slurm CPUs
   - includes a zero-padded depth token in filenames such as:
     `depth_0005p08m`
 
@@ -202,6 +203,7 @@ packaging/export/organization steps than as reusable scientific operators.
     `/home/SB5/ocean_downscaling_products_bydepth`
   - mirrors them into:
     `/home/SB5/ocean_downscaling_products_bydepth_txt`
+  - parallelizes at the file level using the allocated Slurm CPUs
   - exports CSV columns as:
     `x,y,depth,<variable>_<units>`
 
@@ -633,6 +635,8 @@ Notes:
 
 - mirrors the curated `baseline/future` structure
 - each 3D NetCDF file becomes one 2D NetCDF file per depth layer
+- the current tool uses file-level parallelism and is configured to use `6`
+  CPUs per Slurm task
 - depth is encoded in the filename with a zero-padded safe token such as:
   - `depth_0000p49m`
   - `depth_0005p08m`
@@ -658,6 +662,8 @@ Notes:
 
 - mirrors the by-depth NetCDF tree
 - exports each by-depth NetCDF file to one CSV
+- the current tool uses file-level parallelism and is configured to use `6`
+  CPUs per Slurm task
 - CSV columns are:
   - `x`
   - `y`

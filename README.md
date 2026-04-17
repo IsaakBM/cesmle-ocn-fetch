@@ -693,6 +693,16 @@ Notes:
   - `global_ocean_biogeochemistry_hindcast_chl_clim_2006-2014_layer_0000_0025m.nc`
   - `ipcc_esgf_to_hindcast_chl_downscaled_2050-2060_layer_1000_1500m.nc`
 
+Method note:
+
+- this workflow assumes that products on the shared GLORYS-like depth grid can
+  be thickness-weighted using either explicit vertical bounds or, when those
+  bounds are absent, bounds reconstructed from the depth-center coordinate
+- that assumption applies broadly to any product using this common vertical
+  grid in the repository, not only to the downscaled products
+- for the current example files tracked in `legacy/`, explicit vertical bounds
+  were not present, so reconstructed bounds are the expected default behavior
+
 #### Curated pelagic-zone NetCDF tree
 
 Built with:
@@ -724,6 +734,13 @@ Notes:
 - output filenames follow patterns such as:
   - `global_ocean_biogeochemistry_hindcast_chl_clim_2006-2014_zone_epipelagic_0000_0200m.nc`
   - `b.e11.BRCP85C5CNBDRD.f09_g16.001.pop.h.TEMP.200601-210012.1deg_on_glorys_downscaled_thetao_2050-2060_zone_bathypelagic_1000_4000m.nc`
+
+Method note:
+
+- the same vertical-weighting assumption used for fine depth layers applies
+  here as well
+- pelagic-zone means therefore depend on either explicit vertical bounds or
+  reconstructed bounds from the shared depth-center coordinate
 
 #### Curated by-depth NetCDF tree
 

@@ -85,6 +85,8 @@ cesmle-ocn-fetch/
 │   │   │   └── run_add_anomaly_to_baseline.sh
 │   │   ├── products/
 │   │   │   ├── run_organize_ocean_downscaling_products.sh
+│   │   │   ├── run_aggregate_ocean_downscaling_products_fine_layers.sh
+│   │   │   ├── run_aggregate_ocean_downscaling_products_pelagic_layers.sh
 │   │   │   ├── run_split_ocean_downscaling_products_by_depth.sh
 │   │   │   └── run_export_ocean_downscaling_products_bydepth_to_csv.sh
 │   │   ├── glorys/
@@ -93,6 +95,7 @@ cesmle-ocn-fetch/
 │   │   └── other_model/
 │   ├── tools/                      # Packaging/export/organization utilities
 │   │   ├── organize_ocean_downscaling_products.sh
+│   │   ├── aggregate_ocean_downscaling_products_by_depth_bins.sh
 │   │   ├── split_ocean_downscaling_products_by_depth.sh
 │   │   └── export_ocean_downscaling_products_bydepth_to_csv.sh
 ├── .gitignore
@@ -197,6 +200,25 @@ packaging/export/organization steps than as reusable scientific operators.
   - parallelizes at the file level using the allocated Slurm CPUs
   - includes a zero-padded depth token in filenames such as:
     `depth_0005p08m`
+  - this remains available for individual-depth slice products, but it is not
+    the currently active derived-product workflow
+
+- [aggregate_ocean_downscaling_products_by_depth_bins.sh](scripts/tools/aggregate_ocean_downscaling_products_by_depth_bins.sh)
+  - reads curated 3D products from:
+    `/home/SB5/ocean_downscaling_products`
+  - writes aggregated layer products into one of:
+    `/home/SB5/ocean_downscaling_products_layers`
+    `/home/SB5/ocean_downscaling_products_pelagic`
+  - supports two bin sets:
+    - fine depth intervals such as `0-25 m`, `25-50 m`, `50-100 m`
+    - broad pelagic zones such as `epipelagic`, `mesopelagic`,
+      `bathypelagic`, `abyssopelagic`
+  - computes thickness-weighted vertical means using explicit vertical bounds
+    when present, or reconstructed bounds from depth centers when bounds are
+    absent
+  - writes one NetCDF file per configured depth bin
+  - this is the current active derived-product workflow for vertical layer
+    products
 
 - [export_ocean_downscaling_products_bydepth_to_csv.sh](scripts/tools/export_ocean_downscaling_products_bydepth_to_csv.sh)
   - reads by-depth NetCDF files from:
@@ -206,6 +228,8 @@ packaging/export/organization steps than as reusable scientific operators.
   - parallelizes at the file level using the allocated Slurm CPUs
   - exports CSV columns as:
     `x,y,depth,<variable>_<units>`
+  - this remains available for exporting individual-depth slices, but it is not
+    part of the current active derived-product workflow
 
 ### `legacy/scripts/slurm/`
 
@@ -616,6 +640,91 @@ Notes:
 - `future/` stores curated future/downscaled products
 - the tool copies files; it does not move or delete the original workflow trees
 
+#### Curated depth-layer NetCDF tree
+
+Built with:
+
+- [aggregate_ocean_downscaling_products_by_depth_bins.sh](scripts/tools/aggregate_ocean_downscaling_products_by_depth_bins.sh)
+- [run_aggregate_ocean_downscaling_products_fine_layers.sh](scripts/runners/products/run_aggregate_ocean_downscaling_products_fine_layers.sh)
+
+Expected output root:
+
+```text
+/home/SB5/ocean_downscaling_products_layers/
+├── baseline/
+└── future/
+```
+
+Notes:
+
+- mirrors the curated `baseline/future` structure
+- each 3D NetCDF file becomes one NetCDF file per fine depth interval
+- current intervals are left-closed and right-open:
+  - `[0,25)`
+  - `[25,50)`
+  - `[50,100)`
+  - `[100,200)`
+  - `[200,400)`
+  - `[400,600)`
+  - `[600,800)`
+  - `[800,1000)`
+  - `[1000,1500)`
+  - `[1500,2000)`
+  - `[2000,3000)`
+  - `[3000,4000)`
+  - `[4000,5000)`
+  - `[5000,6000)`
+- if a bin contains multiple levels, the tool computes a thickness-weighted
+  vertical mean
+- if a bin contains one level, that level is emitted directly using the
+  layer-range filename
+- vertical weights come from explicit bounds when present, or reconstructed
+  bounds derived from the depth-center coordinate when bounds are absent
+- the tool adds output metadata including:
+  - `depth_bin_label`
+  - `depth_bin_lower_m`
+  - `depth_bin_upper_m`
+  - `depth_bin_mode`
+  - `vertical_aggregation_method`
+  - `vertical_bounds_source`
+- the current tool uses file-level parallelism and is configured to use `6`
+  CPUs per Slurm task
+- output filenames follow patterns such as:
+  - `global_ocean_biogeochemistry_hindcast_chl_clim_2006-2014_layer_0000_0025m.nc`
+  - `ipcc_esgf_to_hindcast_chl_downscaled_2050-2060_layer_1000_1500m.nc`
+
+#### Curated pelagic-zone NetCDF tree
+
+Built with:
+
+- [aggregate_ocean_downscaling_products_by_depth_bins.sh](scripts/tools/aggregate_ocean_downscaling_products_by_depth_bins.sh)
+- [run_aggregate_ocean_downscaling_products_pelagic_layers.sh](scripts/runners/products/run_aggregate_ocean_downscaling_products_pelagic_layers.sh)
+
+Expected output root:
+
+```text
+/home/SB5/ocean_downscaling_products_pelagic/
+├── baseline/
+└── future/
+```
+
+Notes:
+
+- mirrors the curated `baseline/future` structure
+- each 3D NetCDF file becomes one NetCDF file per pelagic zone
+- current zones are:
+  - `epipelagic` for `[0,200)`
+  - `mesopelagic` for `[200,1000)`
+  - `bathypelagic` for `[1000,4000)`
+  - `abyssopelagic` for `[4000,6000)`
+- the same weighting and single-level fallback rules used for fine layers also
+  apply here
+- the current tool uses file-level parallelism and is configured to use `6`
+  CPUs per Slurm task
+- output filenames follow patterns such as:
+  - `global_ocean_biogeochemistry_hindcast_chl_clim_2006-2014_zone_epipelagic_0000_0200m.nc`
+  - `b.e11.BRCP85C5CNBDRD.f09_g16.001.pop.h.TEMP.200601-210012.1deg_on_glorys_downscaled_thetao_2050-2060_zone_bathypelagic_1000_4000m.nc`
+
 #### Curated by-depth NetCDF tree
 
 Built with:
@@ -642,6 +751,8 @@ Notes:
   - `depth_0005p08m`
   - `depth_0453p94m`
   - `depth_5727p92m`
+- this workflow remains available for producing individual-depth slices, but it
+  is not the current active derived-product path
 
 #### Curated by-depth CSV tree
 
@@ -670,6 +781,9 @@ Notes:
   - `depth`
   - `<variable>_<units>`
 - singleton dimensions such as `time=1` are squeezed before export
+- this workflow remains available for downstream tabular export of
+  individual-depth slices, but it is not the current active derived-product
+  path
 
 ## Download And Utility Scripts
 

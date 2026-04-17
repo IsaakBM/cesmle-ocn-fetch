@@ -140,7 +140,15 @@ echo "PARALLEL FILES         : ${NPROC}"
 echo "============================================================"
 
 if [[ -z "${VARS}" ]]; then
-  mapfile -t VAR_LIST < <(find "${IN_ROOT}" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
+  mapfile -t VAR_LIST < <(
+    find "${IN_ROOT}" -mindepth 1 -maxdepth 1 -type d \
+      | while read -r d; do
+          if [[ -d "${d}/clim_windows" ]]; then
+            basename "${d}"
+          fi
+        done \
+      | sort
+  )
   if (( ${#VAR_LIST[@]} == 0 )); then
     echo "ERROR: No variable directories found under: ${IN_ROOT}"
     exit 1

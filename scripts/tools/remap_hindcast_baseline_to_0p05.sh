@@ -31,6 +31,8 @@ shopt -s nullglob
 #                             (default: remapdis)
 #   OVERWRITE               : yes | no
 #                             (default: yes)
+#   NPROC                   : number of files to process in parallel
+#                             (default: 4)
 # ==============================================================================
 IN_ROOT="${IN_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25}"
 OUT_ROOT="${OUT_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05}"
@@ -40,6 +42,7 @@ METHOD="${METHOD:-auto}"
 AUTO_METHOD_DEFAULT="${AUTO_METHOD_DEFAULT:-remapbil}"
 AUTO_METHOD_CURVILINEAR="${AUTO_METHOD_CURVILINEAR:-remapdis}"
 OVERWRITE="${OVERWRITE:-yes}"
+NPROC="${SLURM_CPUS_PER_TASK:-4}"
 
 if [[ ! -d "${IN_ROOT}" ]]; then
   echo "ERROR: IN_ROOT does not exist: ${IN_ROOT}"
@@ -118,6 +121,9 @@ process_file() {
   echo "[DONE ] ${outfile}"
 }
 
+export IN_ROOT OUT_ROOT GRIDFILE METHOD AUTO_METHOD_DEFAULT AUTO_METHOD_CURVILINEAR OVERWRITE
+export -f detect_gridtype resolve_method process_file
+
 echo "============================================================"
 echo "Deriving hindcast baseline climatologies at 0.05 degree"
 echo "IN ROOT                : ${IN_ROOT}"
@@ -125,11 +131,12 @@ echo "OUT ROOT               : ${OUT_ROOT}"
 echo "GRIDFILE               : ${GRIDFILE}"
 echo "METHOD                 : ${METHOD}"
 if [[ "${METHOD}" == "auto" ]]; then
-  echo "AUTO regular           : ${AUTO_METHOD_DEFAULT}"
+echo "AUTO regular           : ${AUTO_METHOD_DEFAULT}"
   echo "AUTO curvilinear       : ${AUTO_METHOD_CURVILINEAR}"
 fi
 echo "VARS                   : ${VARS}"
 echo "OVERWRITE              : ${OVERWRITE}"
+echo "PARALLEL FILES         : ${NPROC}"
 echo "============================================================"
 
 for var in ${VARS}; do
@@ -147,9 +154,8 @@ for var in ${VARS}; do
 
   echo
   echo "[VAR  ] ${var}"
-  for infile in "${files[@]}"; do
-    process_file "${infile}"
-  done
+  printf '%s\0' "${files[@]}" \
+    | xargs -0 -n 1 -P "${NPROC}" bash -c 'process_file "$1"' _
 done
 
 echo

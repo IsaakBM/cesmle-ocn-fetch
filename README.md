@@ -226,6 +226,8 @@ packaging/export/organization steps than as reusable scientific operators.
   - writes aggregated layer products into one of:
     `/home/SB5/ocean_downscaling_products_layers`
     `/home/SB5/ocean_downscaling_products_pelagic`
+  - is designed to run on subtree-specific inputs such as `baseline/<var>` or
+    `future/<var>`, while still parallelizing across files inside that subtree
   - supports two bin sets:
     - fine depth intervals such as `0-25 m`, `25-50 m`, `50-100 m`
     - broad pelagic zones such as `epipelagic`, `mesopelagic`,
@@ -719,6 +721,10 @@ Notes:
 
 - mirrors the curated `baseline/future` structure
 - each 3D NetCDF file becomes one NetCDF file per fine depth interval
+- the runner submits one job per main subtree:
+  - `baseline/<var>`
+  - `future/<var>`
+- within each submitted job, the tool still parallelizes over files
 - current intervals are left-closed and right-open:
   - `[0,25)`
   - `[25,50)`
@@ -782,6 +788,10 @@ Notes:
 
 - mirrors the curated `baseline/future` structure
 - each 3D NetCDF file becomes one NetCDF file per pelagic zone
+- the runner submits one job per main subtree:
+  - `baseline/<var>`
+  - `future/<var>`
+- within each submitted job, the tool still parallelizes over files
 - current zones are:
   - `epipelagic` for `[0,200)`
   - `mesopelagic` for `[200,1000)`

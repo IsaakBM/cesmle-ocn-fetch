@@ -13,7 +13,8 @@
 #    - Read curated aggregated NetCDF products from a mirrored product tree
 #    - Mirror the same structure into a Parquet tree
 #    - Export each 2D NetCDF file to a columnar Parquet table
-#    - Preserve bin metadata as flat table columns where available
+#    - Write Parquet columns in the same style as the older CSV workflow:
+#        x,y,depth,<variable>_<units>
 #
 #  Intended to be run on Slurm-based HPC systems.
 # ==============================================================================
@@ -119,6 +120,7 @@ process_one_file() {
   echo "[START] ${rel_path}"
 
   "${PARQUET_PYTHON}" - "${infile}" "${outfile}" "${DROP_MISSING}" "${PARQUET_ENGINE}" <<'PY'
+import os
 import re
 import sys
 import numpy as np
@@ -135,14 +137,6 @@ preferred_xy = [
 ]
 
 ignored_vars = {"time_bnds", "lat_bnds", "lon_bnds", "depth_bnds"}
-bin_attr_names = [
-    "depth_bin_label",
-    "depth_bin_lower_m",
-    "depth_bin_upper_m",
-    "depth_bin_mode",
-    "vertical_aggregation_method",
-    "vertical_bounds_source",
-]
 
 def sanitize_units(units: str) -> str:
     text = (units or "").strip()
@@ -205,23 +199,25 @@ with xr.open_dataset(infile) as ds:
     units = sanitize_units(str(da.attrs.get("units", "")))
     value_column = f"{main_var}_{units}"
 
+    base = os.path.basename(infile)
+    depth_value = None
+    match = re.search(r"_(layer|zone)_([A-Za-z0-9]+(?:_[0-9]{4}_[0-9]{4}m)|[0-9]{4}_[0-9]{4}m)\.nc$", base)
+    if match:
+        depth_value = match.group(2)
+    else:
+        for attr_name in ["depth_bin_label", "depth_bin_lower_m", "depth_bin_upper_m"]:
+            if attr_name in ds.attrs:
+                depth_value = str(ds.attrs[attr_name])
+                break
+    if depth_value is None:
+        raise SystemExit(f"Could not derive depth label from filename or metadata in {infile}")
+
     columns = {
         "x": xx.ravel(),
         "y": yy.ravel(),
+        "depth": np.full(xx.size, depth_value),
         value_column: values.ravel(),
     }
-
-    for attr_name in bin_attr_names:
-        if attr_name in ds.attrs:
-            columns[attr_name] = np.full(xx.size, ds.attrs[attr_name])
-
-    for coord_name in ds.coords:
-        if coord_name in {x_name, y_name}:
-            continue
-        coord = ds[coord_name].squeeze(drop=True)
-        if coord.ndim == 0:
-            value = coord.item() if hasattr(coord.values, "item") else coord.values
-            columns[coord_name] = np.full(xx.size, value)
 
     df = pd.DataFrame(columns)
 

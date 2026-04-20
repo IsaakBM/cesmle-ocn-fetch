@@ -86,6 +86,19 @@ for name in mods:
         importlib.import_module(name)
     except Exception as exc:
         missing.append(f"{name}: {exc}")
+
+backend_ok = False
+for backend in ["netCDF4", "h5netcdf"]:
+    try:
+        importlib.import_module(backend)
+        backend_ok = True
+        break
+    except Exception:
+        pass
+
+if not backend_ok:
+    missing.append("Need at least one xarray NetCDF backend: netCDF4 or h5netcdf")
+
 if missing:
     raise SystemExit("Missing Python dependencies for Parquet export:\n" + "\n".join(missing))
 PY
@@ -237,6 +250,22 @@ if (( ${#files[@]} == 0 )); then
   echo "ERROR: No NetCDF files found under: ${IN_ROOT}"
   exit 1
 fi
+
+"${PARQUET_PYTHON}" - "${files[0]}" <<'PY'
+import sys
+import xarray as xr
+
+infile = sys.argv[1]
+try:
+    with xr.open_dataset(infile):
+        pass
+except Exception as exc:
+    raise SystemExit(
+        "Parquet export preflight failed before processing files.\n"
+        f"Could not open NetCDF input with the configured Python environment: {infile}\n"
+        f"Reason: {exc}"
+    )
+PY
 
 export IN_ROOT OUT_ROOT TMP_DIR DROP_MISSING PARQUET_PYTHON PARQUET_ENGINE
 export -f process_one_file

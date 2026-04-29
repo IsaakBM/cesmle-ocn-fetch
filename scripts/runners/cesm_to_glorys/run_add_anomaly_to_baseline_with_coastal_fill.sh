@@ -62,7 +62,7 @@ glorys_var_for_cesm_var() {
 member_prefix() {
   local member="$1"
   local var="$2"
-  printf 'b.e11.BRCP85C5CNBDRD.f09_g16.%s.pop.h.%s.200601-210012.grid_1deg_pop_global_on_glorys' "$member" "$var"
+  printf 'b.e11.BRCP85C5CNBDRD.f09_g16.%s.pop.h.%s.200601-210012.1deg_on_glorys' "$member" "$var"
 }
 
 delta_dir_for_cesm_var() {

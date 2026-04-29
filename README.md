@@ -76,13 +76,17 @@ cesmle-ocn-fetch/
 │   │   │   ├── run_climatology_window.sh
 │   │   │   └── run_delta_from_climatologies.sh
 │   │   ├── ipcc_esgf_to_hindcast/
-│   │   │   └── run_add_anomaly_to_baseline.sh
-│   │   ├── cesm/
+│   │   │   ├── run_add_anomaly_to_baseline.sh
+│   │   │   └── run_add_anomaly_to_baseline_with_coastal_fill.sh
+│   │   ├── cesm_to_glorys/
 │   │   │   ├── run_temporal_aggregate_regrid.sh
 │   │   │   ├── run_vertical_interpolate_to_reference.sh
 │   │   │   ├── run_climatology_window.sh
 │   │   │   ├── run_delta_from_climatologies.sh
-│   │   │   └── run_add_anomaly_to_baseline.sh
+│   │   │   ├── run_add_anomaly_to_baseline.sh
+│   │   │   └── run_add_anomaly_to_baseline_with_coastal_fill.sh
+│   │   ├── downscaling/
+│   │   │   └── run_add_anomaly_to_trusted_baseline_with_coastal_fill.sh
 │   │   ├── products/
 │   │   │   ├── run_organize_ocean_downscaling_products.sh
 │   │   │   ├── run_remap_hindcast_baseline_to_0p05.sh
@@ -431,14 +435,17 @@ Closest modern abstraction:
   [delta_from_climatologies.slurm.sh](scripts/core/delta_from_climatologies.slurm.sh)
 - baseline plus anomaly:
   [add_anomaly_to_baseline.slurm.sh](scripts/core/add_anomaly_to_baseline.slurm.sh)
+- baseline plus anomaly with coastal fill on the trusted target wet mask:
+  [add_anomaly_to_baseline_with_coastal_fill.slurm.sh](scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh)
 
 Modern CESM runners now live in:
 
-- [run_temporal_aggregate_regrid.sh](scripts/runners/cesm/run_temporal_aggregate_regrid.sh)
-- [run_vertical_interpolate_to_reference.sh](scripts/runners/cesm/run_vertical_interpolate_to_reference.sh)
-- [run_climatology_window.sh](scripts/runners/cesm/run_climatology_window.sh)
-- [run_delta_from_climatologies.sh](scripts/runners/cesm/run_delta_from_climatologies.sh)
-- [run_add_anomaly_to_baseline.sh](scripts/runners/cesm/run_add_anomaly_to_baseline.sh)
+- [run_temporal_aggregate_regrid.sh](scripts/runners/cesm_to_glorys/run_temporal_aggregate_regrid.sh)
+- [run_vertical_interpolate_to_reference.sh](scripts/runners/cesm_to_glorys/run_vertical_interpolate_to_reference.sh)
+- [run_climatology_window.sh](scripts/runners/cesm_to_glorys/run_climatology_window.sh)
+- [run_delta_from_climatologies.sh](scripts/runners/cesm_to_glorys/run_delta_from_climatologies.sh)
+- [run_add_anomaly_to_baseline.sh](scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline.sh)
+- [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline_with_coastal_fill.sh)
 
 Current CESM logic in the new runner architecture:
 
@@ -622,6 +629,55 @@ Important note:
 Relevant runner:
 
 - [run_add_anomaly_to_baseline.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline.sh)
+
+#### Coastal-fill variant of the final addition step
+
+The repository also includes a coastal-fill variant of the final anomaly
+addition/downscaling step.
+
+Core worker:
+
+- [add_anomaly_to_baseline_with_coastal_fill.slurm.sh](scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh)
+
+What this worker changes relative to the generic adder:
+
+- it can optionally remap the anomaly to the trusted target baseline grid
+  before addition
+- it can optionally fill anomaly gaps only within the trusted target wet mask
+- it still applies the dynamic top-layer fill after baseline plus anomaly
+- it can still optionally regrid the final downscaled output afterward
+
+Methodological note:
+
+- the trusted target can be hindcast, GLORYS, or another current-conditions
+  product
+- the trusted target baseline file defines the horizontal grid, vertical
+  levels, and wet mask used by the coastal-fill logic
+- the current implementation relies on that trusted target wet mask to control
+  where fill is allowed
+- the code comments also document possible later conservative variants, such as
+  only filling cells adjacent to originally valid anomaly cells or reducing the
+  effective fill distance
+
+Runner layout for this coastal-fill branch:
+
+- general configurable runner:
+  [run_add_anomaly_to_trusted_baseline_with_coastal_fill.sh](scripts/runners/downscaling/run_add_anomaly_to_trusted_baseline_with_coastal_fill.sh)
+- IPCC/ESGF to hindcast wrapper:
+  [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh)
+- CESM to GLORYS wrapper:
+  [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline_with_coastal_fill.sh)
+
+Why the runner structure is split this way:
+
+- `scripts/runners/downscaling/` holds the general configurable launcher
+- `scripts/runners/ipcc_esgf_to_hindcast/` keeps the current IPCC/ESGF ->
+  hindcast production entrypoint
+- `scripts/runners/cesm_to_glorys/` keeps the current CESM -> GLORYS
+  production entrypoint
+
+This keeps the method generic while leaving the day-to-day launchers in the
+source-to-target workflow directories where they are easiest to remember.
 
 ### Curated Product Trees
 
@@ -983,6 +1039,17 @@ assumptions that should be kept in mind when interpreting the outputs.
 - Vertical matching to the GLORYS reference grid is performed before the
   climatology and delta steps for branches where comparable vertical structure
   is required.
+
+- In the coastal-fill variant of the final addition step, missing anomaly cells
+  may be filled only within the trusted target wet mask defined by the target
+  baseline/current-conditions product. That means the trusted target product
+  controls the horizontal grid, vertical levels, and ocean-mask geometry used
+  by the fill logic.
+
+- The current coastal-fill implementation is intentionally target-mask-based,
+  not coastline-shape-aware beyond that mask. It is meant as an anomaly-repair
+  step on the trusted target geometry, not as a guarantee of fully conservative
+  coastal behavior in every application.
 
 - Horizontal remapping method is not assumed to be universal across all model
   products:

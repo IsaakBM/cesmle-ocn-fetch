@@ -66,10 +66,7 @@ member_prefix() {
 }
 
 delta_dir_for_cesm_var() {
-  case "$1" in
-    SALT) printf '%s\n' "${RCP85_ROOT}/$1/delta_windows/member_deltas_0p05" ;;
-    *)    printf '%s\n' "${RCP85_ROOT}/$1/delta_windows/member_deltas" ;;
-  esac
+  printf '%s\n' "${RCP85_ROOT}/$1/delta_windows/member_deltas_0p05"
 }
 
 delta_file_for_member_window() {
@@ -82,16 +79,8 @@ delta_file_for_member_window() {
   prefix="$(member_prefix "${member}" "${var}")"
   delta_dir="$(delta_dir_for_cesm_var "${var}")"
 
-  case "$var" in
-    SALT)
-      printf '%s/%s_delta_%s_minus_%s_0p05.nc\n' \
-        "${delta_dir}" "${prefix}" "${window}" "${BASELINE_TAG}"
-      ;;
-    *)
-      printf '%s/%s_delta_%s_minus_%s.nc\n' \
-        "${delta_dir}" "${prefix}" "${window}" "${BASELINE_TAG}"
-      ;;
-  esac
+  printf '%s/%s_delta_%s_minus_%s_0p05.nc\n' \
+    "${delta_dir}" "${prefix}" "${window}" "${BASELINE_TAG}"
 }
 
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs

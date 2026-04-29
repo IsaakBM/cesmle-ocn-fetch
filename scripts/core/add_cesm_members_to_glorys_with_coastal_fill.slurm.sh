@@ -55,8 +55,8 @@ shopt -s nullglob
 #   WRITE_FILLED_ANOM         : forwarded to generic worker (default no)
 # ==============================================================================
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CORE_SCRIPT="${SCRIPT_DIR}/add_anomaly_to_baseline_with_coastal_fill.slurm.sh"
+REPO_DIR="${SLURM_SUBMIT_DIR:-${PWD}}"
+CORE_SCRIPT="${REPO_DIR}/scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh"
 
 DATASET_LABEL="${DATASET_LABEL:-cesm_to_glorys}"
 RCP85_ROOT="${RCP85_ROOT:-/home/SB5/rcp85}"
@@ -117,6 +117,12 @@ fi
 if [[ ! -d "${ANOM_DIR}" ]]; then
   echo "ERROR: Anomaly directory not found:"
   echo "  ${ANOM_DIR}"
+  exit 1
+fi
+
+if [[ ! -f "${CORE_SCRIPT}" ]]; then
+  echo "ERROR: Generic coastal-fill core worker not found:"
+  echo "  ${CORE_SCRIPT}"
   exit 1
 fi
 

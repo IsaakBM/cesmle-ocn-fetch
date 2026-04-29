@@ -59,6 +59,35 @@ member_prefix() {
   printf 'b.e11.BRCP85C5CNBDRD.f09_g16.%s.pop.h.%s.200601-210012.grid_1deg_pop_global_on_glorys' "$member" "$var"
 }
 
+delta_dir_for_cesm_var() {
+  case "$1" in
+    SALT) printf '%s\n' "${RCP85_ROOT}/$1/delta_windows/member_deltas_0p05" ;;
+    *)    printf '%s\n' "${RCP85_ROOT}/$1/delta_windows/member_deltas" ;;
+  esac
+}
+
+delta_file_for_member_window() {
+  local var="$1"
+  local member="$2"
+  local window="$3"
+  local prefix
+  local delta_dir
+
+  prefix="$(member_prefix "${member}" "${var}")"
+  delta_dir="$(delta_dir_for_cesm_var "${var}")"
+
+  case "$var" in
+    SALT)
+      printf '%s/%s_delta_%s_minus_%s_0p05.nc\n' \
+        "${delta_dir}" "${prefix}" "${window}" "${BASELINE_TAG}"
+      ;;
+    *)
+      printf '%s/%s_delta_%s_minus_%s.nc\n' \
+        "${delta_dir}" "${prefix}" "${window}" "${BASELINE_TAG}"
+      ;;
+  esac
+}
+
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs
 
 echo "Submitting CESM to GLORYS downscaling jobs with generic worker:"
@@ -69,7 +98,7 @@ for v in "${VARS[@]}"; do
   fi
 
   BASELINE_FILE="${GLORYS_ROOT}/${GLORYS_VAR}/clim_windows/glorys12v1_${GLORYS_VAR}_clim_${BASELINE_TAG}.nc"
-  DELTA_DIR="${RCP85_ROOT}/${v}/delta_windows/member_deltas_0p05"
+  DELTA_DIR="$(delta_dir_for_cesm_var "${v}")"
   TMP_DIR="${OUTROOT}/${GLORYS_VAR}/tmp_add"
 
   if [[ ! -f "$BASELINE_FILE" ]]; then
@@ -88,7 +117,7 @@ for v in "${VARS[@]}"; do
     prefix="$(member_prefix "${member}" "${v}")"
 
     for window in "${WINDOWS[@]}"; do
-      ANOMALY_FILE="${DELTA_DIR}/${prefix}_delta_${window}_minus_${BASELINE_TAG}_grid_0p05_global.nc"
+      ANOMALY_FILE="$(delta_file_for_member_window "${v}" "${member}" "${window}")"
       OUT_DIR="${OUTROOT}/${GLORYS_VAR}/${window}"
 
       if [[ ! -f "$ANOMALY_FILE" ]]; then

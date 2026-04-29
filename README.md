@@ -64,7 +64,9 @@ cesmle-ocn-fetch/
 │   │   ├── climatology_window_from_monthly_files.slurm.sh
 │   │   ├── climatology_window_from_timeseries.slurm.sh
 │   │   ├── delta_from_climatologies.slurm.sh
-│   │   └── add_anomaly_to_baseline.slurm.sh
+│   │   ├── add_anomaly_to_baseline.slurm.sh
+│   │   ├── add_anomaly_to_baseline_with_coastal_fill.slurm.sh
+│   │   └── add_cesm_members_to_glorys_with_coastal_fill.slurm.sh
 │   ├── runners/                    # Dataset-specific job submitters
 │   │   ├── global_ocean_biogeochemistry_hindcast/
 │   │   │   ├── run_temporal_aggregate_regrid.sh
@@ -93,7 +95,9 @@ cesmle-ocn-fetch/
 │   │   │   ├── run_aggregate_ocean_downscaling_products_fine_layers.sh
 │   │   │   ├── run_aggregate_ocean_downscaling_products_pelagic_layers.sh
 │   │   │   ├── run_split_ocean_downscaling_products_by_depth.sh
-│   │   │   └── run_export_ocean_downscaling_products_bydepth_to_csv.sh
+│   │   │   ├── run_export_ocean_downscaling_products_bydepth_to_csv.sh
+│   │   │   ├── run_export_ocean_downscaling_products_layers_to_parquet.sh
+│   │   │   └── run_export_ocean_downscaling_products_pelagic_to_parquet.sh
 │   │   ├── glorys/
 │   │   │   ├── run_temporal_aggregate_regrid.sh
 │   │   │   └── run_climatology_window.sh
@@ -103,7 +107,8 @@ cesmle-ocn-fetch/
 │   │   ├── remap_hindcast_baseline_to_0p05.sh
 │   │   ├── aggregate_ocean_downscaling_products_by_depth_bins.sh
 │   │   ├── split_ocean_downscaling_products_by_depth.sh
-│   │   └── export_ocean_downscaling_products_bydepth_to_csv.sh
+│   │   ├── export_ocean_downscaling_products_bydepth_to_csv.sh
+│   │   └── export_ocean_downscaling_products_to_parquet.sh
 ├── .gitignore
 ├── LICENSE
 └── README.md
@@ -667,6 +672,17 @@ Runner layout for this coastal-fill branch:
   [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh)
 - CESM to GLORYS wrapper:
   [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline_with_coastal_fill.sh)
+
+Important CESM/GLORYS note:
+
+- the CESM -> GLORYS coastal-fill path now uses a dedicated variable-level
+  worker:
+  [add_cesm_members_to_glorys_with_coastal_fill.slurm.sh](scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh)
+- this restores the legacy CESM -> GLORYS launch behavior:
+  one Slurm job per variable, with member anomaly files processed inside that
+  job
+- this is intentionally different from the hindcast coastal-fill wrapper,
+  which submits one job per variable-window combination
 
 Why the runner structure is split this way:
 

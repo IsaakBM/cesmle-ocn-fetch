@@ -71,7 +71,7 @@ export OMP_NUM_THREADS=1
 #                               sources (default: remapdis)
 #   COASTAL_FILL              : yes | no (default: yes)
 #   COASTAL_FILL_MAX_STEPS    : maximum neighbor-expansion steps for coastal fill
-#                               (default: 12)
+#                               on the trusted baseline wet mask (default: 12)
 # ==============================================================================
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"
@@ -311,6 +311,12 @@ def fill_slice_by_neighbors(data2d, wet2d, max_steps):
     if not fill_target.any():
         return filled, 0
 
+    # The current implementation relies on the trusted baseline/reanalysis wet
+    # mask to define where fills are allowed. If we later want a more
+    # conservative option, possible variants include:
+    #   1. only filling cells adjacent to originally valid anomaly cells
+    #   2. reducing COASTAL_FILL_MAX_STEPS
+    #   3. adding variable-specific fill limits
     filled_count = 0
     directions = [
         (-1, 0), (1, 0), (0, -1), (0, 1),

@@ -240,12 +240,32 @@ Reusable worker scripts. These do the actual processing.
     is part of the dataset workflow
 
 - [add_anomaly_to_baseline.slurm.sh](scripts/core/add_anomaly_to_baseline.slurm.sh)
+  - legacy/simple final addition worker without horizontal coastal repair
+  - kept for the non-coastal path and for comparison against the
+    coastal-fill variant
   - reads one baseline climatology and one anomaly/delta file
   - first computes baseline plus anomaly
   - then dynamically fills missing top layers in the final output, using the
     first deeper level that contains valid values
   - writes the native output
   - can optionally regrid the final downscaled product to another grid
+
+- [add_anomaly_to_baseline_with_coastal_fill.slurm.sh](scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh)
+  - current production final addition/downscaling worker
+  - reads one trusted baseline climatology and one anomaly/delta file
+  - can remap the anomaly onto the trusted target grid before addition
+  - can repair missing anomaly cells only inside the trusted target wet mask
+  - currently supports `nearest` and `distance_weighted` anomaly fill methods
+  - adds the repaired anomaly to the baseline
+  - then dynamically fills missing top layers in the final output
+  - writes the native output and can optionally regrid a final delivery copy
+
+- [add_cesm_members_to_glorys_with_coastal_fill.slurm.sh](scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh)
+  - CESM to GLORYS orchestration worker for the coastal-fill branch
+  - submits one Slurm job per physical variable while processing many CESM
+    member anomaly files inside that job
+  - delegates the actual per-file anomaly-addition work to
+    [add_anomaly_to_baseline_with_coastal_fill.slurm.sh](scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh)
 
 ### `scripts/runners/`
 
@@ -708,8 +728,9 @@ Relevant runner:
 
 #### Coastal-fill variant of the final addition step
 
-The repository also includes a coastal-fill variant of the final anomaly
-addition/downscaling step.
+The current production downscaling path now uses the coastal-fill final
+addition/downscaling worker when the goal is to preserve the trusted target
+coastline more faithfully in the final product.
 
 Core worker:
 
@@ -1219,9 +1240,12 @@ To avoid confusion:
 - `delta_from_climatologies.slurm.sh` computes future-minus-baseline anomaly
   products; it does not add them to a baseline.
 
-- `add_anomaly_to_baseline.slurm.sh` is the addition/downscaling step.
-  It combines a baseline climatology with an anomaly/delta field and can also
-  produce an optional remapped final product.
+- `add_anomaly_to_baseline.slurm.sh` and
+  `add_anomaly_to_baseline_with_coastal_fill.slurm.sh` are the final
+  addition/downscaling workers.
+  They combine a baseline climatology with an anomaly/delta field, with the
+  coastal-fill variant first repairing missing anomaly cells on the trusted
+  target wet mask before addition.
 
 - The downscaling part of the overall workflow still continues after
   climatologies. Climatologies are not the final product; they are the inputs to

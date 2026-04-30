@@ -52,7 +52,7 @@ copy_all_from_dir_parallel() {
   fi
 
   printf '%s\0' "${files[@]}" \
-    | xargs -0 -n 1 -P "${NPROC}" bash -c 'cp -p "$1" "$2"/' _ "{}" "${dest_dir}"
+    | xargs -0 -I{} -P "${NPROC}" cp -p "{}" "${dest_dir}/"
   echo "[COPY] ${mode_label}: ${src_dir}/*.nc -> ${dest_dir}/ (files=${#files[@]} parallel=${NPROC})"
 }
 

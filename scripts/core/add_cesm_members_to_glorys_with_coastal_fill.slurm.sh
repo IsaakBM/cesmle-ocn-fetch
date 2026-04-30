@@ -51,7 +51,11 @@ shopt -s nullglob
 #                               default 2
 #   REMAP_ANOMALY_TO_BASELINE : forwarded to generic worker (default no)
 #   COASTAL_FILL              : forwarded to generic worker (default yes)
+#   COASTAL_FILL_METHOD       : forwarded to generic worker
+#                               (default: distance_weighted)
 #   COASTAL_FILL_MAX_STEPS    : forwarded to generic worker (default 12)
+#   COASTAL_FILL_WEIGHT_POWER : forwarded to generic worker (default 2.0)
+#   COASTAL_FILL_MIN_DONORS   : forwarded to generic worker (default 4)
 #   WRITE_FILLED_ANOM         : forwarded to generic worker (default no)
 # ==============================================================================
 
@@ -68,7 +72,10 @@ MAX_JOBS="${MAX_JOBS:-2}"
 
 REMAP_ANOMALY_TO_BASELINE="${REMAP_ANOMALY_TO_BASELINE:-no}"
 COASTAL_FILL="${COASTAL_FILL:-yes}"
+COASTAL_FILL_METHOD="${COASTAL_FILL_METHOD:-distance_weighted}"
 COASTAL_FILL_MAX_STEPS="${COASTAL_FILL_MAX_STEPS:-12}"
+COASTAL_FILL_WEIGHT_POWER="${COASTAL_FILL_WEIGHT_POWER:-2.0}"
+COASTAL_FILL_MIN_DONORS="${COASTAL_FILL_MIN_DONORS:-4}"
 WRITE_FILLED_ANOM="${WRITE_FILLED_ANOM:-no}"
 
 CESM_VAR="${VAR:-}"
@@ -136,7 +143,10 @@ echo "OUT ROOT            : ${OUT_VAR_DIR}"
 echo "TMP DIR             : ${TMP_DIR}"
 echo "MAX JOBS            : ${MAX_JOBS}"
 echo "COASTAL FILL        : ${COASTAL_FILL}"
+echo "COASTAL FILL METHOD : ${COASTAL_FILL_METHOD}"
 echo "COASTAL FILL STEPS  : ${COASTAL_FILL_MAX_STEPS}"
+echo "COASTAL FILL POWER  : ${COASTAL_FILL_WEIGHT_POWER}"
+echo "COASTAL FILL DONORS : ${COASTAL_FILL_MIN_DONORS}"
 echo "============================================================"
 
 process_one_anomaly_file() {
@@ -181,7 +191,10 @@ process_one_anomaly_file() {
     WRITE_FILLED_ANOM="${WRITE_FILLED_ANOM}" \
     REMAP_ANOMALY_TO_BASELINE="${REMAP_ANOMALY_TO_BASELINE}" \
     COASTAL_FILL="${COASTAL_FILL}" \
+    COASTAL_FILL_METHOD="${COASTAL_FILL_METHOD}" \
     COASTAL_FILL_MAX_STEPS="${COASTAL_FILL_MAX_STEPS}" \
+    COASTAL_FILL_WEIGHT_POWER="${COASTAL_FILL_WEIGHT_POWER}" \
+    COASTAL_FILL_MIN_DONORS="${COASTAL_FILL_MIN_DONORS}" \
     REGRID_OUTPUT="no" \
     bash "${CORE_SCRIPT}"
 

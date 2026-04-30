@@ -70,8 +70,16 @@ export OMP_NUM_THREADS=1
 #                             : remap op for curvilinear/unstructured anomaly
 #                               sources (default: remapdis)
 #   COASTAL_FILL              : yes | no (default: yes)
+#   COASTAL_FILL_METHOD       : nearest | distance_weighted
+#                               (default: distance_weighted)
 #   COASTAL_FILL_MAX_STEPS    : maximum neighbor-expansion steps for coastal fill
 #                               on the trusted baseline wet mask (default: 12)
+#   COASTAL_FILL_WEIGHT_POWER : inverse-distance weighting exponent used when
+#                               COASTAL_FILL_METHOD=distance_weighted
+#                               (default: 2.0)
+#   COASTAL_FILL_MIN_DONORS   : target minimum donor count for
+#                               COASTAL_FILL_METHOD=distance_weighted
+#                               (default: 4)
 # ==============================================================================
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"
@@ -99,7 +107,10 @@ ANOMALY_REGRID_METHOD="${ANOMALY_REGRID_METHOD:-auto}"
 ANOMALY_AUTO_METHOD_DEFAULT="${ANOMALY_AUTO_METHOD_DEFAULT:-remapbil}"
 ANOMALY_AUTO_METHOD_CURVILINEAR="${ANOMALY_AUTO_METHOD_CURVILINEAR:-remapdis}"
 COASTAL_FILL="${COASTAL_FILL:-yes}"
+COASTAL_FILL_METHOD="${COASTAL_FILL_METHOD:-distance_weighted}"
 COASTAL_FILL_MAX_STEPS="${COASTAL_FILL_MAX_STEPS:-12}"
+COASTAL_FILL_WEIGHT_POWER="${COASTAL_FILL_WEIGHT_POWER:-2.0}"
+COASTAL_FILL_MIN_DONORS="${COASTAL_FILL_MIN_DONORS:-4}"
 
 if [[ -z "$VAR" || -z "$BASELINE_FILE" || -z "$ANOMALY_FILE" || -z "$OUT_DIR" ]]; then
   echo "ERROR: Missing required environment variables."
@@ -124,6 +135,11 @@ for flag_var in WRITE_NATIVE_OUTPUT FILL_TOP_MISSING WRITE_FILLED_ANOM REGRID_OU
     exit 1
   fi
 done
+
+if [[ "${COASTAL_FILL_METHOD}" != "nearest" && "${COASTAL_FILL_METHOD}" != "distance_weighted" ]]; then
+  echo "ERROR: COASTAL_FILL_METHOD must be nearest or distance_weighted"
+  exit 1
+fi
 
 if [[ "$REMAP_ANOMALY_TO_BASELINE" == "yes" && ! -f "$ANOMALY_GRIDFILE" ]]; then
   echo "ERROR: ANOMALY_GRIDFILE must exist when REMAP_ANOMALY_TO_BASELINE=yes"
@@ -226,7 +242,10 @@ echo "FILL TOP MISSING     : ${FILL_TOP_MISSING}"
 echo "WRITE FILLED ANOM    : ${WRITE_FILLED_ANOM}"
 echo "REMAP ANOM TO TARGET : ${REMAP_ANOMALY_TO_BASELINE}"
 echo "COASTAL FILL         : ${COASTAL_FILL}"
+echo "COASTAL FILL METHOD  : ${COASTAL_FILL_METHOD}"
 echo "COASTAL FILL STEPS   : ${COASTAL_FILL_MAX_STEPS}"
+echo "COASTAL FILL POWER   : ${COASTAL_FILL_WEIGHT_POWER}"
+echo "COASTAL FILL DONORS  : ${COASTAL_FILL_MIN_DONORS}"
 if [[ "$REMAP_ANOMALY_TO_BASELINE" == "yes" ]]; then
   echo "ANOM GRIDFILE        : ${ANOMALY_GRIDFILE}"
   echo "ANOM REGRID METHOD   : ${ANOMALY_REGRID_METHOD}"
@@ -276,7 +295,10 @@ fill_top_missing = "${FILL_TOP_MISSING}" == "yes"
 write_filled_anom = "${WRITE_FILLED_ANOM}" == "yes"
 filled_anom_file = "${FILLED_ANOM_FILE}"
 coastal_fill = "${COASTAL_FILL}" == "yes"
+coastal_fill_method = "${COASTAL_FILL_METHOD}"
 coastal_fill_max_steps = int("${COASTAL_FILL_MAX_STEPS}")
+coastal_fill_weight_power = float("${COASTAL_FILL_WEIGHT_POWER}")
+coastal_fill_min_donors = int("${COASTAL_FILL_MIN_DONORS}")
 
 ds_base = xr.open_dataset(baseline_file)
 ds_anom = xr.open_dataset(anomaly_file)
@@ -304,7 +326,7 @@ def infer_xy_dims(da):
         raise ValueError(f"Expected at least two dims to infer horizontal axes: {da.dims}")
     return da.dims[-2], da.dims[-1]
 
-def fill_slice_by_neighbors(data2d, wet2d, max_steps):
+def fill_slice_nearest(data2d, wet2d, max_steps):
     filled = np.array(data2d, dtype=float, copy=True)
     wet = np.array(wet2d, dtype=bool, copy=False)
     fill_target = wet & ~np.isfinite(filled)
@@ -361,6 +383,59 @@ def fill_slice_by_neighbors(data2d, wet2d, max_steps):
 
     return filled, filled_count
 
+def fill_slice_distance_weighted(data2d, wet2d, max_steps, weight_power, min_donors):
+    filled = np.array(data2d, dtype=float, copy=True)
+    wet = np.array(wet2d, dtype=bool, copy=False)
+    pending_idx = np.argwhere(wet & ~np.isfinite(filled))
+    if pending_idx.size == 0:
+        return filled, 0
+
+    valid_mask = wet & np.isfinite(filled)
+    if not valid_mask.any():
+        return filled, 0
+
+    valid_idx = np.argwhere(valid_mask)
+    valid_vals = filled[valid_mask]
+    max_radius = max(1, max_steps)
+    target_donors = max(1, min_donors)
+    filled_count = 0
+
+    for iy, ix in pending_idx:
+        dy = valid_idx[:, 0] - iy
+        dx = valid_idx[:, 1] - ix
+        cheb = np.maximum(np.abs(dy), np.abs(dx))
+        if not np.any(cheb <= max_radius):
+            continue
+
+        chosen = None
+        for radius in range(1, max_radius + 1):
+            mask = cheb <= radius
+            donor_count = int(mask.sum())
+            if donor_count >= target_donors:
+                chosen = mask
+                break
+            if chosen is None and donor_count > 0:
+                chosen = mask
+
+        if chosen is None or not np.any(chosen):
+            continue
+
+        local_dy = dy[chosen].astype(float)
+        local_dx = dx[chosen].astype(float)
+        distances = np.hypot(local_dy, local_dx)
+        donor_vals = valid_vals[chosen]
+
+        distances = np.where(distances == 0.0, 1.0e-12, distances)
+        weights = 1.0 / np.power(distances, weight_power)
+        weight_sum = weights.sum()
+        if not np.isfinite(weight_sum) or weight_sum <= 0.0:
+            continue
+
+        filled[iy, ix] = float(np.sum(weights * donor_vals) / weight_sum)
+        filled_count += 1
+
+    return filled, filled_count
+
 base_var = pick_main_var(ds_base)
 
 anom_candidates = [
@@ -405,9 +480,18 @@ if coastal_fill:
 
     for idx in range(flat_anom.shape[0]):
         wet_mask = np.isfinite(flat_base[idx])
-        filled_slice, added = fill_slice_by_neighbors(
-            flat_anom[idx], wet_mask, coastal_fill_max_steps
-        )
+        if coastal_fill_method == "nearest":
+            filled_slice, added = fill_slice_nearest(
+                flat_anom[idx], wet_mask, coastal_fill_max_steps
+            )
+        else:
+            filled_slice, added = fill_slice_distance_weighted(
+                flat_anom[idx],
+                wet_mask,
+                coastal_fill_max_steps,
+                coastal_fill_weight_power,
+                coastal_fill_min_donors,
+            )
         flat_anom[idx] = filled_slice
         coastal_fill_count += added
 
@@ -480,6 +564,7 @@ encoding = {base_var: {"zlib": True, "complevel": 1}}
 print(f"BASE VAR              : {base_var}")
 print(f"ANOM VAR              : {anom_var}")
 print(f"COASTAL FILL ENABLED  : {coastal_fill}")
+print(f"COASTAL FILL METHOD   : {coastal_fill_method}")
 print(f"COASTAL CELLS FILLED  : {coastal_fill_count}")
 print(f"FIRST VALID INDEX     : {first_valid_index}")
 print(f"TOP LEVELS FILLED     : {filled_top_count}")

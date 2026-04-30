@@ -9,7 +9,73 @@ documentation. The actual NetCDF inputs, intermediate products, and final
 outputs live on cluster filesystems such as `/home/SB5`,
 `/home/sandbox-sparc`, and scratch space.
 
-## What This Repository Does
+## Read This First
+
+The easiest way to understand the repository is to read it in this order:
+
+1. **Purpose and architecture**
+   - what the repository produces
+   - how `core`, `runners`, and `tools` divide responsibilities
+2. **Common processing stages**
+   - monthly preparation
+   - vertical interpolation
+   - climatology windows
+   - delta and anomaly addition
+3. **Workflow families**
+   - GLORYS baseline
+   - hindcast baseline
+   - IPCC/ESGF to hindcast downscaling
+   - CESM to GLORYS downscaling
+4. **Curated product pipeline**
+   - organize final products
+   - create fine layers
+   - create pelagic layers
+   - export parquet / CSV outputs
+
+If you only need the current logic, focus first on:
+
+- [Architecture And Script Roles](#architecture-and-script-roles)
+- [Common Processing Stages](#common-processing-stages)
+- [Current Workflow Families](#current-workflow-families)
+- [Curated Product Pipeline](#curated-product-pipeline)
+
+## Current End-To-End Workflow Map
+
+At the highest level, the repository has two kinds of workflows:
+
+1. **Scientific production workflows**
+   - build baseline climatologies
+   - build future anomalies or deltas
+   - add anomalies to a trusted baseline
+   - write final downscaled NetCDF products
+
+2. **Curated delivery workflows**
+   - reorganize final NetCDF outputs into delivery trees
+   - aggregate depth-layer or pelagic products
+   - export delivery-ready parquet or CSV products
+
+The current scientific branches are:
+
+- `glorys/`
+  - prepares the GLORYS baseline products
+- `global_ocean_biogeochemistry_hindcast/`
+  - prepares the hindcast baseline products
+- `ipcc_esgf/`
+  - prepares IPCC/ESGF monthly products, climatologies, and deltas
+- `ipcc_esgf_to_hindcast/`
+  - adds IPCC/ESGF deltas to the hindcast baseline
+- `cesm_to_glorys/`
+  - adds CESM member deltas to the GLORYS baseline
+
+The current curated-product chain is:
+
+1. [run_organize_ocean_downscaling_products.sh](scripts/runners/products/run_organize_ocean_downscaling_products.sh)
+2. [run_aggregate_ocean_downscaling_products_fine_layers.sh](scripts/runners/products/run_aggregate_ocean_downscaling_products_fine_layers.sh)
+3. [run_aggregate_ocean_downscaling_products_pelagic_layers.sh](scripts/runners/products/run_aggregate_ocean_downscaling_products_pelagic_layers.sh)
+4. [run_export_ocean_downscaling_products_layers_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_layers_to_parquet.sh)
+5. [run_export_ocean_downscaling_products_pelagic_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_parquet.sh)
+
+## Purpose
 
 At a high level, the repository now supports three reusable processing stages:
 
@@ -31,10 +97,15 @@ Those stages are reused across different dataset families:
 - Global Ocean Biogeochemistry Hindcast
 - IPCC/ESGF products
 
-The key point is that the newer code organization is based on **data structure**
-and **processing operation**, not on one script per dataset.
+The key point is that the newer code organization is based on:
 
-## Project Structure
+- **data structure**
+- **processing operation**
+- and then **dataset-specific runners** that wire those generic pieces together
+
+So the repository is not organized as “one custom script per dataset.”
+
+## Repository Layout
 
 ```text
 cesmle-ocn-fetch/
@@ -126,7 +197,7 @@ That means:
 - many paths are cluster-specific;
 - empty local data directories are expected and normal.
 
-## Main Script Organization
+## Architecture And Script Roles
 
 The newer structure is organized around **what kind of operation is being
 performed**.
@@ -265,7 +336,7 @@ Archived pre-refactor workflow scripts kept for provenance and reference.
 These are not the active workflow surface anymore, but they remain tracked so
 the original production implementations are still documented in the repository.
 
-## Workflow Logic
+## Common Processing Stages
 
 The current logic is easiest to understand in three immediate processing layers,
 followed by the later downscaling stages.
@@ -384,7 +455,7 @@ So the generalized `core/` plus `runners/` structure should be read as the
 full pipeline structure, with the newer generalized code increasingly covering
 the later anomaly/delta/downscaling steps as well.
 
-## Dataset Mapping
+## Current Workflow Families
 
 ### GLORYS
 
@@ -695,12 +766,12 @@ Why the runner structure is split this way:
 This keeps the method generic while leaving the day-to-day launchers in the
 source-to-target workflow directories where they are easiest to remember.
 
-### Curated Product Trees
+## Curated Product Pipeline
 
 After the main scientific workflow produces the final downscaled outputs, the
 repository now also supports curated delivery/export trees.
 
-#### Curated 3D product tree
+### Curated 3D product tree
 
 Built with:
 
@@ -750,7 +821,7 @@ Notes:
   under each future window when that layout exists
 - the tool copies files; it does not move or delete the original workflow trees
 
-#### Derived hindcast baseline 0.05 tree
+### Derived hindcast baseline 0.05 tree
 
 Built with:
 
@@ -781,7 +852,7 @@ Notes:
   - `remapdis` for curvilinear/unstructured sources
 - parallelizes at the file level by default, using the allocated Slurm CPUs
 
-#### Curated depth-layer NetCDF tree
+### Curated depth-layer NetCDF tree
 
 Built with:
 
@@ -848,7 +919,7 @@ Method note:
 - for the current example files tracked in `legacy/`, explicit vertical bounds
   were not present, so reconstructed bounds are the expected default behavior
 
-#### Curated pelagic-zone NetCDF tree
+### Curated pelagic-zone NetCDF tree
 
 Built with:
 
@@ -891,7 +962,7 @@ Method note:
 - pelagic-zone means therefore depend on either explicit vertical bounds or
   reconstructed bounds from the shared depth-center coordinate
 
-#### Curated by-depth NetCDF tree
+### Curated by-depth NetCDF tree
 
 Built with:
 
@@ -920,7 +991,7 @@ Notes:
 - this workflow remains available for producing individual-depth slices, but it
   is not the current active derived-product path
 
-#### Curated by-depth CSV tree
+### Curated by-depth CSV tree
 
 Built with:
 

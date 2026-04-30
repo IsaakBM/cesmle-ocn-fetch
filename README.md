@@ -741,6 +741,13 @@ Notes:
 - `thetao`, `so`, and `uo` currently contribute `0p05` baseline products from
   the GLORYS reference branch
 - `future/` stores curated future/downscaled products
+- the runner now submits one Slurm job per curated subtree:
+  - `baseline/<var>`
+  - `future/<var>/<window>` for windowed future branches
+- within each submitted job, the tool can copy multiple NetCDF files in
+  parallel using the allocated CPUs
+- `chl` and `o2` future branches preserve both `0p25` and `0p05` products
+  under each future window when that layout exists
 - the tool copies files; it does not move or delete the original workflow trees
 
 #### Derived hindcast baseline 0.05 tree

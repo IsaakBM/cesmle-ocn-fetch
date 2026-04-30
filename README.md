@@ -720,6 +720,8 @@ What this worker changes relative to the generic adder:
 - it can optionally remap the anomaly to the trusted target baseline grid
   before addition
 - it can optionally fill anomaly gaps only within the trusted target wet mask
+- it now supports multiple anomaly-fill methods, including
+  `distance_weighted`
 - it still applies the dynamic top-layer fill after baseline plus anomaly
 - it can still optionally regrid the final downscaled output afterward
 
@@ -731,9 +733,26 @@ Methodological note:
   levels, and wet mask used by the coastal-fill logic
 - the current implementation relies on that trusted target wet mask to control
   where fill is allowed
+- the fill is applied to the anomaly only, never directly to the final
+  absolute field
+- the current default method is a distance-weighted anomaly fill on the
+  trusted target grid, intended to reduce unresolved empty coastal target
+  cells more smoothly than a pure nearest-value fill
 - the code comments also document possible later conservative variants, such as
   only filling cells adjacent to originally valid anomaly cells or reducing the
   effective fill distance
+
+Current coastal-fill controls exposed by the runners:
+
+- `COASTAL_FILL_METHOD`
+  - `nearest`
+  - `distance_weighted` (current default)
+- `COASTAL_FILL_MAX_STEPS`
+  - maximum donor search radius in grid-cell steps
+- `COASTAL_FILL_WEIGHT_POWER`
+  - inverse-distance weighting exponent for the distance-weighted method
+- `COASTAL_FILL_MIN_DONORS`
+  - target minimum donor count for the distance-weighted method
 
 Runner layout for this coastal-fill branch:
 
@@ -1139,6 +1158,10 @@ assumptions that should be kept in mind when interpreting the outputs.
   baseline/current-conditions product. That means the trusted target product
   controls the horizontal grid, vertical levels, and ocean-mask geometry used
   by the fill logic.
+
+- The current default coastal-fill method is distance-weighted anomaly repair
+  on that trusted target geometry. The anomaly, not the final absolute field,
+  is what gets reconstructed before the addition step.
 
 - The current coastal-fill implementation is intentionally target-mask-based,
   not coastline-shape-aware beyond that mask. It is meant as an anomaly-repair

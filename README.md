@@ -1,6 +1,8 @@
 # Ocean Downscaling And Delivery Pipeline
 
-<img src="docs/assets/save-the-blue-five-logo.png" alt="Save The Blue Five logo" width="260">
+<table>
+  <tr>
+    <td valign="top">
 
 This repository contains HPC batch workflows for preparing, vertically matching,
 downscaling, organizing, and exporting ocean model products across multiple
@@ -10,6 +12,13 @@ The repository itself is lightweight. It stores scripts, helpers, and
 documentation. The actual NetCDF inputs, intermediate products, and final
 outputs live on cluster filesystems such as `/home/SB5`,
 `/home/sandbox-sparc`, and scratch space.
+
+  </td>
+    <td valign="top" align="right">
+      <img src="docs/assets/save-the-blue-five-logo.png" alt="Save The Blue Five logo" width="260">
+    </td>
+  </tr>
+</table>
 
 ## Read This First
 

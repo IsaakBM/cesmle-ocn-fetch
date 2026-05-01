@@ -256,6 +256,9 @@ Reusable worker scripts. These do the actual processing.
   - can remap the anomaly onto the trusted target grid before addition
   - can repair missing anomaly cells only inside the trusted target wet mask
   - currently supports `nearest` and `distance_weighted` anomaly fill methods
+  - the current distance-weighted implementation reuses precomputed local
+    donor geometry instead of rebuilding the donor search from scratch for
+    every missing coastal cell
   - adds the repaired anomaly to the baseline
   - then dynamically fills missing top layers in the final output
   - writes the native output and can optionally regrid a final delivery copy
@@ -759,6 +762,10 @@ Methodological note:
 - the current default method is a distance-weighted anomaly fill on the
   trusted target grid, intended to reduce unresolved empty coastal target
   cells more smoothly than a pure nearest-value fill
+- the current implementation keeps that same distance-weighted philosophy but
+  speeds it up by reusing precomputed local donor geometry on the trusted
+  target mask, rather than recomputing donor neighborhoods from scratch for
+  each missing anomaly cell
 - the code comments also document possible later conservative variants, such as
   only filling cells adjacent to originally valid anomaly cells or reducing the
   effective fill distance
@@ -1183,6 +1190,11 @@ assumptions that should be kept in mind when interpreting the outputs.
 - The current default coastal-fill method is distance-weighted anomaly repair
   on that trusted target geometry. The anomaly, not the final absolute field,
   is what gets reconstructed before the addition step.
+
+- The current faster implementation keeps that same method but reuses
+  precomputed local donor geometry on the trusted target mask so repeated
+  coastal-cell donor searches do not have to be rebuilt from scratch for every
+  file.
 
 - The current coastal-fill implementation is intentionally target-mask-based,
   not coastline-shape-aware beyond that mask. It is meant as an anomaly-repair

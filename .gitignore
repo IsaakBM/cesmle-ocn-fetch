@@ -39,8 +39,10 @@ vignettes/*.pdf
 # R Environment Variables
 .Renviron
 
-# pkgdown site
-docs/
+# docs reference files that should stay local
+docs/aws-cesm1-le.csv
+docs/biological_data_layout.md
+docs/CMIP6_MIP_tables.xlsx
 
 # translation temp files
 po/*~

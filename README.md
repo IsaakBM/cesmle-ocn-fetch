@@ -1,6 +1,6 @@
 # Ocean Downscaling And Delivery Pipeline
 
-![Save The Blue Five logo](https://github.com/IsaakBM/cesmle-ocn-fetch/blob/main/docs/assets/save-the-blue-five-logo.jpg?raw=1)
+<img src="docs/assets/save-the-blue-five-logo.png" alt="Save The Blue Five logo" width="260">
 
 This repository contains HPC batch workflows for preparing, vertically matching,
 downscaling, organizing, and exporting ocean model products across multiple

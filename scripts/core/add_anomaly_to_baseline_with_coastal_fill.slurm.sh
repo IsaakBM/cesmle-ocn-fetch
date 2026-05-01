@@ -326,112 +326,143 @@ def infer_xy_dims(da):
         raise ValueError(f"Expected at least two dims to infer horizontal axes: {da.dims}")
     return da.dims[-2], da.dims[-1]
 
-def fill_slice_nearest(data2d, wet2d, max_steps):
-    filled = np.array(data2d, dtype=float, copy=True)
-    wet = np.array(wet2d, dtype=bool, copy=False)
-    fill_target = wet & ~np.isfinite(filled)
-    if not fill_target.any():
-        return filled, 0
+_fill_geometry_cache = {}
 
-    # The current implementation relies on the trusted baseline/reanalysis wet
-    # mask to define where fills are allowed. If we later want a more
-    # conservative option, possible variants include:
-    #   1. only filling cells adjacent to originally valid anomaly cells
-    #   2. reducing COASTAL_FILL_MAX_STEPS
-    #   3. adding variable-specific fill limits
-    filled_count = 0
-    directions = [
-        (-1, 0), (1, 0), (0, -1), (0, 1),
-        (-1, -1), (-1, 1), (1, -1), (1, 1),
-    ]
+def build_fill_geometry(max_steps, weight_power):
+    key = (int(max_steps), float(weight_power))
+    cached = _fill_geometry_cache.get(key)
+    if cached is not None:
+        return cached
 
-    for _step in range(max_steps):
-        pending = wet & ~np.isfinite(filled)
-        if not pending.any():
-            break
+    offsets = []
+    max_radius = max(1, int(max_steps))
+    for dy in range(-max_radius, max_radius + 1):
+        for dx in range(-max_radius, max_radius + 1):
+            if dy == 0 and dx == 0:
+                continue
+            radius = max(abs(dy), abs(dx))
+            if radius > max_radius:
+                continue
+            dist = float(np.hypot(dy, dx))
+            offsets.append((radius, dist, dy, dx))
 
-        proposal = np.full(filled.shape, np.nan, dtype=float)
+    offsets.sort(key=lambda item: (item[0], item[1]))
 
-        for dy, dx in directions:
-            src = filled
-            shifted = np.full_like(src, np.nan, dtype=float)
+    radii = np.array([item[0] for item in offsets], dtype=np.int16)
+    dy = np.array([item[2] for item in offsets], dtype=np.int16)
+    dx = np.array([item[3] for item in offsets], dtype=np.int16)
+    dist = np.array([item[1] for item in offsets], dtype=float)
+    weights = 1.0 / np.power(dist, float(weight_power))
 
-            if dy >= 0:
-                src_y = slice(0, src.shape[0] - dy)
-                dst_y = slice(dy, src.shape[0])
-            else:
-                src_y = slice(-dy, src.shape[0])
-                dst_y = slice(0, src.shape[0] + dy)
+    radius_cutoffs = np.zeros(max_radius + 1, dtype=np.int32)
+    for radius in range(1, max_radius + 1):
+        radius_cutoffs[radius] = int(np.searchsorted(radii, radius, side="right"))
 
-            if dx >= 0:
-                src_x = slice(0, src.shape[1] - dx)
-                dst_x = slice(dx, src.shape[1])
-            else:
-                src_x = slice(-dx, src.shape[1])
-                dst_x = slice(0, src.shape[1] + dx)
+    geometry = {
+        "max_radius": max_radius,
+        "dy": dy,
+        "dx": dx,
+        "weights": weights,
+        "radius_cutoffs": radius_cutoffs,
+    }
+    _fill_geometry_cache[key] = geometry
+    return geometry
 
-            shifted[dst_y, dst_x] = src[src_y, src_x]
-            use = pending & np.isfinite(shifted) & ~np.isfinite(proposal)
-            proposal[use] = shifted[use]
-
-        can_fill = pending & np.isfinite(proposal)
-        if not can_fill.any():
-            break
-
-        filled[can_fill] = proposal[can_fill]
-        filled_count += int(can_fill.sum())
-
-    return filled, filled_count
-
-def fill_slice_distance_weighted(data2d, wet2d, max_steps, weight_power, min_donors):
+def fill_slice_nearest(data2d, wet2d, geometry):
     filled = np.array(data2d, dtype=float, copy=True)
     wet = np.array(wet2d, dtype=bool, copy=False)
     pending_idx = np.argwhere(wet & ~np.isfinite(filled))
     if pending_idx.size == 0:
         return filled, 0
 
-    valid_mask = wet & np.isfinite(filled)
-    if not valid_mask.any():
-        return filled, 0
+    max_radius = geometry["max_radius"]
+    dy = geometry["dy"]
+    dx = geometry["dx"]
+    radius_cutoffs = geometry["radius_cutoffs"]
 
-    valid_idx = np.argwhere(valid_mask)
-    valid_vals = filled[valid_mask]
-    max_radius = max(1, max_steps)
-    target_donors = max(1, min_donors)
+    padded_vals = np.pad(filled, max_radius, mode="constant", constant_values=np.nan)
+    padded_wet = np.pad(wet, max_radius, mode="constant", constant_values=False)
     filled_count = 0
 
     for iy, ix in pending_idx:
-        dy = valid_idx[:, 0] - iy
-        dx = valid_idx[:, 1] - ix
-        cheb = np.maximum(np.abs(dy), np.abs(dx))
-        if not np.any(cheb <= max_radius):
-            continue
+        py = iy + max_radius
+        px = ix + max_radius
+        found = False
 
-        chosen = None
         for radius in range(1, max_radius + 1):
-            mask = cheb <= radius
-            donor_count = int(mask.sum())
-            if donor_count >= target_donors:
-                chosen = mask
-                break
-            if chosen is None and donor_count > 0:
-                chosen = mask
+            end = radius_cutoffs[radius]
+            neigh_y = py + dy[:end]
+            neigh_x = px + dx[:end]
+            valid = padded_wet[neigh_y, neigh_x] & np.isfinite(padded_vals[neigh_y, neigh_x])
+            if not np.any(valid):
+                continue
 
-        if chosen is None or not np.any(chosen):
+            first = int(np.flatnonzero(valid)[0])
+            filled[iy, ix] = float(padded_vals[neigh_y[first], neigh_x[first]])
+            padded_vals[py, px] = filled[iy, ix]
+            filled_count += 1
+            found = True
+            break
+
+        if not found:
             continue
 
-        local_dy = dy[chosen].astype(float)
-        local_dx = dx[chosen].astype(float)
-        distances = np.hypot(local_dy, local_dx)
-        donor_vals = valid_vals[chosen]
+    return filled, filled_count
 
-        distances = np.where(distances == 0.0, 1.0e-12, distances)
-        weights = 1.0 / np.power(distances, weight_power)
-        weight_sum = weights.sum()
+def fill_slice_distance_weighted(data2d, wet2d, geometry, min_donors):
+    filled = np.array(data2d, dtype=float, copy=True)
+    wet = np.array(wet2d, dtype=bool, copy=False)
+    pending_idx = np.argwhere(wet & ~np.isfinite(filled))
+    if pending_idx.size == 0:
+        return filled, 0
+
+    max_radius = geometry["max_radius"]
+    dy = geometry["dy"]
+    dx = geometry["dx"]
+    weights = geometry["weights"]
+    radius_cutoffs = geometry["radius_cutoffs"]
+
+    if not np.any(wet & np.isfinite(filled)):
+        return filled, 0
+
+    target_donors = max(1, min_donors)
+    filled_count = 0
+    padded_vals = np.pad(filled, max_radius, mode="constant", constant_values=np.nan)
+    padded_wet = np.pad(wet, max_radius, mode="constant", constant_values=False)
+
+    for iy, ix in pending_idx:
+        py = iy + max_radius
+        px = ix + max_radius
+        donor_mask = None
+        chosen_end = 0
+
+        for radius in range(1, max_radius + 1):
+            end = radius_cutoffs[radius]
+            neigh_y = py + dy[:end]
+            neigh_x = px + dx[:end]
+            valid = padded_wet[neigh_y, neigh_x] & np.isfinite(padded_vals[neigh_y, neigh_x])
+            donor_count = int(valid.sum())
+            if donor_count >= target_donors:
+                donor_mask = valid
+                chosen_end = end
+                break
+            if donor_mask is None and donor_count > 0:
+                donor_mask = valid
+                chosen_end = end
+
+        if donor_mask is None or not np.any(donor_mask):
+            continue
+
+        neigh_y = py + dy[:chosen_end]
+        neigh_x = px + dx[:chosen_end]
+        donor_vals = padded_vals[neigh_y, neigh_x][donor_mask]
+        donor_weights = weights[:chosen_end][donor_mask]
+        weight_sum = donor_weights.sum()
         if not np.isfinite(weight_sum) or weight_sum <= 0.0:
             continue
 
-        filled[iy, ix] = float(np.sum(weights * donor_vals) / weight_sum)
+        filled[iy, ix] = float(np.sum(donor_weights * donor_vals) / weight_sum)
+        padded_vals[py, px] = filled[iy, ix]
         filled_count += 1
 
     return filled, filled_count
@@ -477,19 +508,22 @@ if coastal_fill:
 
     flat_base = base_arr.reshape((-1,) + base_arr.shape[-2:])
     flat_anom = anom_arr.reshape((-1,) + anom_arr.shape[-2:])
+    fill_geometry = build_fill_geometry(
+        coastal_fill_max_steps,
+        coastal_fill_weight_power,
+    )
 
     for idx in range(flat_anom.shape[0]):
         wet_mask = np.isfinite(flat_base[idx])
         if coastal_fill_method == "nearest":
             filled_slice, added = fill_slice_nearest(
-                flat_anom[idx], wet_mask, coastal_fill_max_steps
+                flat_anom[idx], wet_mask, fill_geometry
             )
         else:
             filled_slice, added = fill_slice_distance_weighted(
                 flat_anom[idx],
                 wet_mask,
-                coastal_fill_max_steps,
-                coastal_fill_weight_power,
+                fill_geometry,
                 coastal_fill_min_donors,
             )
         flat_anom[idx] = filled_slice

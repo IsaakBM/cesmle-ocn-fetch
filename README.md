@@ -1,8 +1,12 @@
-# CESM-LE Ocean Downscaling Pipeline
+<p align="right">
+  <img src="docs/assets/save-the-blue-five-logo.jpg" alt="Save The Blue Five logo" width="230" />
+</p>
+
+# Ocean Downscaling And Delivery Pipeline
 
 This repository contains HPC batch workflows for preparing, vertically matching,
-and computing climatologies from ocean model products used in downscaling
-workflows.
+downscaling, organizing, and exporting ocean model products across multiple
+workflow families.
 
 The repository itself is lightweight. It stores scripts, helpers, and
 documentation. The actual NetCDF inputs, intermediate products, and final

@@ -1,8 +1,6 @@
-<p align="right">
-  <img src="docs/assets/save-the-blue-five-logo.jpg" alt="Save The Blue Five logo" width="230" />
-</p>
-
 # Ocean Downscaling And Delivery Pipeline
+
+![Save The Blue Five logo](docs/assets/save-the-blue-five-logo.jpg)
 
 This repository contains HPC batch workflows for preparing, vertically matching,
 downscaling, organizing, and exporting ocean model products across multiple

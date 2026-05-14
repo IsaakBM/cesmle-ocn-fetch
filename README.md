@@ -53,9 +53,9 @@ If you only need the current logic, focus first on:
 At the highest level, the repository has two kinds of workflows:
 
 1. **Scientific production workflows**
-   - build baseline climatologies
-   - build future anomalies or deltas
-   - add anomalies to a trusted baseline
+   - build trusted present-day baseline climatologies
+   - build model-specific climatological change fields
+   - add those change fields to the trusted baseline
    - write final downscaled NetCDF products
 
 2. **Curated delivery workflows**
@@ -70,11 +70,23 @@ The current scientific branches are:
 - `global_ocean_biogeochemistry_hindcast/`
   - prepares the hindcast baseline products
 - `ipcc_esgf/`
-  - prepares IPCC/ESGF monthly products, climatologies, and deltas
+  - prepares IPCC/ESGF monthly products, climatologies, and change fields
 - `ipcc_esgf_to_hindcast/`
-  - adds IPCC/ESGF deltas to the hindcast baseline
+  - adds IPCC/ESGF change fields to the hindcast baseline
 - `cesm_to_glorys/`
-  - adds CESM member deltas to the GLORYS baseline
+  - adds CESM member change fields to the GLORYS baseline
+
+The future products use an additive change-field, or delta-change, approach:
+a model-specific change field is first calculated from the difference between
+that model's future-period climatology and its historical/current reference
+climatology. That change field is then added to a trusted present-day target
+baseline, following the IPCC Data Distribution Centre description of
+[constructing change fields](https://www.ipcc-data.org/guidelines/pages/change_field.html):
+
+```text
+change field = model future climatology - model historical/current climatology
+downscaled future = trusted target baseline + change field
+```
 
 The current curated-product chain is:
 
@@ -95,8 +107,8 @@ At a high level, the repository now supports three reusable processing stages:
 These stages sit inside a broader downscaling pipeline. After climatologies are
 computed, later steps can still include:
 
-4. anomalies and deltas between baseline and future climatology windows
-5. addition of anomalies to a historical baseline
+4. model-specific change fields between reference and future climatology windows
+5. addition of change fields to a trusted present-day baseline
 6. final downscaled products
 
 Those stages are reused across different dataset families:
@@ -465,9 +477,9 @@ follows after climatologies are available.
 
 Those later stages include:
 
-- future-minus-baseline anomalies or deltas
-- remapping of anomaly products where needed
-- addition of anomalies to a baseline field
+- model-specific climatological change fields
+- remapping of change-field products where needed
+- addition of change fields to a baseline field
 - final downscaled output generation
 
 In the newer generalized structure, those later-stage operations are now
@@ -561,8 +573,9 @@ Current CESM logic in the new runner architecture:
 2. vertically interpolate them to GLORYS depth levels
 3. compute member-specific climatology windows from the regridded and
    vertically matched time series
-4. compute member-specific future-minus-baseline deltas
-5. add those deltas to the GLORYS baseline for the mapped variables
+4. compute member-specific CESM change fields from future and `2006-2014`
+   climatologies
+5. add those CESM change fields to the GLORYS baseline for the mapped variables
 
 Important notes:
 
@@ -604,8 +617,9 @@ Current logic:
 3. regrid monthly time-series to `1 x 1`
 4. vertically interpolate to GLORYS levels
 5. compute climatology windows from the vertically matched products
-6. compute future-minus-baseline deltas
-7. optionally regrid deltas to `0.25 x 0.25`
+6. compute IPCC/ESGF change fields from `ssp585` future and historical
+   climatologies
+7. optionally regrid those change fields to `0.25 x 0.25`
 
 Expected input organization:
 
@@ -657,8 +671,8 @@ Operational sequence for the current IPCC branch:
    - future windows: `2050-2060`, `2090-2100`
 
 4. run [run_delta_from_climatologies.sh](scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh)
-   - computes:
-     `ssp585 future climatology - historical 2006-2014 climatology`
+   - computes an additive change field from `ssp585` future climatology
+     relative to historical `2006-2014` climatology
    - writes `/delta_windows/`
    - also writes `/delta_windows_0p25/` when delta regridding is enabled
    - now targets exact expected climatology filenames instead of picking the
@@ -676,8 +690,8 @@ Relevant runners:
 Current logic:
 
 1. use hindcast climatology at `0.25 x 0.25` as the baseline
-2. use IPCC/ESGF deltas at `0.25 x 0.25` as the anomaly field
-3. add the anomaly field to the baseline
+2. use IPCC/ESGF change fields at `0.25 x 0.25`
+3. add those change fields to the hindcast baseline
 4. if the final product still has missing top layers, fill them from the first
    deeper level with valid values
 5. write the native downscaled output at `0.25 x 0.25`
@@ -687,7 +701,7 @@ Expected inputs:
 
 - hindcast baseline climatologies:
   `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/<var>/clim_windows/*.nc`
-- IPCC/ESGF deltas already regridded to `0.25 x 0.25`:
+- IPCC/ESGF change-field files already regridded to `0.25 x 0.25`:
   `/home/SB5/ipcc_esgf_monthly_1deg/ssp585/<var>/delta_windows_0p25/*.nc`
 
 Downscaled outputs are organized as:
@@ -1177,11 +1191,9 @@ The scripts assume the cluster environment provides:
 The current downscaling workflow makes several explicit methodological
 assumptions that should be kept in mind when interpreting the outputs.
 
-- Future change is represented as a climatological anomaly or delta:
-  `future climatology - historical climatology`
-
-- The final downscaled future field is constructed as:
-  `baseline climatology + anomaly/delta`
+- Future change is represented with an additive climatological change field
+  computed within each model family, then applied to a trusted target baseline:
+  `downscaled future = trusted target baseline + model-derived change field`.
 
 - The hindcast climatology is treated as the historical baseline for the
   IPCC-to-hindcast downscaling branch.
@@ -1258,7 +1270,7 @@ To avoid confusion:
 - `vertical_interpolate_to_reference.slurm.sh` is the step that creates
   `on_glorys/` outputs before vertically matched climatologies are computed.
 
-- `delta_from_climatologies.slurm.sh` computes future-minus-baseline anomaly
+- `delta_from_climatologies.slurm.sh` computes model-derived change-field
   products; it does not add them to a baseline.
 
 - `add_anomaly_to_baseline.slurm.sh` and

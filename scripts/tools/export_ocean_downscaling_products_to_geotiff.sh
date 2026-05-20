@@ -43,9 +43,13 @@ shopt -s nullglob
 #   OUT_ROOT       : mirrored GeoTIFF output root
 #   TMP_DIR        : temp / bookkeeping directory
 #                    (default: <OUT_ROOT>/tmp_export_geotiff)
-#   GEOTIFF_PYTHON : Python interpreter with numpy, xarray, and GDAL Python
-#                    bindings available
+#   GEOTIFF_PYTHON : Python interpreter with numpy and xarray available.
+#                    GeoTIFF writing uses rasterio, GDAL Python bindings, or
+#                    command-line gdal_translate when available.
 #                    (default: /home/ibrito/venvs/parquet_export/bin/python)
+#   GDAL_TRANSLATE  : gdal_translate executable used when Python GeoTIFF
+#                    writers are unavailable
+#                    (default: gdal_translate)
 #   SCALE_FACTORS  : comma-separated scale overrides, e.g.
 #                    thetao=100,so=100,o2=10,chl=10000
 #   DEFAULT_SCALE  : scale factor used when no variable-specific match exists
@@ -62,6 +66,7 @@ IN_ROOT="${IN_ROOT:-/home/SB5/ocean_downscaling_products_layers}"
 OUT_ROOT="${OUT_ROOT:-/home/SB5/ocean_downscaling_products_layers_geotiff}"
 TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_export_geotiff}"
 GEOTIFF_PYTHON="${GEOTIFF_PYTHON:-/home/ibrito/venvs/parquet_export/bin/python}"
+GDAL_TRANSLATE="${GDAL_TRANSLATE:-gdal_translate}"
 SCALE_FACTORS="${SCALE_FACTORS:-thetao=100,TEMP=100,so=100,SALT=100,uo=100,UVEL=100,o2=10,O2=10,chl=10000,CHL=10000}"
 DEFAULT_SCALE="${DEFAULT_SCALE:-100}"
 ENCODE_DTYPE="${ENCODE_DTYPE:-auto}"
@@ -91,6 +96,8 @@ rm -f "${TMP_DIR}/manifest_parts"/*.csv
 
 "${GEOTIFF_PYTHON}" - <<'PY'
 import importlib
+import os
+import shutil
 
 mods = ["numpy", "xarray"]
 missing = []
@@ -100,11 +107,29 @@ for name in mods:
     except Exception as exc:
         missing.append(f"{name}: {exc}")
 
+writer_ok = False
+writer_errors = []
+try:
+    importlib.import_module("rasterio")
+    writer_ok = True
+except Exception as exc:
+    writer_errors.append(f"rasterio: {exc}")
+
 try:
     importlib.import_module("osgeo.gdal")
     importlib.import_module("osgeo.osr")
+    writer_ok = True
 except Exception as exc:
-    missing.append(f"osgeo.gdal/osgeo.osr: {exc}")
+    writer_errors.append(f"osgeo.gdal/osgeo.osr: {exc}")
+
+gdal_translate = os.environ.get("GDAL_TRANSLATE", "gdal_translate")
+if shutil.which(gdal_translate):
+    writer_ok = True
+else:
+    writer_errors.append(f"{gdal_translate}: executable not found")
+
+if not writer_ok:
+    missing.append("Need rasterio, GDAL Python bindings, or gdal_translate:\n" + "\n".join(writer_errors))
 
 backend_ok = False
 for backend in ["netCDF4", "h5netcdf"]:
@@ -147,14 +172,29 @@ process_one_file() {
     "${DEFAULT_SCALE}" \
     "${ENCODE_DTYPE}" \
     "${COMPRESS}" \
-    "${manifest_part}" <<'PY'
+    "${manifest_part}" \
+    "${TMP_DIR}/$(basename "${manifest_part}" .csv).encoded.tmp.nc" <<'PY'
 import csv
 import os
 import re
+import shutil
+import subprocess
 import sys
 import numpy as np
 import xarray as xr
-from osgeo import gdal, osr
+
+try:
+    import rasterio
+    from rasterio.transform import from_origin
+except Exception:
+    rasterio = None
+    from_origin = None
+
+try:
+    from osgeo import gdal, osr
+except Exception:
+    gdal = None
+    osr = None
 
 (
     infile,
@@ -165,7 +205,8 @@ from osgeo import gdal, osr
     encode_dtype,
     compress,
     manifest_part,
-) = sys.argv[1:9]
+    tmp_encoded_nc,
+) = sys.argv[1:10]
 
 preferred_xy = [
     ("lon", "lat"),
@@ -179,10 +220,12 @@ limits_by_dtype = {
     "int16": (-32767, 32767),
     "int32": (-2147483647, 2147483647),
 }
-gdal_dtype_by_name = {
-    "int16": gdal.GDT_Int16,
-    "int32": gdal.GDT_Int32,
-}
+if rasterio is None and gdal is None:
+    gdal_translate = os.environ.get("GDAL_TRANSLATE", "gdal_translate")
+    if shutil.which(gdal_translate) is None:
+        raise SystemExit("Need rasterio, GDAL Python bindings, or command-line gdal_translate for GeoTIFF writing")
+else:
+    gdal_translate = os.environ.get("GDAL_TRANSLATE", "gdal_translate")
 
 def parse_scale_factors(text):
     values = {}
@@ -277,6 +320,7 @@ with xr.open_dataset(infile) as ds:
     west = float(x.min() - x_step / 2.0)
     north = float(y.max() + y_step / 2.0)
     geotransform = (west, x_step, 0.0, north, 0.0, -y_step)
+    rasterio_transform = from_origin(west, north, x_step, y_step) if from_origin is not None else None
 
     variable_key = detect_variable_key(rel_path, main_var)
     scale_factor = scale_factors.get(variable_key.lower(), default_scale)
@@ -317,49 +361,149 @@ with xr.open_dataset(infile) as ds:
 
     units = str(da.attrs.get("units", ""))
     os.makedirs(os.path.dirname(outfile), exist_ok=True)
-    driver = gdal.GetDriverByName("GTiff")
-    options = [
-        f"COMPRESS={compress}",
-        "PREDICTOR=2",
-        "TILED=YES",
-        "BLOCKXSIZE=256",
-        "BLOCKYSIZE=256",
-        "BIGTIFF=IF_SAFER",
-    ]
-    dataset = driver.Create(
-        outfile,
-        out_array.shape[1],
-        out_array.shape[0],
-        1,
-        gdal_dtype_by_name[dtype_name],
-        options=options,
-    )
-    if dataset is None:
-        raise SystemExit(f"Could not create GeoTIFF: {outfile}")
-
-    dataset.SetGeoTransform(geotransform)
-    if crs == "EPSG:4326":
-        srs = osr.SpatialReference()
-        srs.ImportFromEPSG(4326)
-        dataset.SetProjection(srs.ExportToWkt())
-
-    dataset.SetMetadata(
-        {
-            "variable": main_var,
-            "units": units,
-            "scale_factor": str(scale_factor),
-            "offset": "0",
-            "decode_formula": "real_value = stored_value / scale_factor",
-            "source_netcdf": os.path.abspath(infile),
+    if rasterio is not None:
+        profile = {
+            "driver": "GTiff",
+            "height": out_array.shape[0],
+            "width": out_array.shape[1],
+            "count": 1,
+            "dtype": dtype_name,
+            "crs": crs,
+            "transform": rasterio_transform,
+            "nodata": nodata,
+            "compress": compress,
+            "predictor": 2,
+            "tiled": True,
+            "blockxsize": 256,
+            "blockysize": 256,
+            "BIGTIFF": "IF_SAFER",
         }
-    )
-    band = dataset.GetRasterBand(1)
-    band.SetNoDataValue(nodata)
-    band.SetMetadata({"variable": main_var, "units": units, "scale_factor": str(scale_factor), "offset": "0"})
-    band.WriteArray(out_array)
-    band.FlushCache()
-    dataset.FlushCache()
-    dataset = None
+        with rasterio.open(outfile, "w", **profile) as dst:
+            dst.write(out_array, 1)
+            dst.update_tags(
+                variable=main_var,
+                units=units,
+                scale_factor=str(scale_factor),
+                offset="0",
+                decode_formula="real_value = stored_value / scale_factor",
+                source_netcdf=os.path.abspath(infile),
+            )
+            dst.update_tags(
+                1,
+                variable=main_var,
+                units=units,
+                scale_factor=str(scale_factor),
+                offset="0",
+            )
+    else:
+        if gdal is not None:
+            gdal_dtype_by_name = {
+                "int16": gdal.GDT_Int16,
+                "int32": gdal.GDT_Int32,
+            }
+            driver = gdal.GetDriverByName("GTiff")
+            options = [
+                f"COMPRESS={compress}",
+                "PREDICTOR=2",
+                "TILED=YES",
+                "BLOCKXSIZE=256",
+                "BLOCKYSIZE=256",
+                "BIGTIFF=IF_SAFER",
+            ]
+            dataset = driver.Create(
+                outfile,
+                out_array.shape[1],
+                out_array.shape[0],
+                1,
+                gdal_dtype_by_name[dtype_name],
+                options=options,
+            )
+            if dataset is None:
+                raise SystemExit(f"Could not create GeoTIFF: {outfile}")
+
+            dataset.SetGeoTransform(geotransform)
+            if crs == "EPSG:4326":
+                srs = osr.SpatialReference()
+                srs.ImportFromEPSG(4326)
+                dataset.SetProjection(srs.ExportToWkt())
+
+            dataset.SetMetadata(
+                {
+                    "variable": main_var,
+                    "units": units,
+                    "scale_factor": str(scale_factor),
+                    "offset": "0",
+                    "decode_formula": "real_value = stored_value / scale_factor",
+                    "source_netcdf": os.path.abspath(infile),
+                }
+            )
+            band = dataset.GetRasterBand(1)
+            band.SetNoDataValue(nodata)
+            band.SetMetadata({"variable": main_var, "units": units, "scale_factor": str(scale_factor), "offset": "0"})
+            band.WriteArray(out_array)
+            band.FlushCache()
+            dataset.FlushCache()
+            dataset = None
+        else:
+            tmp_da = xr.DataArray(
+                out_array,
+                dims=(y_name, x_name),
+                coords={y_name: y, x_name: x},
+                name=main_var,
+                attrs={
+                    "units": units,
+                    "scale_factor_for_app": scale_factor,
+                    "decode_formula": "real_value = stored_value / scale_factor",
+                },
+            )
+            tmp_ds = tmp_da.to_dataset()
+            tmp_ds.attrs["source_netcdf"] = os.path.abspath(infile)
+            tmp_ds.attrs["crs"] = crs or ""
+            encoding = {main_var: {"dtype": dtype_name, "_FillValue": nodata}}
+            os.makedirs(os.path.dirname(tmp_encoded_nc), exist_ok=True)
+            tmp_ds.to_netcdf(tmp_encoded_nc, encoding=encoding)
+
+            src = f'NETCDF:"{tmp_encoded_nc}":{main_var}'
+            cmd = [
+                gdal_translate,
+                "-of",
+                "GTiff",
+                "-a_nodata",
+                str(nodata),
+                "-mo",
+                f"variable={main_var}",
+                "-mo",
+                f"units={units}",
+                "-mo",
+                f"scale_factor={scale_factor}",
+                "-mo",
+                "offset=0",
+                "-mo",
+                "decode_formula=real_value = stored_value / scale_factor",
+                "-mo",
+                f"source_netcdf={os.path.abspath(infile)}",
+                "-co",
+                f"COMPRESS={compress}",
+                "-co",
+                "PREDICTOR=2",
+                "-co",
+                "TILED=YES",
+                "-co",
+                "BLOCKXSIZE=256",
+                "-co",
+                "BLOCKYSIZE=256",
+                "-co",
+                "BIGTIFF=IF_SAFER",
+                src,
+                outfile,
+            ]
+            if crs == "EPSG:4326":
+                cmd[1:1] = ["-a_srs", "EPSG:4326"]
+            subprocess.run(cmd, check=True)
+            try:
+                os.remove(tmp_encoded_nc)
+            except OSError:
+                pass
 
     row = {
         "source_file": os.path.abspath(infile),
@@ -395,6 +539,7 @@ echo "IN ROOT        : ${IN_ROOT}"
 echo "OUT ROOT       : ${OUT_ROOT}"
 echo "TMP DIR        : ${TMP_DIR}"
 echo "GEOTIFF PYTHON : ${GEOTIFF_PYTHON}"
+echo "GDAL TRANSLATE : ${GDAL_TRANSLATE}"
 echo "SCALE FACTORS  : ${SCALE_FACTORS}"
 echo "DEFAULT SCALE  : ${DEFAULT_SCALE}"
 echo "ENCODE DTYPE   : ${ENCODE_DTYPE}"
@@ -424,7 +569,7 @@ except Exception as exc:
     )
 PY
 
-export IN_ROOT OUT_ROOT TMP_DIR GEOTIFF_PYTHON SCALE_FACTORS DEFAULT_SCALE ENCODE_DTYPE COMPRESS
+export IN_ROOT OUT_ROOT TMP_DIR GEOTIFF_PYTHON GDAL_TRANSLATE SCALE_FACTORS DEFAULT_SCALE ENCODE_DTYPE COMPRESS
 export -f process_one_file
 
 printf '%s\0' "${files[@]}" \

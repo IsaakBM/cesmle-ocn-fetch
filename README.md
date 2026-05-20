@@ -39,7 +39,7 @@ The easiest way to understand the repository is to read it in this order:
    - organize final products
    - create fine layers
    - create pelagic layers
-   - export parquet / CSV outputs
+   - export parquet, GeoTIFF, or CSV outputs
 
 If you only need the current logic, focus first on:
 
@@ -61,7 +61,7 @@ At the highest level, the repository has two kinds of workflows:
 2. **Curated delivery workflows**
    - reorganize final NetCDF outputs into delivery trees
    - aggregate depth-layer or pelagic products
-   - export delivery-ready parquet or CSV products
+   - export delivery-ready parquet, GeoTIFF, or CSV products
 
 The current scientific branches are:
 
@@ -95,6 +95,8 @@ The current curated-product chain is:
 3. [run_aggregate_ocean_downscaling_products_pelagic_layers.sh](scripts/runners/products/run_aggregate_ocean_downscaling_products_pelagic_layers.sh)
 4. [run_export_ocean_downscaling_products_layers_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_layers_to_parquet.sh)
 5. [run_export_ocean_downscaling_products_pelagic_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_parquet.sh)
+6. [run_export_ocean_downscaling_products_layers_to_geotiff.sh](scripts/runners/products/run_export_ocean_downscaling_products_layers_to_geotiff.sh)
+7. [run_export_ocean_downscaling_products_pelagic_to_geotiff.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_geotiff.sh)
 
 ## Purpose
 
@@ -189,7 +191,9 @@ cesmle-ocn-fetch/
 │   │   │   ├── run_split_ocean_downscaling_products_by_depth.sh
 │   │   │   ├── run_export_ocean_downscaling_products_bydepth_to_csv.sh
 │   │   │   ├── run_export_ocean_downscaling_products_layers_to_parquet.sh
-│   │   │   └── run_export_ocean_downscaling_products_pelagic_to_parquet.sh
+│   │   │   ├── run_export_ocean_downscaling_products_pelagic_to_parquet.sh
+│   │   │   ├── run_export_ocean_downscaling_products_layers_to_geotiff.sh
+│   │   │   └── run_export_ocean_downscaling_products_pelagic_to_geotiff.sh
 │   │   ├── glorys/
 │   │   │   ├── run_temporal_aggregate_regrid.sh
 │   │   │   └── run_climatology_window.sh
@@ -200,7 +204,8 @@ cesmle-ocn-fetch/
 │   │   ├── aggregate_ocean_downscaling_products_by_depth_bins.sh
 │   │   ├── split_ocean_downscaling_products_by_depth.sh
 │   │   ├── export_ocean_downscaling_products_bydepth_to_csv.sh
-│   │   └── export_ocean_downscaling_products_to_parquet.sh
+│   │   ├── export_ocean_downscaling_products_to_parquet.sh
+│   │   └── export_ocean_downscaling_products_to_geotiff.sh
 ├── .gitignore
 ├── LICENSE
 └── README.md
@@ -373,6 +378,24 @@ packaging/export/organization steps than as reusable scientific operators.
     `x,y,depth,<variable>_<units>`
   - this remains available for exporting individual-depth slices, but it is not
     part of the current active derived-product workflow
+
+- [export_ocean_downscaling_products_to_geotiff.sh](scripts/tools/export_ocean_downscaling_products_to_geotiff.sh)
+  - reads aggregated 2D NetCDF layer or pelagic products from trees such as:
+    `/home/SB5/ocean_downscaling_products_layers`
+    `/home/SB5/ocean_downscaling_products_pelagic`
+  - mirrors them into compressed GeoTIFF trees such as:
+    `/home/SB5/ocean_downscaling_products_layers_geotiff`
+    `/home/SB5/ocean_downscaling_products_pelagic_geotiff`
+  - encodes floating-point values as integers:
+    `stored_value = round(real_value * scale_factor)`
+  - stores the corresponding decode rule as:
+    `real_value = stored_value / scale_factor`
+  - uses variable-aware scale defaults and automatically promotes from
+    `Int16` to `Int32` when encoded values do not fit safely in `Int16`
+  - writes `geotiff_manifest.csv` with scale factors, data types, nodata
+    values, units, and source/output paths for downstream Shiny/terra use
+  - this is a complementary final delivery export beside the current Parquet
+    products
 
 ### `legacy/scripts/slurm/`
 
@@ -1031,6 +1054,67 @@ Method note:
   here as well
 - pelagic-zone means therefore depend on either explicit vertical bounds or
   reconstructed bounds from the shared depth-center coordinate
+
+### Curated layer and pelagic Parquet trees
+
+Built with:
+
+- [export_ocean_downscaling_products_to_parquet.sh](scripts/tools/export_ocean_downscaling_products_to_parquet.sh)
+- [run_export_ocean_downscaling_products_layers_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_layers_to_parquet.sh)
+- [run_export_ocean_downscaling_products_pelagic_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_parquet.sh)
+
+Expected output roots:
+
+```text
+/home/SB5/ocean_downscaling_products_layers_parquet/
+/home/SB5/ocean_downscaling_products_pelagic_parquet/
+```
+
+Notes:
+
+- mirrors the fine-layer or pelagic NetCDF tree
+- exports each 2D NetCDF file to one Parquet table
+- Parquet columns are:
+  - `x`
+  - `y`
+  - `depth`
+  - `<variable>_<units>`
+- this remains the current tabular final delivery export
+
+### Curated layer and pelagic GeoTIFF trees
+
+Built with:
+
+- [export_ocean_downscaling_products_to_geotiff.sh](scripts/tools/export_ocean_downscaling_products_to_geotiff.sh)
+- [run_export_ocean_downscaling_products_layers_to_geotiff.sh](scripts/runners/products/run_export_ocean_downscaling_products_layers_to_geotiff.sh)
+- [run_export_ocean_downscaling_products_pelagic_to_geotiff.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_geotiff.sh)
+
+Expected output roots:
+
+```text
+/home/SB5/ocean_downscaling_products_layers_geotiff/
+/home/SB5/ocean_downscaling_products_pelagic_geotiff/
+```
+
+Notes:
+
+- mirrors the fine-layer or pelagic NetCDF tree
+- exports each 2D NetCDF file to one compressed GeoTIFF
+- encodes floating-point values as integer rasters with:
+  `stored_value = round(real_value * scale_factor)`
+- downstream apps recover real values with:
+  `real_value = stored_value / scale_factor`
+- default scale factors are variable-aware:
+  - `thetao`, `TEMP`, `so`, `SALT`, `uo`, `UVEL`: `100`
+  - `o2`, `O2`: `10`
+  - `chl`, `CHL`: `10000`
+- `ENCODE_DTYPE=auto` writes `Int16` when encoded values fit safely and
+  promotes to `Int32` otherwise
+- each export job writes a `geotiff_manifest.csv` containing source path,
+  GeoTIFF path, variable, units, scale factor, encoded dtype, nodata value,
+  real min/max, encoded min/max, compression, and CRS
+- GeoTIFF export expects regular 1D `lon/lat`, `longitude/latitude`, or `x/y`
+  coordinates; curvilinear inputs should be remapped before this delivery step
 
 ### Curated by-depth NetCDF tree
 

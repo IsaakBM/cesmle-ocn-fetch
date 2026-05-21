@@ -50,6 +50,8 @@ export OMP_NUM_THREADS=1
 #   OUT_PREFIX                : output prefix (default: <DATASET_LABEL>_<VAR>)
 #   FUTURE_TAG                : future window tag (default: future)
 #   OUT_SUFFIX                : native output suffix (default: downscaled)
+#   NATIVE_SUFFIX             : optional suffix appended to native output names,
+#                               e.g. grid_0p05_global
 #   WRITE_NATIVE_OUTPUT       : yes | no (default: yes)
 #   FILL_TOP_MISSING          : yes | no (default: yes)
 #   WRITE_FILLED_ANOM         : yes | no (default: no)
@@ -91,6 +93,7 @@ TMP_DIR="${TMP_DIR:-}"
 OUT_PREFIX="${OUT_PREFIX:-}"
 FUTURE_TAG="${FUTURE_TAG:-future}"
 OUT_SUFFIX="${OUT_SUFFIX:-downscaled}"
+NATIVE_SUFFIX="${NATIVE_SUFFIX:-}"
 WRITE_NATIVE_OUTPUT="${WRITE_NATIVE_OUTPUT:-yes}"
 FILL_TOP_MISSING="${FILL_TOP_MISSING:-yes}"
 WRITE_FILLED_ANOM="${WRITE_FILLED_ANOM:-no}"
@@ -180,8 +183,13 @@ if [[ "$REGRID_OUTPUT" == "yes" ]]; then
   mkdir -p "${REGRID_OUT_DIR}"
 fi
 
-NATIVE_FILE="${OUT_DIR}/${OUT_PREFIX}_${OUT_SUFFIX}_${FUTURE_TAG}.nc"
-TMP_NATIVE="${TMP_DIR}/${OUT_PREFIX}_${OUT_SUFFIX}_${FUTURE_TAG}.tmp.nc"
+NATIVE_NAME="${OUT_PREFIX}_${OUT_SUFFIX}_${FUTURE_TAG}"
+if [[ -n "${NATIVE_SUFFIX}" ]]; then
+  NATIVE_NAME="${NATIVE_NAME}_${NATIVE_SUFFIX}"
+fi
+
+NATIVE_FILE="${OUT_DIR}/${NATIVE_NAME}.nc"
+TMP_NATIVE="${TMP_DIR}/${NATIVE_NAME}.tmp.nc"
 TMP_ANOM_TARGET="${TMP_DIR}/${OUT_PREFIX}_anomaly_on_target_${FUTURE_TAG}.tmp.nc"
 
 if [[ "$WRITE_FILLED_ANOM" == "yes" ]]; then
@@ -237,6 +245,7 @@ echo "TMP DIR              : ${TMP_DIR}"
 echo "OUT PREFIX           : ${OUT_PREFIX}"
 echo "FUTURE TAG           : ${FUTURE_TAG}"
 echo "OUT SUFFIX           : ${OUT_SUFFIX}"
+echo "NATIVE SUFFIX        : ${NATIVE_SUFFIX:-<none>}"
 echo "WRITE NATIVE         : ${WRITE_NATIVE_OUTPUT}"
 echo "FILL TOP MISSING     : ${FILL_TOP_MISSING}"
 echo "WRITE FILLED ANOM    : ${WRITE_FILLED_ANOM}"

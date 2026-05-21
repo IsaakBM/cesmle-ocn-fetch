@@ -46,6 +46,7 @@ ANOMALY_ROOT="${ANOMALY_ROOT:-/home/SB5/ipcc_esgf_monthly_1deg/ssp585}"
 OUTROOT="${OUTROOT:-/home/SB5/downscaled_rcp85}"
 BASELINE_TAG="${BASELINE_TAG:-2006-2014}"
 OUT_SUFFIX="${OUT_SUFFIX:-downscaled}"
+NATIVE_SUFFIX="${NATIVE_SUFFIX:-grid_0p05_global}"
 
 # Supported tokens:
 #   __BASELINE_ROOT__
@@ -149,6 +150,7 @@ for spec in "${VAR_MAP[@]}"; do
       OUT_PREFIX="${DATASET_LABEL}_${tgt_var}" \
       FUTURE_TAG="$window" \
       OUT_SUFFIX="$OUT_SUFFIX" \
+      NATIVE_SUFFIX="$NATIVE_SUFFIX" \
       WRITE_NATIVE_OUTPUT="$WRITE_NATIVE_OUTPUT" \
       FILL_TOP_MISSING="$FILL_TOP_MISSING" \
       WRITE_FILLED_ANOM="$WRITE_FILLED_ANOM" \

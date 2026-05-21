@@ -322,8 +322,10 @@ packaging/export/organization steps than as reusable scientific operators.
     - `baseline/`
     - `future/`
   - supports resolution-aware curated baseline products where available
-  - supports both newer `0p25/0p05` future layouts and older CESM-style
-    window-folder layouts
+  - reads the current final downscaled layout:
+    `/home/SB5/downscaled/<model>/<realization>/<scenario>/<var>/...`
+  - still supports older CESM-style window-folder layouts as a transition
+    fallback
 
 - [remap_hindcast_baseline_to_0p05.sh](scripts/tools/remap_hindcast_baseline_to_0p05.sh)
   - reads hindcast baseline climatologies from:
@@ -610,6 +612,10 @@ Important notes:
   - `TEMP -> thetao`
   - `SALT -> so`
   - `UVEL -> uo`
+- final CESM downscaled products now use the same provenance order as the
+  IPCC/ESGF branch:
+  `/home/SB5/downscaled/cesm_f09_g16/<member>/rcp85/<var>/0p05/<window>/`
+  where `<member>` is derived from the CESM filename, for example `001`
 - the newer CESM climatology, delta, and addition runners now build explicit
   expected member filenames rather than relying on wildcard first-match logic
 
@@ -879,6 +885,9 @@ Important CESM/GLORYS note:
   job
 - this is intentionally different from the hindcast coastal-fill wrapper,
   which submits one job per variable-window combination
+- the current CESM coastal-fill worker writes member-aware outputs under:
+  `/home/SB5/downscaled/cesm_f09_g16/<member>/rcp85/<var>/0p05/<window>/`
+  while preserving the full original CESM member string in each filename
 
 Why the runner structure is split this way:
 
@@ -916,6 +925,13 @@ When more than one IPCC/ESGF model or scenario exists, set selectors explicitly:
 
 ```bash
 MODEL=CNRM-ESM2-1 REALIZATION=r1i1p1f2 SCENARIO=ssp585 ./scripts/runners/products/run_organize_ocean_downscaling_products.sh
+```
+
+For the CESM physical branch, curated products default to member `001`.
+Override that when needed:
+
+```bash
+CESM_REALIZATION=002 ./scripts/runners/products/run_organize_ocean_downscaling_products.sh
 ```
 
 Expected output root:
@@ -1323,6 +1339,10 @@ Examples:
   `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_to_hindcast_chl_downscaled_2050-2060_grid_0p05_global.nc`
 - regridded `0.25` downscaled output:
   `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_to_hindcast_chl_downscaled_2050-2060_grid_0p25_global.nc`
+- current final downscaled path:
+  `/home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2/ssp585/chl/0p05/2050-2060/`
+- current CESM final downscaled path:
+  `/home/SB5/downscaled/cesm_f09_g16/001/rcp85/thetao/0p05/2050-2060/`
 
 ## Expected Cluster Paths
 

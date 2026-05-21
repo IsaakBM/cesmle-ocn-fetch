@@ -121,7 +121,11 @@ for spec in "${VAR_MAP[@]}"; do
 
   BASELINE_FILE="$(render_template "${BASELINE_FILE_TEMPLATE}" "${src_var}" "${tgt_var}")"
   ANOMALY_PARENT="$(dirname "$(render_template "${ANOMALY_FILE_TEMPLATE}" "${src_var}" "${tgt_var}" "window_stub")")"
-  TMP_DIR="${OUTROOT}/${tgt_var}/tmp_add_coastal_fill"
+  if [[ -n "${MODEL_LABEL}" && -n "${SCENARIO_LABEL}" ]]; then
+    TMP_DIR="${OUTROOT}/${MODEL_LABEL}/${SCENARIO_LABEL}/${tgt_var}/tmp_add_coastal_fill"
+  else
+    TMP_DIR="${OUTROOT}/${tgt_var}/tmp_add_coastal_fill"
+  fi
 
   if [[ ! -f "$BASELINE_FILE" ]]; then
     echo "WARN: Missing trusted baseline climatology for SRC=${src_var} TGT=${tgt_var}: ${BASELINE_FILE}"

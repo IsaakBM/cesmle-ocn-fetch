@@ -572,18 +572,32 @@ PY
 export IN_ROOT OUT_ROOT TMP_DIR GEOTIFF_PYTHON GDAL_TRANSLATE SCALE_FACTORS DEFAULT_SCALE ENCODE_DTYPE COMPRESS
 export -f process_one_file
 
+set +e
 printf '%s\0' "${files[@]}" \
   | xargs -0 -n 1 -P "${NPROC}" bash -c 'process_one_file "$1"' _
+xargs_status=$?
+set -e
+
+mapfile -t manifest_parts < <(find "${TMP_DIR}/manifest_parts" -type f -name "*.csv" | sort)
+if (( xargs_status != 0 )); then
+  echo "[WARN] Parallel export command returned status ${xargs_status}."
+  echo "[WARN] Expected files: ${#files[@]}; manifest parts created: ${#manifest_parts[@]}"
+  if (( ${#manifest_parts[@]} != ${#files[@]} )); then
+    echo "ERROR: GeoTIFF export did not create one manifest part per input file."
+    exit "${xargs_status}"
+  fi
+  echo "[WARN] All expected manifest parts exist, so continuing to manifest assembly."
+fi
 
 manifest="${OUT_ROOT}/geotiff_manifest.csv"
-first_part="$(find "${TMP_DIR}/manifest_parts" -type f -name "*.csv" | sort | head -n 1)"
+first_part="${manifest_parts[0]:-}"
 if [[ -z "${first_part}" ]]; then
   echo "ERROR: No manifest parts were created"
   exit 1
 fi
 
 head -n 1 "${first_part}" > "${manifest}"
-find "${TMP_DIR}/manifest_parts" -type f -name "*.csv" | sort | while read -r part; do
+for part in "${manifest_parts[@]}"; do
   tail -n +2 "${part}" >> "${manifest}"
 done
 

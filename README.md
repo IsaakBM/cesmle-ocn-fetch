@@ -97,6 +97,7 @@ The current curated-product chain is:
 5. [run_export_ocean_downscaling_products_pelagic_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_parquet.sh)
 6. [run_export_ocean_downscaling_products_layers_to_geotiff.sh](scripts/runners/products/run_export_ocean_downscaling_products_layers_to_geotiff.sh)
 7. [run_export_ocean_downscaling_products_pelagic_to_geotiff.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_geotiff.sh)
+8. [run_stage_ocean_downscaling_sample_products.sh](scripts/runners/products/run_stage_ocean_downscaling_sample_products.sh)
 
 ## Purpose
 
@@ -161,6 +162,8 @@ cesmle-ocn-fetch/
 │   │   ├── add_anomaly_to_baseline.slurm.sh
 │   │   ├── add_anomaly_to_baseline_with_coastal_fill.slurm.sh
 │   │   └── add_cesm_members_to_glorys_with_coastal_fill.slurm.sh
+│   ├── lib/                        # Shared runner helpers
+│   │   └── ipcc_esgf_discovery.sh
 │   ├── runners/                    # Dataset-specific job submitters
 │   │   ├── global_ocean_biogeochemistry_hindcast/
 │   │   │   ├── run_temporal_aggregate_regrid.sh
@@ -426,7 +429,7 @@ Examples:
 - Hindcast monthly outputs:
   `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/<var>/parts/*.nc`
 - IPCC/ESGF regridded monthly time-series:
-  `/home/SB5/ipcc_esgf_monthly_1deg/<scenario>/<var>/parts/*.nc`
+  `/home/SB5/ipcc_esgf_monthly_1deg/<model>/<scenario>/<var>/parts/*.nc`
 
 Important note:
 
@@ -453,7 +456,7 @@ Examples:
 - Hindcast:
   `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/<var>/on_glorys/*.nc`
 - IPCC/ESGF:
-  `/home/SB5/ipcc_esgf_monthly_1deg/<scenario>/<var>/on_glorys/*.nc`
+  `/home/SB5/ipcc_esgf_monthly_1deg/<model>/<scenario>/<var>/on_glorys/*.nc`
 
 This stage is the generalized version of the old CESM vertical-matching idea
 implemented in
@@ -636,12 +639,13 @@ Current logic:
 
 1. download ESGF/IPCC files
 2. reorganize by scenario and variable
-3. regrid monthly time-series to `1 x 1`
-4. vertically interpolate to GLORYS levels
-5. compute climatology windows from the vertically matched products
-6. compute IPCC/ESGF change fields from `ssp585` future and historical
+3. discover model, scenario, member, and variable from CMIP-style filenames
+4. regrid monthly time-series to `1 x 1`
+5. vertically interpolate to GLORYS levels
+6. compute climatology windows from the vertically matched products
+7. compute IPCC/ESGF change fields from future and historical
    climatologies
-7. optionally regrid those change fields to `0.25 x 0.25`
+8. optionally regrid those change fields to `0.25 x 0.25`
 
 Expected input organization:
 
@@ -659,25 +663,49 @@ Regridded monthly products are organized as:
 
 ```text
 /home/SB5/ipcc_esgf_monthly_1deg/
-├── historical/
-│   └── <var>/
-│       ├── parts/
-│       ├── on_glorys/
-│       └── clim_windows/
-└── ssp585/
-    └── <var>/
-        ├── parts/
-        ├── on_glorys/
-        ├── clim_windows/
-        ├── delta_windows/
-        └── delta_windows_0p25/
+└── <model>/
+    ├── historical/
+    │   └── <var>/
+    │       ├── parts/
+    │       ├── on_glorys/
+    │       ├── clim_windows/
+    │       ├── tmp_clim/
+    │       └── tmp_vinterp/
+    └── <ssp-scenario>/
+        └── <var>/
+            ├── parts/
+            ├── on_glorys/
+            ├── clim_windows/
+            ├── delta_windows/
+            ├── delta_windows_0p25/
+            ├── tmp_clim/
+            ├── tmp_delta/
+            └── tmp_vinterp/
 ```
+
+Example:
+
+```text
+/home/SB5/ipcc_esgf_monthly_1deg/CNRM-ESM2-1/ssp585/chl/delta_windows_0p25/
+```
+
+The helper [ipcc_esgf_discovery.sh](scripts/lib/ipcc_esgf_discovery.sh)
+is sourced internally by the runners. It parses names such as:
+
+```text
+chl_Omon_CNRM-ESM2-1_ssp585_r1i1p1f2_gn_201501-210012.nc
+```
+
+and carries `model`, `scenario`, and `member` into later filenames. The default
+member behavior is `MEMBER=auto`: one member is used automatically, zero members
+are skipped with a warning, and multiple members stop the run until
+`MEMBER=<member>` is set explicitly.
 
 Operational sequence for the current IPCC branch:
 
 1. run [run_temporal_aggregate_regrid.sh](scripts/runners/ipcc_esgf/run_temporal_aggregate_regrid.sh)
    - reads `/home/SB5/ipcc_esgf_downloads/<scenario>/<var>/`
-   - writes `/home/SB5/ipcc_esgf_monthly_1deg/<scenario>/<var>/parts/`
+   - writes `/home/SB5/ipcc_esgf_monthly_1deg/<model>/<scenario>/<var>/parts/`
    - uses `METHOD=auto`
    - auto-selects `remapdis` for curvilinear/unstructured sources and
      `remapbil` for regular lon/lat sources
@@ -693,7 +721,7 @@ Operational sequence for the current IPCC branch:
    - future windows: `2050-2060`, `2090-2100`
 
 4. run [run_delta_from_climatologies.sh](scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh)
-   - computes an additive change field from `ssp585` future climatology
+   - computes an additive change field from each discovered future climatology
      relative to historical `2006-2014` climatology
    - writes `/delta_windows/`
    - also writes `/delta_windows_0p25/` when delta regridding is enabled
@@ -711,41 +739,41 @@ Relevant runners:
 
 Current logic:
 
-1. use hindcast climatology at `0.25 x 0.25` as the baseline
+1. use hindcast climatology at `0.05 x 0.05` as the trusted baseline
 2. use IPCC/ESGF change fields at `0.25 x 0.25`
-3. add those change fields to the hindcast baseline
-4. if the final product still has missing top layers, fill them from the first
+3. remap those change fields to the trusted hindcast baseline grid
+4. add the remapped change fields to the hindcast baseline
+5. if the final product still has missing top layers, fill them from the first
    deeper level with valid values
-5. write the native downscaled output at `0.25 x 0.25`
-6. optionally regrid the downscaled product to `0.05 x 0.05`
+6. write the native downscaled output at `0.05 x 0.05`
+7. optionally regrid the downscaled product to `0.25 x 0.25`
 
 Expected inputs:
 
 - hindcast baseline climatologies:
-  `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/<var>/clim_windows/*.nc`
+  `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05/<var>/clim_windows/*.nc`
 - IPCC/ESGF change-field files already regridded to `0.25 x 0.25`:
-  `/home/SB5/ipcc_esgf_monthly_1deg/ssp585/<var>/delta_windows_0p25/*.nc`
+  `/home/SB5/ipcc_esgf_monthly_1deg/<model>/<scenario>/<var>/delta_windows_0p25/*.nc`
 
 Downscaled outputs are organized as:
 
 ```text
-/home/SB5/downscaled_rcp85/
-├── chl/
-│   ├── 0p25/
-│   │   ├── 2050-2060/
-│   │   └── 2090-2100/
-│   ├── 0p05/
-│   │   ├── 2050-2060/
-│   │   └── 2090-2100/
-│   └── tmp_add/
-└── o2/
-    ├── 0p25/
-    │   ├── 2050-2060/
-    │   └── 2090-2100/
-    ├── 0p05/
-    │   ├── 2050-2060/
-    │   └── 2090-2100/
-    └── tmp_add/
+/home/SB5/downscaled/
+└── <model>/
+    └── <scenario>/
+        └── <var>/
+            ├── 0p25/
+            │   ├── 2050-2060/
+            │   └── 2090-2100/
+            └── 0p05/
+                ├── 2050-2060/
+                └── 2090-2100/
+```
+
+Example:
+
+```text
+/home/SB5/downscaled/CNRM-ESM2-1/ssp585/chl/0p05/2050-2060/
 ```
 
 Operational sequence for this final stage:
@@ -753,10 +781,11 @@ Operational sequence for this final stage:
 1. run [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh)
    - reads hindcast baseline climatology files from `clim_windows/`
    - reads IPCC/ESGF delta files from `delta_windows_0p25/`
+   - writes to `/home/SB5/downscaled/<model>/<scenario>/<var>/`
    - first computes baseline plus anomaly
    - then fills top missing layers dynamically in the final output
-   - writes the native downscaled output at `0.25`
-   - also writes a `0.05` product using `remapdis`
+   - writes the native downscaled output at `0.05`
+   - also writes a `0.25` product using `remapdis`
    - now targets exact expected hindcast baseline and delta filenames instead
      of selecting the first wildcard match
 
@@ -872,6 +901,19 @@ Built with:
 
 - [organize_ocean_downscaling_products.sh](scripts/tools/organize_ocean_downscaling_products.sh)
 - [run_organize_ocean_downscaling_products.sh](scripts/runners/products/run_organize_ocean_downscaling_products.sh)
+
+Current source roots:
+
+- IPCC/ESGF `chl` and `o2` futures are read from
+  `/home/SB5/downscaled/<model>/<scenario>/<var>/...`
+- CESM physical `thetao`, `so`, and `uo` futures continue to be read from
+  `/home/SB5/downscaled_rcp85/<var>/...`
+
+When more than one IPCC/ESGF model or scenario exists, set selectors explicitly:
+
+```bash
+MODEL=CNRM-ESM2-1 SCENARIO=ssp585 ./scripts/runners/products/run_organize_ocean_downscaling_products.sh
+```
 
 Expected output root:
 
@@ -1002,7 +1044,7 @@ Notes:
   CPUs per Slurm task
 - output filenames follow patterns such as:
   - `global_ocean_biogeochemistry_hindcast_chl_clim_2006-2014_layer_0000_0025m.nc`
-  - `ipcc_esgf_to_hindcast_chl_downscaled_2050-2060_layer_1000_1500m.nc`
+  - `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_to_hindcast_chl_downscaled_2050-2060_grid_0p05_global_layer_1000_1500m.nc`
 
 Method note:
 
@@ -1118,6 +1160,42 @@ Notes:
 - GeoTIFF export expects regular 1D `lon/lat`, `longitude/latitude`, or `x/y`
   coordinates; curvilinear inputs should be remapped before this delivery step
 
+### Shiny-viewer sample GeoTIFF staging tree
+
+Built with:
+
+- [stage_ocean_downscaling_sample_products.sh](scripts/tools/stage_ocean_downscaling_sample_products.sh)
+- [run_stage_ocean_downscaling_sample_products.sh](scripts/runners/products/run_stage_ocean_downscaling_sample_products.sh)
+
+Expected output root:
+
+```text
+/home/SB5/ocean_downscaling_sample_products_geotiff/
+├── layers/
+├── pelagic/
+└── manifests/
+```
+
+Notes:
+
+- this is a copy-only staging step for viewer deployment tests
+- it reads from the layer and pelagic GeoTIFF trees
+- it only stages `0p05` products
+- for future `thetao`, `so`, and `uo`, it keeps only the selected ensemble
+  member, defaulting to `001`
+- it stages filtered manifests for the copied GeoTIFFs:
+  - `layers_geotiff_manifest.csv`
+  - `pelagic_geotiff_manifest.csv`
+  - `geotiff_manifest.csv`
+- dry run is the default; use `DRY_RUN=no` to copy files
+
+Typical commands:
+
+```bash
+./scripts/runners/products/run_stage_ocean_downscaling_sample_products.sh
+DRY_RUN=no ./scripts/runners/products/run_stage_ocean_downscaling_sample_products.sh
+```
+
 ### Curated by-depth NetCDF tree
 
 Built with:
@@ -1221,27 +1299,27 @@ Examples:
 - monthly-files climatology:
   `global_ocean_biogeochemistry_hindcast_chl_clim_2006-2014.nc`
 - time-series climatology:
-  `ipcc_esgf_historical_chl_clim_2006-2014.nc`
-  `ipcc_esgf_ssp585_chl_clim_2050-2060.nc`
-  `ipcc_esgf_ssp585_chl_clim_2090-2100.nc`
+  `ipcc_esgf_CNRM-ESM2-1_historical_r1i1p1f2_chl_clim_2006-2014.nc`
+  `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_chl_clim_2050-2060.nc`
+  `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_chl_clim_2090-2100.nc`
 
 ### Delta outputs
 
 Examples:
 
 - raw delta:
-  `ipcc_esgf_ssp585_chl_delta_2050-2060_minus_2006-2014.nc`
+  `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_chl_delta_2050-2060_minus_2006-2014.nc`
 - regridded delta:
-  `ipcc_esgf_ssp585_chl_delta_2050-2060_minus_2006-2014.grid_0p25_global.nc`
+  `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_chl_delta_2050-2060_minus_2006-2014_grid_0p25_global.nc`
 
 ### Downscaled outputs
 
 Examples:
 
-- native `0.25` downscaled output:
-  `ipcc_esgf_to_hindcast_chl_downscaled_2050-2060.nc`
-- regridded `0.05` downscaled output:
-  `ipcc_esgf_to_hindcast_chl_downscaled_2050-2060_grid_0p05_global.nc`
+- native `0.05` downscaled output:
+  `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_to_hindcast_chl_downscaled_2050-2060_grid_0p05_global.nc`
+- regridded `0.25` downscaled output:
+  `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_to_hindcast_chl_downscaled_2050-2060_grid_0p25_global.nc`
 
 ## Expected Cluster Paths
 
@@ -1254,6 +1332,7 @@ Common paths used in the current workflows include:
 - `/home/SB5/ipcc_esgf_downloads`
 - `/home/SB5/ipcc_esgf_monthly_1deg`
 - `/home/SB5/rcp85`
+- `/home/SB5/downscaled`
 - `/home/SB5/downscaled_rcp85`
 - `/home/SB5/tmp`
 
@@ -1369,3 +1448,11 @@ To avoid confusion:
 - The downscaling part of the overall workflow still continues after
   climatologies. Climatologies are not the final product; they are the inputs to
   later anomaly, delta, and downscaling stages.
+
+- IPCC/ESGF-derived future products now use
+  `/home/SB5/downscaled/<model>/<scenario>/<var>/...`.
+  The older `/home/SB5/downscaled_rcp85` root remains relevant for the current
+  CESM physical branch.
+
+- IPCC/ESGF filenames now carry model, scenario, and member provenance. Member
+  is intentionally kept in the filename rather than as an extra directory level.

@@ -11,7 +11,10 @@ FUTURE_DIR="${ROOT}/future"
 HINDCAST_0P25_ROOT="/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25"
 HINDCAST_0P05_ROOT="/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05"
 GLORYS_ROOT="/home/SB5/glorys12v1_monthly_0p05"
-DOWNSCALED_ROOT="/home/SB5/downscaled_rcp85"
+IPCC_DOWNSCALED_ROOT="${IPCC_DOWNSCALED_ROOT:-/home/SB5/downscaled}"
+CESM_DOWNSCALED_ROOT="${CESM_DOWNSCALED_ROOT:-/home/SB5/downscaled_rcp85}"
+MODEL="${MODEL:-auto}"
+SCENARIO="${SCENARIO:-auto}"
 ORGANIZE_SCOPE="${ORGANIZE_SCOPE:-all}"
 VAR="${VAR:-}"
 WINDOW="${WINDOW:-}"
@@ -56,13 +59,77 @@ copy_all_from_dir_parallel() {
   echo "[COPY] ${mode_label}: ${src_dir}/*.nc -> ${dest_dir}/ (files=${#files[@]} parallel=${NPROC})"
 }
 
+is_ipcc_var() {
+  local var="$1"
+  [[ "$var" == "chl" || "$var" == "o2" ]]
+}
+
+resolve_single_child_dir() {
+  local parent="$1"
+  local label="$2"
+  local requested="$3"
+  local children=()
+
+  if [[ ! -d "$parent" ]]; then
+    echo "[WARN] Missing ${label} parent directory: ${parent}" >&2
+    return 2
+  fi
+
+  if [[ "$requested" != "auto" ]]; then
+    if [[ -d "${parent}/${requested}" ]]; then
+      printf '%s\n' "$requested"
+      return 0
+    fi
+    echo "ERROR: Requested ${label} not found under ${parent}: ${requested}" >&2
+    return 1
+  fi
+
+  mapfile -t children < <(find "$parent" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
+  case "${#children[@]}" in
+    0)
+      echo "[WARN] No ${label} directories found under: ${parent}" >&2
+      return 2
+      ;;
+    1)
+      printf '%s\n' "${children[0]}"
+      return 0
+      ;;
+    *)
+      echo "ERROR: Multiple ${label} directories found under ${parent}: ${children[*]}" >&2
+      echo "       Set ${label^^}=<value> to continue." >&2
+      return 1
+      ;;
+  esac
+}
+
+resolve_ipcc_downscaled_var_root() {
+  local var="$1"
+  local model scenario
+
+  model="$(resolve_single_child_dir "${IPCC_DOWNSCALED_ROOT}" "model" "${MODEL}")" || return $?
+  scenario="$(resolve_single_child_dir "${IPCC_DOWNSCALED_ROOT}/${model}" "scenario" "${SCENARIO}")" || return $?
+
+  printf '%s/%s/%s/%s\n' "${IPCC_DOWNSCALED_ROOT}" "${model}" "${scenario}" "${var}"
+}
+
 copy_future_products() {
   local var="$1"
   local window="$2"
+  local root
 
-  local new_0p25="${DOWNSCALED_ROOT}/${var}/0p25/${window}"
-  local new_0p05="${DOWNSCALED_ROOT}/${var}/0p05/${window}"
-  local legacy_window="${DOWNSCALED_ROOT}/${var}/${window}"
+  if is_ipcc_var "$var"; then
+    root="$(resolve_ipcc_downscaled_var_root "$var")" || {
+      status=$?
+      [[ "$status" -eq 2 ]] && return 0
+      exit "$status"
+    }
+  else
+    root="${CESM_DOWNSCALED_ROOT}/${var}"
+  fi
+
+  local new_0p25="${root}/0p25/${window}"
+  local new_0p05="${root}/0p05/${window}"
+  local legacy_window="${root}/${window}"
 
   # Newer IPCC-to-hindcast layout with explicit resolutions.
   if [[ -d "${new_0p25}" || -d "${new_0p05}" ]]; then
@@ -165,6 +232,10 @@ echo "FUTURE DIR    : ${FUTURE_DIR}"
 echo "HINDCAST 0.25 : ${HINDCAST_0P25_ROOT}"
 echo "HINDCAST 0.05 : ${HINDCAST_0P05_ROOT}"
 echo "GLORYS 0.05   : ${GLORYS_ROOT}"
+echo "IPCC DOWN     : ${IPCC_DOWNSCALED_ROOT}"
+echo "CESM DOWN     : ${CESM_DOWNSCALED_ROOT}"
+echo "MODEL         : ${MODEL}"
+echo "SCENARIO      : ${SCENARIO}"
 echo "SCOPE         : ${ORGANIZE_SCOPE}"
 echo "VAR           : ${VAR:-<all>}"
 echo "WINDOW        : ${WINDOW:-<all>}"

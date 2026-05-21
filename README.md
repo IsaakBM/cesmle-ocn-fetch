@@ -172,7 +172,6 @@ cesmle-ocn-fetch/
 │   │   │   ├── run_climatology_window.sh
 │   │   │   └── run_delta_from_climatologies.sh
 │   │   ├── ipcc_esgf_to_hindcast/
-│   │   │   ├── run_add_anomaly_to_baseline.sh
 │   │   │   └── run_add_anomaly_to_baseline_with_coastal_fill.sh
 │   │   ├── cesm_to_glorys/
 │   │   │   ├── run_temporal_aggregate_regrid.sh
@@ -751,7 +750,7 @@ Downscaled outputs are organized as:
 
 Operational sequence for this final stage:
 
-1. run [run_add_anomaly_to_baseline.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline.sh)
+1. run [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh)
    - reads hindcast baseline climatology files from `clim_windows/`
    - reads IPCC/ESGF delta files from `delta_windows_0p25/`
    - first computes baseline plus anomaly
@@ -773,7 +772,10 @@ Important note:
 
 Relevant runner:
 
-- [run_add_anomaly_to_baseline.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline.sh)
+- [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh)
+
+The older non-coastal IPCC/ESGF runner is preserved under
+`legacy/deprecated/` for reference only.
 
 #### Coastal-fill variant of the final addition step
 

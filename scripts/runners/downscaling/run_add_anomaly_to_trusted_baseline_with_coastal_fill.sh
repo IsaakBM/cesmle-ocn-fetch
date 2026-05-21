@@ -30,10 +30,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CORE_SCRIPT="${SCRIPT_DIR}/../../core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh"
 
-VAR_MAP=(
-  chl:chl
-  o2:o2
-)
+VAR_MAP_SPEC="${VAR_MAP_SPEC:-chl:chl o2:o2}"
+read -r -a VAR_MAP <<< "${VAR_MAP_SPEC}"
 
 WINDOWS=(
   2050-2060
@@ -43,10 +41,12 @@ WINDOWS=(
 DATASET_LABEL="${DATASET_LABEL:-anomaly_to_trusted_baseline}"
 BASELINE_ROOT="${BASELINE_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05}"
 ANOMALY_ROOT="${ANOMALY_ROOT:-/home/SB5/ipcc_esgf_monthly_1deg/ssp585}"
-OUTROOT="${OUTROOT:-/home/SB5/downscaled_rcp85}"
+OUTROOT="${OUTROOT:-/home/SB5/downscaled}"
 BASELINE_TAG="${BASELINE_TAG:-2006-2014}"
 OUT_SUFFIX="${OUT_SUFFIX:-downscaled}"
 NATIVE_SUFFIX="${NATIVE_SUFFIX:-grid_0p05_global}"
+MODEL_LABEL="${MODEL_LABEL:-}"
+SCENARIO_LABEL="${SCENARIO_LABEL:-}"
 
 # Supported tokens:
 #   __BASELINE_ROOT__
@@ -110,6 +110,8 @@ echo "DATASET LABEL        : ${DATASET_LABEL}"
 echo "BASELINE ROOT        : ${BASELINE_ROOT}"
 echo "ANOMALY ROOT         : ${ANOMALY_ROOT}"
 echo "OUT ROOT             : ${OUTROOT}"
+echo "MODEL LABEL          : ${MODEL_LABEL:-<none>}"
+echo "SCENARIO LABEL       : ${SCENARIO_LABEL:-<none>}"
 echo "ANOMALY GRIDFILE     : ${ANOMALY_GRIDFILE}"
 echo "REGRID OUTPUT        : ${REGRID_OUTPUT}"
 
@@ -138,8 +140,13 @@ for spec in "${VAR_MAP[@]}"; do
       continue
     fi
 
-    OUT_NATIVE_DIR="${OUTROOT}/${tgt_var}/0p05/${window}"
-    OUT_REGRID_DIR="${OUTROOT}/${tgt_var}/0p25/${window}"
+    if [[ -n "${MODEL_LABEL}" && -n "${SCENARIO_LABEL}" ]]; then
+      OUT_NATIVE_DIR="${OUTROOT}/${MODEL_LABEL}/${SCENARIO_LABEL}/${tgt_var}/0p05/${window}"
+      OUT_REGRID_DIR="${OUTROOT}/${MODEL_LABEL}/${SCENARIO_LABEL}/${tgt_var}/0p25/${window}"
+    else
+      OUT_NATIVE_DIR="${OUTROOT}/${tgt_var}/0p05/${window}"
+      OUT_REGRID_DIR="${OUTROOT}/${tgt_var}/0p25/${window}"
+    fi
 
     jid=$(DATASET_LABEL="${DATASET_LABEL}" \
       VAR="$tgt_var" \

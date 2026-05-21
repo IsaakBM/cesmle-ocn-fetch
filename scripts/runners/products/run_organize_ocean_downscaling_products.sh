@@ -30,6 +30,10 @@ CPUS_PER_TASK="${CPUS_PER_TASK:-4}"
 MEMORY="${MEMORY:-64G}"
 WALLTIME="${WALLTIME:-2-00:00:00}"
 NPROC="${NPROC:-${CPUS_PER_TASK}}"
+MODEL="${MODEL:-auto}"
+SCENARIO="${SCENARIO:-auto}"
+IPCC_DOWNSCALED_ROOT="${IPCC_DOWNSCALED_ROOT:-/home/SB5/downscaled}"
+CESM_DOWNSCALED_ROOT="${CESM_DOWNSCALED_ROOT:-/home/SB5/downscaled_rcp85}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -60,7 +64,7 @@ echo "Submitting curated ocean product organization jobs by subtree:"
 for task in "${TASKS[@]}"; do
   read -r scope var window <<<"${task}"
   job_tag="${scope}_${var}"
-  wrap_cmd="ORGANIZE_SCOPE='${scope}' VAR='${var}' NPROC='${NPROC}'"
+  wrap_cmd="ORGANIZE_SCOPE='${scope}' VAR='${var}' NPROC='${NPROC}' MODEL='${MODEL}' SCENARIO='${SCENARIO}' IPCC_DOWNSCALED_ROOT='${IPCC_DOWNSCALED_ROOT}' CESM_DOWNSCALED_ROOT='${CESM_DOWNSCALED_ROOT}'"
   if [[ "${scope}" == "future" ]]; then
     job_tag="${job_tag}_${window}"
     wrap_cmd="${wrap_cmd} WINDOW='${window}'"

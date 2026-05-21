@@ -26,18 +26,16 @@ set -euo pipefail
 #     artifact while still fixing the problematic curvilinear cases.
 #   - Expected input layout:
 #       /home/SB5/ipcc_esgf_downloads/<scenario>/<variable>/*.nc
+#     Output layout:
+#       /home/SB5/ipcc_esgf_monthly_1deg/<model>/<scenario>/<variable>/parts/*.nc
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CORE_SCRIPT="${SCRIPT_DIR}/../../core/temporal_aggregate_regrid.slurm.sh"
+DISCOVERY_LIB="${SCRIPT_DIR}/../../lib/ipcc_esgf_discovery.sh"
 
-# ------------------------------------------------------------------------------
-# Control variables here, one at a time if preferred
-# ------------------------------------------------------------------------------
-SCENARIOS=(
-  historical
-  ssp585
-)
+# shellcheck source=../../lib/ipcc_esgf_discovery.sh
+source "${DISCOVERY_LIB}"
 
 VARS=(
   chl
@@ -59,6 +57,7 @@ TMP_SUBDIR="tmp"
 MIN_FREE_GB=40
 INPUT_LAYOUT="timeseries"
 INPUT_TIMESTEP="monthly"
+MEMBER="${MEMBER:-auto}"
 
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs
 mkdir -p "$OUTROOT_BASE"
@@ -77,24 +76,51 @@ EOF
 fi
 
 echo "Submitting IPCC/ESGF monthly regrid jobs with generic worker:"
-for scen in "${SCENARIOS[@]}"; do
-  OUTROOT="${OUTROOT_BASE}/${scen}"
+mapfile -t GROUPS < <(ipcc_esgf_discover_download_groups "${INROOT_BASE}" "${FILE_GLOB}" | sort -u)
+declare -A SEEN_GROUPS=()
 
-  if [[ ! -d "${INROOT_BASE}/${scen}" ]]; then
-    echo "WARN: Scenario directory not found, skipping: ${INROOT_BASE}/${scen}"
+if (( ${#GROUPS[@]} == 0 )); then
+  echo "ERROR: No CMIP-style ESGF files discovered under: ${INROOT_BASE}"
+  exit 1
+fi
+
+for group in "${GROUPS[@]}"; do
+  IFS=$'\t' read -r model scen v member table_id source_grid <<< "$group"
+  group_key="${model}|${scen}|${v}|${member}"
+
+  if [[ -n "${SEEN_GROUPS[$group_key]:-}" ]]; then
+    continue
+  fi
+  SEEN_GROUPS[$group_key]=1
+
+  if [[ ! " ${VARS[*]} " == *" ${v} "* ]]; then
     continue
   fi
 
-  echo "Scenario: $scen"
-  for v in "${VARS[@]}"; do
-    INROOT="${INROOT_BASE}/${scen}/${v}"
+  if [[ "${MEMBER}" != "auto" && "${member}" != "${MEMBER}" ]]; then
+    continue
+  fi
 
-    if [[ ! -d "$INROOT" ]]; then
-      echo "  WARN: Variable directory not found, skipping: $INROOT"
-      continue
-    fi
+  INROOT="${INROOT_BASE}/${scen}/${v}"
+  if [[ ! -d "$INROOT" ]]; then
+    echo "  WARN: Expected download directory not found, skipping: $INROOT"
+    continue
+  fi
 
-    jid=$(DATASET_LABEL="${DATASET_LABEL}_${scen}" \
+  resolved_member="$(ipcc_esgf_resolve_member "$INROOT" "${v}_*_${model}_${scen}_*_*.nc")" || {
+    status=$?
+    [[ "$status" -eq 2 ]] && continue
+    exit "$status"
+  }
+  if [[ "$resolved_member" != "$member" ]]; then
+    continue
+  fi
+
+  OUTROOT="${OUTROOT_BASE}/${model}/${scen}"
+  job_label="${DATASET_LABEL}_${model}_${scen}_${member}"
+  file_glob="${v}_*_${model}_${scen}_${member}_*.nc"
+
+  jid=$(DATASET_LABEL="${job_label}" \
       VAR="$v" \
       INROOT="$INROOT" \
       OUTROOT="$OUTROOT" \
@@ -104,15 +130,14 @@ for scen in "${SCENARIOS[@]}"; do
       METHOD="$METHOD" \
       AUTO_METHOD_DEFAULT="$AUTO_METHOD_DEFAULT" \
       AUTO_METHOD_CURVILINEAR="$AUTO_METHOD_CURVILINEAR" \
-      FILE_GLOB="*.nc" \
+      FILE_GLOB="$file_glob" \
       PARTS_SUBDIR="$PARTS_SUBDIR" \
       TMP_SUBDIR="$TMP_SUBDIR" \
       MIN_FREE_GB="$MIN_FREE_GB" \
       sbatch --parsable \
       --job-name="ipcc_${scen}_${v}" \
       "$CORE_SCRIPT")
-    echo "  submitted SCENARIO=${scen} VAR=${v} as jobid=${jid}"
-  done
+  echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} TABLE=${table_id} GRID=${source_grid} as jobid=${jid}"
 done
 
 echo "Done."

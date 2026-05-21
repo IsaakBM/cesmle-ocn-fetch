@@ -162,9 +162,8 @@ stage_one_file() {
     # future/<variable>/<window>/*.tif because their source tree has no
     # explicit 0p05 directory. They are still staged into the viewer's
     # future/<variable>/<window>/<resolution>/ layout. Do not apply this
-    # fallback to biogeochemistry variables; their direct future files are
-    # lower-resolution duplicates, while their 0p05 files live in an explicit
-    # resolution directory and include grid_0p05_global in the file name.
+    # fallback to biogeochemistry variables; their 0p05 files should live in
+    # an explicit resolution directory.
     if [[ "${resolution}" == "${file_name}" ]]; then
       if ! is_physical_var "${variable}"; then
         return 0

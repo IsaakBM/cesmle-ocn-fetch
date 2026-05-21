@@ -40,7 +40,8 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
 
   DATASET_LABEL="${dataset_label}" \
   MODEL_LABEL="${model}" \
-  SCENARIO_LABEL="${scenario}" \
+  REALIZATION_LABEL="${member}" \
+  FORCING_LABEL="${scenario}" \
   VAR_MAP_SPEC="${var}:${var}" \
   BASELINE_ROOT="${BASELINE_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05}" \
   BASELINE_FILE_TEMPLATE="${BASELINE_FILE_TEMPLATE:-__BASELINE_ROOT__/__TGT_VAR__/clim_windows/global_ocean_biogeochemistry_hindcast___TGT_VAR___clim___BASELINE_TAG___grid_0p05_global.nc}" \

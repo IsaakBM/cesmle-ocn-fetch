@@ -11,9 +11,13 @@ FUTURE_DIR="${ROOT}/future"
 HINDCAST_0P25_ROOT="/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25"
 HINDCAST_0P05_ROOT="/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05"
 GLORYS_ROOT="/home/SB5/glorys12v1_monthly_0p05"
-IPCC_DOWNSCALED_ROOT="${IPCC_DOWNSCALED_ROOT:-/home/SB5/downscaled}"
-CESM_DOWNSCALED_ROOT="${CESM_DOWNSCALED_ROOT:-/home/SB5/downscaled_rcp85}"
+DOWNSCALED_ROOT="${DOWNSCALED_ROOT:-${IPCC_DOWNSCALED_ROOT:-/home/SB5/downscaled}}"
+CESM_MODEL_LABEL="${CESM_MODEL_LABEL:-cesm_f09_g16}"
+CESM_REALIZATION="${CESM_REALIZATION:-001}"
+CESM_FORCING_LABEL="${CESM_FORCING_LABEL:-rcp85}"
+CESM_LEGACY_DOWNSCALED_ROOT="${CESM_LEGACY_DOWNSCALED_ROOT:-${CESM_DOWNSCALED_ROOT:-/home/SB5/downscaled_rcp85}}"
 MODEL="${MODEL:-auto}"
+REALIZATION="${REALIZATION:-auto}"
 SCENARIO="${SCENARIO:-auto}"
 ORGANIZE_SCOPE="${ORGANIZE_SCOPE:-all}"
 VAR="${VAR:-}"
@@ -104,18 +108,68 @@ resolve_single_child_dir() {
 
 resolve_ipcc_downscaled_var_root() {
   local var="$1"
-  local model scenario
+  local model realization scenario candidate
+  local candidates=()
 
-  model="$(resolve_single_child_dir "${IPCC_DOWNSCALED_ROOT}" "model" "${MODEL}")" || return $?
-  scenario="$(resolve_single_child_dir "${IPCC_DOWNSCALED_ROOT}/${model}" "scenario" "${SCENARIO}")" || return $?
+  if [[ ! -d "${DOWNSCALED_ROOT}" ]]; then
+    echo "[WARN] Missing downscaled root: ${DOWNSCALED_ROOT}" >&2
+    return 2
+  fi
 
-  printf '%s/%s/%s/%s\n' "${IPCC_DOWNSCALED_ROOT}" "${model}" "${scenario}" "${var}"
+  while IFS= read -r candidate; do
+    model="$(basename "$(dirname "$(dirname "$(dirname "${candidate}")")")")"
+    realization="$(basename "$(dirname "$(dirname "${candidate}")")")"
+    scenario="$(basename "$(dirname "${candidate}")")"
+
+    [[ "${MODEL}" != "auto" && "${MODEL}" != "${model}" ]] && continue
+    [[ "${REALIZATION}" != "auto" && "${REALIZATION}" != "${realization}" ]] && continue
+    [[ "${SCENARIO}" != "auto" && "${SCENARIO}" != "${scenario}" ]] && continue
+
+    candidates+=("${candidate}")
+  done < <(find "${DOWNSCALED_ROOT}" -mindepth 4 -maxdepth 4 -type d -name "${var}" | sort)
+
+  case "${#candidates[@]}" in
+    0)
+      echo "[WARN] No downscaled ${var} directories match MODEL=${MODEL} REALIZATION=${REALIZATION} SCENARIO=${SCENARIO}" >&2
+      return 2
+      ;;
+    1)
+      printf '%s\n' "${candidates[0]}"
+      return 0
+      ;;
+    *)
+      echo "ERROR: Multiple downscaled ${var} directories match MODEL=${MODEL} REALIZATION=${REALIZATION} SCENARIO=${SCENARIO}" >&2
+      printf '       %s\n' "${candidates[@]}" >&2
+      echo "       Set MODEL=<model> REALIZATION=<member> SCENARIO=<scenario> to continue." >&2
+      return 1
+      ;;
+  esac
+}
+
+resolve_cesm_downscaled_var_root() {
+  local var="$1"
+  local new_root legacy_root
+
+  new_root="${DOWNSCALED_ROOT}/${CESM_MODEL_LABEL}/${CESM_REALIZATION}/${CESM_FORCING_LABEL}/${var}"
+  legacy_root="${CESM_LEGACY_DOWNSCALED_ROOT}/${var}"
+
+  if [[ -d "${new_root}" ]]; then
+    printf '%s\n' "${new_root}"
+    return 0
+  fi
+
+  if [[ -d "${legacy_root}" ]]; then
+    printf '%s\n' "${legacy_root}"
+    return 0
+  fi
+
+  printf '%s\n' "${new_root}"
 }
 
 copy_future_products() {
   local var="$1"
   local window="$2"
-  local root
+  local root status
 
   if is_ipcc_var "$var"; then
     root="$(resolve_ipcc_downscaled_var_root "$var")" || {
@@ -124,7 +178,7 @@ copy_future_products() {
       exit "$status"
     }
   else
-    root="${CESM_DOWNSCALED_ROOT}/${var}"
+    root="$(resolve_cesm_downscaled_var_root "$var")"
   fi
 
   local new_0p25="${root}/0p25/${window}"
@@ -232,9 +286,13 @@ echo "FUTURE DIR    : ${FUTURE_DIR}"
 echo "HINDCAST 0.25 : ${HINDCAST_0P25_ROOT}"
 echo "HINDCAST 0.05 : ${HINDCAST_0P05_ROOT}"
 echo "GLORYS 0.05   : ${GLORYS_ROOT}"
-echo "IPCC DOWN     : ${IPCC_DOWNSCALED_ROOT}"
-echo "CESM DOWN     : ${CESM_DOWNSCALED_ROOT}"
+echo "DOWN ROOT     : ${DOWNSCALED_ROOT}"
+echo "CESM MODEL    : ${CESM_MODEL_LABEL}"
+echo "CESM MEMBER   : ${CESM_REALIZATION}"
+echo "CESM FORCING  : ${CESM_FORCING_LABEL}"
+echo "CESM LEGACY   : ${CESM_LEGACY_DOWNSCALED_ROOT}"
 echo "MODEL         : ${MODEL}"
+echo "REALIZATION   : ${REALIZATION}"
 echo "SCENARIO      : ${SCENARIO}"
 echo "SCOPE         : ${ORGANIZE_SCOPE}"
 echo "VAR           : ${VAR:-<all>}"

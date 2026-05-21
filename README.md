@@ -760,20 +760,21 @@ Downscaled outputs are organized as:
 ```text
 /home/SB5/downscaled/
 └── <model>/
-    └── <scenario>/
-        └── <var>/
-            ├── 0p25/
-            │   ├── 2050-2060/
-            │   └── 2090-2100/
-            └── 0p05/
-                ├── 2050-2060/
-                └── 2090-2100/
+    └── <realization>/
+        └── <scenario>/
+            └── <var>/
+                ├── 0p25/
+                │   ├── 2050-2060/
+                │   └── 2090-2100/
+                └── 0p05/
+                    ├── 2050-2060/
+                    └── 2090-2100/
 ```
 
 Example:
 
 ```text
-/home/SB5/downscaled/CNRM-ESM2-1/ssp585/chl/0p05/2050-2060/
+/home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2/ssp585/chl/0p05/2050-2060/
 ```
 
 Operational sequence for this final stage:
@@ -781,7 +782,7 @@ Operational sequence for this final stage:
 1. run [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh)
    - reads hindcast baseline climatology files from `clim_windows/`
    - reads IPCC/ESGF delta files from `delta_windows_0p25/`
-   - writes to `/home/SB5/downscaled/<model>/<scenario>/<var>/`
+   - writes to `/home/SB5/downscaled/<model>/<realization>/<scenario>/<var>/`
    - first computes baseline plus anomaly
    - then fills top missing layers dynamically in the final output
    - writes the native downscaled output at `0.05`
@@ -905,14 +906,16 @@ Built with:
 Current source roots:
 
 - IPCC/ESGF `chl` and `o2` futures are read from
-  `/home/SB5/downscaled/<model>/<scenario>/<var>/...`
-- CESM physical `thetao`, `so`, and `uo` futures continue to be read from
-  `/home/SB5/downscaled_rcp85/<var>/...`
+  `/home/SB5/downscaled/<model>/<realization>/<scenario>/<var>/...`
+- CESM physical `thetao`, `so`, and `uo` futures are read from
+  `/home/SB5/downscaled/cesm_f09_g16/<member>/rcp85/<var>/...`
+  with `/home/SB5/downscaled_rcp85/<var>/...` retained as a legacy fallback
+  while older outputs are still present.
 
 When more than one IPCC/ESGF model or scenario exists, set selectors explicitly:
 
 ```bash
-MODEL=CNRM-ESM2-1 SCENARIO=ssp585 ./scripts/runners/products/run_organize_ocean_downscaling_products.sh
+MODEL=CNRM-ESM2-1 REALIZATION=r1i1p1f2 SCENARIO=ssp585 ./scripts/runners/products/run_organize_ocean_downscaling_products.sh
 ```
 
 Expected output root:
@@ -1333,7 +1336,7 @@ Common paths used in the current workflows include:
 - `/home/SB5/ipcc_esgf_monthly_1deg`
 - `/home/SB5/rcp85`
 - `/home/SB5/downscaled`
-- `/home/SB5/downscaled_rcp85`
+- `/home/SB5/downscaled_rcp85` (legacy CESM physical downscaled root)
 - `/home/SB5/tmp`
 
 Because these are embedded in scripts and runners, moving the workflow to a new
@@ -1449,10 +1452,14 @@ To avoid confusion:
   climatologies. Climatologies are not the final product; they are the inputs to
   later anomaly, delta, and downscaling stages.
 
-- IPCC/ESGF-derived future products now use
-  `/home/SB5/downscaled/<model>/<scenario>/<var>/...`.
-  The older `/home/SB5/downscaled_rcp85` root remains relevant for the current
-  CESM physical branch.
+- Final downscaled future products now use
+  `/home/SB5/downscaled/<model>/<realization>/<scenario>/<var>/...`.
+  For the current workflows this means
+  `/home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2/ssp585/...` for `chl` and `o2`,
+  and `/home/SB5/downscaled/cesm_f09_g16/001/rcp85/...` for CESM physical
+  `thetao`, `so`, and `uo`. The older `/home/SB5/downscaled_rcp85` root
+  remains a legacy fallback for physical products during transition.
 
-- IPCC/ESGF filenames now carry model, scenario, and member provenance. Member
-  is intentionally kept in the filename rather than as an extra directory level.
+- IPCC/ESGF filenames still carry model, scenario, and member provenance, and
+  the final downscaled tree also exposes the realization/member as a directory
+  level so multiple models, members, and scenarios can coexist cleanly.

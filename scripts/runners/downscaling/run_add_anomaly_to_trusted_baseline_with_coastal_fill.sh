@@ -46,7 +46,8 @@ BASELINE_TAG="${BASELINE_TAG:-2006-2014}"
 OUT_SUFFIX="${OUT_SUFFIX:-downscaled}"
 NATIVE_SUFFIX="${NATIVE_SUFFIX:-grid_0p05_global}"
 MODEL_LABEL="${MODEL_LABEL:-}"
-SCENARIO_LABEL="${SCENARIO_LABEL:-}"
+REALIZATION_LABEL="${REALIZATION_LABEL:-${MEMBER_LABEL:-}}"
+FORCING_LABEL="${FORCING_LABEL:-${SCENARIO_LABEL:-}}"
 
 # Supported tokens:
 #   __BASELINE_ROOT__
@@ -111,7 +112,8 @@ echo "BASELINE ROOT        : ${BASELINE_ROOT}"
 echo "ANOMALY ROOT         : ${ANOMALY_ROOT}"
 echo "OUT ROOT             : ${OUTROOT}"
 echo "MODEL LABEL          : ${MODEL_LABEL:-<none>}"
-echo "SCENARIO LABEL       : ${SCENARIO_LABEL:-<none>}"
+echo "REALIZATION LABEL    : ${REALIZATION_LABEL:-<none>}"
+echo "FORCING LABEL        : ${FORCING_LABEL:-<none>}"
 echo "ANOMALY GRIDFILE     : ${ANOMALY_GRIDFILE}"
 echo "REGRID OUTPUT        : ${REGRID_OUTPUT}"
 
@@ -121,8 +123,8 @@ for spec in "${VAR_MAP[@]}"; do
 
   BASELINE_FILE="$(render_template "${BASELINE_FILE_TEMPLATE}" "${src_var}" "${tgt_var}")"
   ANOMALY_PARENT="$(dirname "$(render_template "${ANOMALY_FILE_TEMPLATE}" "${src_var}" "${tgt_var}" "window_stub")")"
-  if [[ -n "${MODEL_LABEL}" && -n "${SCENARIO_LABEL}" ]]; then
-    TMP_DIR="${OUTROOT}/${MODEL_LABEL}/${SCENARIO_LABEL}/${tgt_var}/tmp_add_coastal_fill"
+  if [[ -n "${MODEL_LABEL}" && -n "${REALIZATION_LABEL}" && -n "${FORCING_LABEL}" ]]; then
+    TMP_DIR="${OUTROOT}/${MODEL_LABEL}/${REALIZATION_LABEL}/${FORCING_LABEL}/${tgt_var}/tmp_add_coastal_fill"
   else
     TMP_DIR="${OUTROOT}/${tgt_var}/tmp_add_coastal_fill"
   fi
@@ -144,9 +146,9 @@ for spec in "${VAR_MAP[@]}"; do
       continue
     fi
 
-    if [[ -n "${MODEL_LABEL}" && -n "${SCENARIO_LABEL}" ]]; then
-      OUT_NATIVE_DIR="${OUTROOT}/${MODEL_LABEL}/${SCENARIO_LABEL}/${tgt_var}/0p05/${window}"
-      OUT_REGRID_DIR="${OUTROOT}/${MODEL_LABEL}/${SCENARIO_LABEL}/${tgt_var}/0p25/${window}"
+    if [[ -n "${MODEL_LABEL}" && -n "${REALIZATION_LABEL}" && -n "${FORCING_LABEL}" ]]; then
+      OUT_NATIVE_DIR="${OUTROOT}/${MODEL_LABEL}/${REALIZATION_LABEL}/${FORCING_LABEL}/${tgt_var}/0p05/${window}"
+      OUT_REGRID_DIR="${OUTROOT}/${MODEL_LABEL}/${REALIZATION_LABEL}/${FORCING_LABEL}/${tgt_var}/0p25/${window}"
     else
       OUT_NATIVE_DIR="${OUTROOT}/${tgt_var}/0p05/${window}"
       OUT_REGRID_DIR="${OUTROOT}/${tgt_var}/0p25/${window}"

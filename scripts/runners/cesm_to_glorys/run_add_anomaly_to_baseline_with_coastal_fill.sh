@@ -42,7 +42,9 @@ WINDOWS=(
 DATASET_LABEL="cesm_to_glorys"
 RCP85_ROOT="/home/SB5/rcp85"
 GLORYS_ROOT="/home/SB5/glorys12v1_monthly_0p05"
-OUTROOT="/home/SB5/downscaled_rcp85"
+OUTROOT="${OUTROOT:-/home/SB5/downscaled}"
+MODEL_LABEL="${MODEL_LABEL:-cesm_f09_g16}"
+FORCING_LABEL="${FORCING_LABEL:-rcp85}"
 BASELINE_TAG="2006-2014"
 OUT_SUFFIX="downscaled"
 
@@ -63,6 +65,8 @@ for v in "${VARS[@]}"; do
     RCP85_ROOT="${RCP85_ROOT}" \
     GLORYS_ROOT="${GLORYS_ROOT}" \
     OUTROOT="${OUTROOT}" \
+    MODEL_LABEL="${MODEL_LABEL}" \
+    FORCING_LABEL="${FORCING_LABEL}" \
     BASELINE_TAG="${BASELINE_TAG}" \
     OUT_SUFFIX="${OUT_SUFFIX}" \
     REMAP_ANOMALY_TO_BASELINE="${REMAP_ANOMALY_TO_BASELINE}" \

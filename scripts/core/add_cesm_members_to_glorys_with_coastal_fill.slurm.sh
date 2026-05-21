@@ -44,7 +44,9 @@ shopt -s nullglob
 #   DATASET_LABEL             : default cesm_to_glorys
 #   RCP85_ROOT                : default /home/SB5/rcp85
 #   GLORYS_ROOT               : default /home/SB5/glorys12v1_monthly_0p05
-#   OUTROOT                   : default /home/SB5/downscaled_rcp85
+#   OUTROOT                   : default /home/SB5/downscaled
+#   MODEL_LABEL               : default cesm_f09_g16
+#   FORCING_LABEL             : default rcp85
 #   BASELINE_TAG              : default 2006-2014
 #   OUT_SUFFIX                : default downscaled
 #   MAX_JOBS                  : max concurrent member files inside this Slurm job
@@ -65,7 +67,9 @@ CORE_SCRIPT="${REPO_DIR}/scripts/core/add_anomaly_to_baseline_with_coastal_fill.
 DATASET_LABEL="${DATASET_LABEL:-cesm_to_glorys}"
 RCP85_ROOT="${RCP85_ROOT:-/home/SB5/rcp85}"
 GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/glorys12v1_monthly_0p05}"
-OUTROOT="${OUTROOT:-/home/SB5/downscaled_rcp85}"
+OUTROOT="${OUTROOT:-/home/SB5/downscaled}"
+MODEL_LABEL="${MODEL_LABEL:-cesm_f09_g16}"
+FORCING_LABEL="${FORCING_LABEL:-rcp85}"
 BASELINE_TAG="${BASELINE_TAG:-2006-2014}"
 OUT_SUFFIX="${OUT_SUFFIX:-downscaled}"
 MAX_JOBS="${MAX_JOBS:-2}"
@@ -93,6 +97,22 @@ glorys_var_for_cesm_var() {
   esac
 }
 
+realization_for_member_tag() {
+  local member_tag="$1"
+
+  if [[ "${member_tag}" =~ \.([0-9]{3})\.pop\. ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  if [[ "${member_tag}" =~ f09_g16\.([0-9]{3})\. ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  printf 'unknown_member\n'
+}
+
 if [[ -z "${CESM_VAR}" ]]; then
   echo "ERROR: VAR is not set."
   echo "Supported values: TEMP, SALT, UVEL"
@@ -108,12 +128,10 @@ fi
 BASELINE_FILE="${GLORYS_ROOT}/${GLORYS_VAR}/clim_windows/glorys12v1_${GLORYS_VAR}_clim_${BASELINE_TAG}.nc"
 ANOM_DIR="${RCP85_ROOT}/${CESM_VAR}/delta_windows/member_deltas_0p05"
 
-OUT_VAR_DIR="${OUTROOT}/${GLORYS_VAR}"
-OUT_2050_DIR="${OUT_VAR_DIR}/${FUT1_TAG}"
-OUT_2090_DIR="${OUT_VAR_DIR}/${FUT2_TAG}"
-TMP_DIR="${OUT_VAR_DIR}/tmp_add_coastal_fill"
+OUT_VAR_BASE_DIR="${OUTROOT}/${MODEL_LABEL}"
+TMP_DIR="${OUT_VAR_BASE_DIR}/tmp_add_coastal_fill/${GLORYS_VAR}"
 
-mkdir -p "${OUT_2050_DIR}" "${OUT_2090_DIR}" "${TMP_DIR}"
+mkdir -p "${TMP_DIR}"
 
 if [[ ! -f "${BASELINE_FILE}" ]]; then
   echo "ERROR: GLORYS baseline file not found:"
@@ -137,9 +155,11 @@ echo "============================================================"
 echo "Starting GLORYS + CESM coastal-fill downscaling"
 echo "CESM VAR            : ${CESM_VAR}"
 echo "GLORYS VAR          : ${GLORYS_VAR}"
+echo "MODEL LABEL         : ${MODEL_LABEL:-<none>}"
+echo "FORCING LABEL       : ${FORCING_LABEL:-<none>}"
 echo "BASELINE FILE       : ${BASELINE_FILE}"
 echo "ANOM DIR            : ${ANOM_DIR}"
-echo "OUT ROOT            : ${OUT_VAR_DIR}"
+echo "OUT ROOT            : ${OUT_VAR_BASE_DIR}"
 echo "TMP DIR             : ${TMP_DIR}"
 echo "MAX JOBS            : ${MAX_JOBS}"
 echo "COASTAL FILL        : ${COASTAL_FILL}"
@@ -153,17 +173,18 @@ process_one_anomaly_file() {
   local anom_file="$1"
   local future_tag="$2"
 
-  local anom_name member_tag out_dir file_tmp_dir
+  local anom_name member_tag realization out_dir file_tmp_dir
 
   anom_name="$(basename "${anom_file}")"
   member_tag="${anom_name%_delta_${future_tag}_minus_${BASELINE_TAG}_0p05.nc}"
+  realization="$(realization_for_member_tag "${member_tag}")"
 
   case "${future_tag}" in
     "${FUT1_TAG}")
-      out_dir="${OUT_2050_DIR}"
+      out_dir="${OUTROOT}/${MODEL_LABEL}/${realization}/${FORCING_LABEL}/${GLORYS_VAR}/0p05/${FUT1_TAG}"
       ;;
     "${FUT2_TAG}")
-      out_dir="${OUT_2090_DIR}"
+      out_dir="${OUTROOT}/${MODEL_LABEL}/${realization}/${FORCING_LABEL}/${GLORYS_VAR}/0p05/${FUT2_TAG}"
       ;;
     *)
       echo "[ERROR] Unknown future tag: ${future_tag}"
@@ -171,8 +192,8 @@ process_one_anomaly_file() {
       ;;
   esac
 
-  file_tmp_dir="${TMP_DIR}/${member_tag}_${future_tag}"
-  mkdir -p "${file_tmp_dir}"
+  file_tmp_dir="${TMP_DIR}/${realization}_${future_tag}"
+  mkdir -p "${out_dir}" "${file_tmp_dir}"
 
   echo
   echo "[START] ${anom_name}"
@@ -198,7 +219,7 @@ process_one_anomaly_file() {
     REGRID_OUTPUT="no" \
     bash "${CORE_SCRIPT}"
 
-  echo "[DONE ] ${member_tag} ${future_tag}"
+  echo "[DONE ] ${member_tag} ${future_tag} realization=${realization}"
 }
 
 process_window() {

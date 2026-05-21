@@ -76,15 +76,15 @@ EOF
 fi
 
 echo "Submitting IPCC/ESGF monthly regrid jobs with generic worker:"
-mapfile -t GROUPS < <(ipcc_esgf_discover_download_groups "${INROOT_BASE}" "${FILE_GLOB}" | sort -u)
+mapfile -t DISCOVERED_GROUPS < <(ipcc_esgf_discover_download_groups "${INROOT_BASE}" "${FILE_GLOB}" | sort -u)
 declare -A SEEN_GROUPS=()
 
-if (( ${#GROUPS[@]} == 0 )); then
+if (( ${#DISCOVERED_GROUPS[@]} == 0 )); then
   echo "ERROR: No CMIP-style ESGF files discovered under: ${INROOT_BASE}"
   exit 1
 fi
 
-for group in "${GROUPS[@]}"; do
+for group in "${DISCOVERED_GROUPS[@]}"; do
   IFS=$'\t' read -r model scen v member table_id source_grid <<< "$group"
   group_key="${model}|${scen}|${v}|${member}"
 
@@ -102,9 +102,14 @@ for group in "${GROUPS[@]}"; do
   fi
 
   INROOT="${INROOT_BASE}/${scen}/${v}"
+  file_glob="${v}_*_${model}_${scen}_${member}_*.nc"
   if [[ ! -d "$INROOT" ]]; then
-    echo "  WARN: Expected download directory not found, skipping: $INROOT"
-    continue
+    first_file="$(find "${INROOT_BASE}" -type f -name "$file_glob" | sort | head -n 1)"
+    if [[ -z "$first_file" ]]; then
+      echo "  WARN: No input files found for MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v}"
+      continue
+    fi
+    INROOT="$(dirname "$first_file")"
   fi
 
   resolved_member="$(ipcc_esgf_resolve_member "$INROOT" "${v}_*_${model}_${scen}_*_*.nc")" || {
@@ -118,7 +123,6 @@ for group in "${GROUPS[@]}"; do
 
   OUTROOT="${OUTROOT_BASE}/${model}/${scen}"
   job_label="${DATASET_LABEL}_${model}_${scen}_${member}"
-  file_glob="${v}_*_${model}_${scen}_${member}_*.nc"
 
   jid=$(DATASET_LABEL="${job_label}" \
       VAR="$v" \

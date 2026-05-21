@@ -55,14 +55,14 @@ MEMBER="${MEMBER:-auto}"
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs
 
 echo "Submitting IPCC/ESGF vertical interpolation jobs with generic worker:"
-mapfile -t GROUPS < <(ipcc_esgf_discover_monthly_groups "${INROOT_BASE}" "parts" | sort -u)
+mapfile -t DISCOVERED_GROUPS < <(ipcc_esgf_discover_monthly_groups "${INROOT_BASE}" "parts" | sort -u)
 
-if (( ${#GROUPS[@]} == 0 )); then
+if (( ${#DISCOVERED_GROUPS[@]} == 0 )); then
   echo "ERROR: No model/scenario/variable parts directories discovered under: ${INROOT_BASE}"
   exit 1
 fi
 
-for group in "${GROUPS[@]}"; do
+for group in "${DISCOVERED_GROUPS[@]}"; do
   IFS=$'\t' read -r model scen v <<< "$group"
 
   if [[ ! " ${VARS[*]} " == *" ${v} "* ]]; then

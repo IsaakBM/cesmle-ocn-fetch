@@ -18,15 +18,15 @@ source "${DISCOVERY_LIB}"
 IPCC_ROOT="${IPCC_ROOT:-/home/SB5/ipcc_esgf_monthly_1deg}"
 MEMBER="${MEMBER:-auto}"
 
-mapfile -t GROUPS < <(ipcc_esgf_discover_monthly_groups "${IPCC_ROOT}" "delta_windows_0p25" | awk -F '\t' '$2 ~ /^ssp[0-9][0-9][0-9]$/' | sort -u)
+mapfile -t DISCOVERED_GROUPS < <(ipcc_esgf_discover_monthly_groups "${IPCC_ROOT}" "delta_windows_0p25" | awk -F '\t' '$2 ~ /^ssp[0-9][0-9][0-9]$/' | sort -u)
 
-if (( ${#GROUPS[@]} == 0 )); then
+if (( ${#DISCOVERED_GROUPS[@]} == 0 )); then
   echo "ERROR: No IPCC/ESGF future delta groups discovered under: ${IPCC_ROOT}"
   exit 1
 fi
 
 echo "Submitting IPCC/ESGF-to-hindcast coastal-fill downscaling jobs:"
-for group in "${GROUPS[@]}"; do
+for group in "${DISCOVERED_GROUPS[@]}"; do
   IFS=$'\t' read -r model scenario var <<< "$group"
   delta_dir="${IPCC_ROOT}/${model}/${scenario}/${var}/delta_windows_0p25"
 

@@ -125,19 +125,33 @@ stage_one_file() {
   local src_root="$2"
   local src="$3"
   local rel_path family variable window resolution file_name dest
+  local -a path_parts
 
   rel_path="${src#${src_root}/}"
   file_name="$(basename "${src}")"
 
-  IFS='/' read -r family variable window resolution _ <<<"${rel_path}"
+  IFS='/' read -r -a path_parts <<<"${rel_path}"
+  family="${path_parts[0]:-}"
+  variable="${path_parts[1]:-}"
 
   if [[ "${family}" == "baseline" ]]; then
-    resolution="${window}"
+    resolution="${path_parts[2]:-}"
     if [[ "${resolution}" != "${RESOLUTION}" ]]; then
       return 0
     fi
     dest="${STAGE_ROOT}/${product_type}/baseline/${variable}/${resolution}/${file_name}"
   elif [[ "${family}" == "future" ]]; then
+    window="${path_parts[2]:-}"
+    resolution="${path_parts[3]:-}"
+
+    # Some future physical products are exported directly under
+    # future/<variable>/<window>/*.tif because their source tree has no
+    # explicit 0p05 directory. They are still staged into the viewer's
+    # future/<variable>/<window>/<resolution>/ layout.
+    if [[ "${resolution}" == "${file_name}" ]]; then
+      resolution="${RESOLUTION}"
+    fi
+
     if [[ "${resolution}" != "${RESOLUTION}" ]]; then
       return 0
     fi
@@ -178,7 +192,7 @@ stage_product_type() {
       stage_one_file "${product_type}" "${src_root}" "${file}"
     done < <(
       find "${src_root}/baseline" "${src_root}/future" \
-        -path "*/${RESOLUTION}/*.${extension}" \
+        \( -path "*/${RESOLUTION}/*.${extension}" -o -path "*/future/*/*/*.${extension}" \) \
         -type f \
         -print0 2>/dev/null
     )

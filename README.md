@@ -324,6 +324,8 @@ packaging/export/organization steps than as reusable scientific operators.
   - supports resolution-aware curated baseline products where available
   - reads the current final downscaled layout:
     `/home/SB5/downscaled/<model>/<realization>/<scenario>/<var>/...`
+  - writes future products with that provenance preserved:
+    `future/<model>/<realization>/<scenario>/<var>/<window>/<resolution>/`
   - still supports older CESM-style window-folder layouts as a transition
     fallback
 
@@ -914,24 +916,27 @@ Built with:
 
 Current source roots:
 
-- IPCC/ESGF `chl` and `o2` futures are read from
+- all future products are read from the final downscaled archive:
   `/home/SB5/downscaled/<model>/<realization>/<scenario>/<var>/...`
-- CESM physical `thetao`, `so`, and `uo` futures are read from
-  `/home/SB5/downscaled/cesm_f09_g16/<member>/rcp85/<var>/...`
-  with `/home/SB5/downscaled_rcp85/<var>/...` retained as a legacy fallback
-  while older outputs are still present.
+- for current IPCC/ESGF biogeochemistry products, this includes paths such as
+  `/home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2/ssp585/chl/...`
+- for current CESM physical products, this includes paths such as
+  `/home/SB5/downscaled/cesm_f09_g16/001/rcp85/thetao/...`
+- `/home/SB5/downscaled_rcp85/<var>/...` is retained only as a legacy fallback
+  while older outputs are still present
 
-When more than one IPCC/ESGF model or scenario exists, set selectors explicitly:
+By default, `MODEL=auto`, `REALIZATION=auto`, and `SCENARIO=auto` copy every
+matching future product for each variable/window. Set selectors explicitly to
+copy only one branch:
 
 ```bash
 MODEL=CNRM-ESM2-1 REALIZATION=r1i1p1f2 SCENARIO=ssp585 ./scripts/runners/products/run_organize_ocean_downscaling_products.sh
 ```
 
-For the CESM physical branch, curated products default to member `001`.
-Override that when needed:
+For one CESM member:
 
 ```bash
-CESM_REALIZATION=002 ./scripts/runners/products/run_organize_ocean_downscaling_products.sh
+MODEL=cesm_f09_g16 REALIZATION=002 SCENARIO=rcp85 ./scripts/runners/products/run_organize_ocean_downscaling_products.sh
 ```
 
 Expected output root:
@@ -952,11 +957,13 @@ Expected output root:
 │   └── uo/
 │       └── 0p05/
 └── future/
-    ├── chl/
-    ├── o2/
-    ├── so/
-    ├── thetao/
-    └── uo/
+    └── <model>/
+        └── <realization>/
+            └── <scenario>/
+                └── <var>/
+                    └── <window>/
+                        ├── 0p05/
+                        └── 0p25/
 ```
 
 Notes:
@@ -968,12 +975,16 @@ Notes:
 - `thetao`, `so`, and `uo` currently contribute `0p05` baseline products from
   the GLORYS reference branch
 - `future/` stores curated future/downscaled products
+- future products preserve model, realization/member-or-statistic, scenario,
+  variable, window, and resolution
 - the runner now submits one Slurm job per curated subtree:
   - `baseline/<var>`
-  - `future/<var>/<window>` for windowed future branches
+  - `future/<var>/<window>` copy tasks, which may populate multiple
+    `future/<model>/<realization>/<scenario>/...` branches when selectors are
+    left as `auto`
 - within each submitted job, the tool can copy multiple NetCDF files in
   parallel using the allocated CPUs
-- `chl` and `o2` future branches preserve both `0p25` and `0p05` products
+- future branches preserve both `0p25` and `0p05` products
   under each future window when that layout exists
 - the tool copies files; it does not move or delete the original workflow trees
 

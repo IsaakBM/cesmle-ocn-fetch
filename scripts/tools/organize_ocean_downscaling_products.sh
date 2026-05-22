@@ -12,9 +12,6 @@ HINDCAST_0P25_ROOT="/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25
 HINDCAST_0P05_ROOT="/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05"
 GLORYS_ROOT="/home/SB5/glorys12v1_monthly_0p05"
 DOWNSCALED_ROOT="${DOWNSCALED_ROOT:-${IPCC_DOWNSCALED_ROOT:-/home/SB5/downscaled}}"
-CESM_MODEL_LABEL="${CESM_MODEL_LABEL:-cesm_f09_g16}"
-CESM_REALIZATION="${CESM_REALIZATION:-001}"
-CESM_FORCING_LABEL="${CESM_FORCING_LABEL:-rcp85}"
 CESM_LEGACY_DOWNSCALED_ROOT="${CESM_LEGACY_DOWNSCALED_ROOT:-${CESM_DOWNSCALED_ROOT:-/home/SB5/downscaled_rcp85}}"
 MODEL="${MODEL:-auto}"
 REALIZATION="${REALIZATION:-auto}"
@@ -63,57 +60,14 @@ copy_all_from_dir_parallel() {
   echo "[COPY] ${mode_label}: ${src_dir}/*.nc -> ${dest_dir}/ (files=${#files[@]} parallel=${NPROC})"
 }
 
-is_ipcc_var() {
+find_downscaled_var_roots() {
   local var="$1"
-  [[ "$var" == "chl" || "$var" == "o2" ]]
-}
-
-resolve_single_child_dir() {
-  local parent="$1"
-  local label="$2"
-  local requested="$3"
-  local children=()
-
-  if [[ ! -d "$parent" ]]; then
-    echo "[WARN] Missing ${label} parent directory: ${parent}" >&2
-    return 2
-  fi
-
-  if [[ "$requested" != "auto" ]]; then
-    if [[ -d "${parent}/${requested}" ]]; then
-      printf '%s\n' "$requested"
-      return 0
-    fi
-    echo "ERROR: Requested ${label} not found under ${parent}: ${requested}" >&2
-    return 1
-  fi
-
-  mapfile -t children < <(find "$parent" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
-  case "${#children[@]}" in
-    0)
-      echo "[WARN] No ${label} directories found under: ${parent}" >&2
-      return 2
-      ;;
-    1)
-      printf '%s\n' "${children[0]}"
-      return 0
-      ;;
-    *)
-      echo "ERROR: Multiple ${label} directories found under ${parent}: ${children[*]}" >&2
-      echo "       Set ${label^^}=<value> to continue." >&2
-      return 1
-      ;;
-  esac
-}
-
-resolve_ipcc_downscaled_var_root() {
-  local var="$1"
-  local model realization scenario candidate
-  local candidates=()
+  local model realization scenario candidate count
+  count=0
 
   if [[ ! -d "${DOWNSCALED_ROOT}" ]]; then
     echo "[WARN] Missing downscaled root: ${DOWNSCALED_ROOT}" >&2
-    return 2
+    return 0
   fi
 
   while IFS= read -r candidate; do
@@ -125,76 +79,41 @@ resolve_ipcc_downscaled_var_root() {
     [[ "${REALIZATION}" != "auto" && "${REALIZATION}" != "${realization}" ]] && continue
     [[ "${SCENARIO}" != "auto" && "${SCENARIO}" != "${scenario}" ]] && continue
 
-    candidates+=("${candidate}")
+    printf '%s\t%s\t%s\t%s\n' "${candidate}" "${model}" "${realization}" "${scenario}"
+    count=$((count + 1))
   done < <(find "${DOWNSCALED_ROOT}" -mindepth 4 -maxdepth 4 -type d -name "${var}" | sort)
 
-  case "${#candidates[@]}" in
-    0)
-      echo "[WARN] No downscaled ${var} directories match MODEL=${MODEL} REALIZATION=${REALIZATION} SCENARIO=${SCENARIO}" >&2
-      return 2
-      ;;
-    1)
-      printf '%s\n' "${candidates[0]}"
-      return 0
-      ;;
-    *)
-      echo "ERROR: Multiple downscaled ${var} directories match MODEL=${MODEL} REALIZATION=${REALIZATION} SCENARIO=${SCENARIO}" >&2
-      printf '       %s\n' "${candidates[@]}" >&2
-      echo "       Set MODEL=<model> REALIZATION=<member> SCENARIO=<scenario> to continue." >&2
-      return 1
-      ;;
-  esac
-}
-
-resolve_cesm_downscaled_var_root() {
-  local var="$1"
-  local new_root legacy_root
-
-  new_root="${DOWNSCALED_ROOT}/${CESM_MODEL_LABEL}/${CESM_REALIZATION}/${CESM_FORCING_LABEL}/${var}"
-  legacy_root="${CESM_LEGACY_DOWNSCALED_ROOT}/${var}"
-
-  if [[ -d "${new_root}" ]]; then
-    printf '%s\n' "${new_root}"
-    return 0
+  if (( count == 0 )); then
+    echo "[WARN] No downscaled ${var} directories match MODEL=${MODEL} REALIZATION=${REALIZATION} SCENARIO=${SCENARIO}" >&2
   fi
-
-  if [[ -d "${legacy_root}" ]]; then
-    printf '%s\n' "${legacy_root}"
-    return 0
-  fi
-
-  printf '%s\n' "${new_root}"
 }
 
 copy_future_products() {
   local var="$1"
   local window="$2"
-  local root status
+  local root model realization scenario
+  local copied=0
 
-  if is_ipcc_var "$var"; then
-    root="$(resolve_ipcc_downscaled_var_root "$var")" || {
-      status=$?
-      [[ "$status" -eq 2 ]] && return 0
-      exit "$status"
-    }
-  else
-    root="$(resolve_cesm_downscaled_var_root "$var")"
-  fi
+  while IFS=$'\t' read -r root model realization scenario; do
+    local new_0p25="${root}/0p25/${window}"
+    local new_0p05="${root}/0p05/${window}"
+    local dest_base="${FUTURE_DIR}/${model}/${realization}/${scenario}/${var}/${window}"
 
-  local new_0p25="${root}/0p25/${window}"
-  local new_0p05="${root}/0p05/${window}"
-  local legacy_window="${root}/${window}"
+    if [[ -d "${new_0p25}" || -d "${new_0p05}" ]]; then
+      copy_all_from_dir_parallel "${new_0p25}" "${dest_base}/0p25" "future-${model}-${realization}-${scenario}-${var}-${window}-0p25"
+      copy_all_from_dir_parallel "${new_0p05}" "${dest_base}/0p05" "future-${model}-${realization}-${scenario}-${var}-${window}-0p05"
+      copied=$((copied + 1))
+    fi
+  done < <(find_downscaled_var_roots "${var}")
 
-  # Newer IPCC-to-hindcast layout with explicit resolutions.
-  if [[ -d "${new_0p25}" || -d "${new_0p05}" ]]; then
-    copy_all_from_dir_parallel "${new_0p25}" "${FUTURE_DIR}/${var}/${window}/0p25" "future-${var}-${window}-0p25"
-    copy_all_from_dir_parallel "${new_0p05}" "${FUTURE_DIR}/${var}/${window}/0p05" "future-${var}-${window}-0p05"
+  if (( copied > 0 )); then
     return 0
   fi
 
-  # Older CESM-style layout with files directly inside the window folder.
+  local legacy_root="${CESM_LEGACY_DOWNSCALED_ROOT}/${var}"
+  local legacy_window="${legacy_root}/${window}"
   if [[ -d "${legacy_window}" ]]; then
-    copy_all_from_dir_parallel "${legacy_window}" "${FUTURE_DIR}/${var}/${window}" "future-${var}-${window}"
+    copy_all_from_dir_parallel "${legacy_window}" "${FUTURE_DIR}/legacy_downscaled_rcp85/legacy_member/rcp85/${var}/${window}/native" "future-legacy-${var}-${window}"
     return 0
   fi
 
@@ -287,9 +206,6 @@ echo "HINDCAST 0.25 : ${HINDCAST_0P25_ROOT}"
 echo "HINDCAST 0.05 : ${HINDCAST_0P05_ROOT}"
 echo "GLORYS 0.05   : ${GLORYS_ROOT}"
 echo "DOWN ROOT     : ${DOWNSCALED_ROOT}"
-echo "CESM MODEL    : ${CESM_MODEL_LABEL}"
-echo "CESM MEMBER   : ${CESM_REALIZATION}"
-echo "CESM FORCING  : ${CESM_FORCING_LABEL}"
 echo "CESM LEGACY   : ${CESM_LEGACY_DOWNSCALED_ROOT}"
 echo "MODEL         : ${MODEL}"
 echo "REALIZATION   : ${REALIZATION}"

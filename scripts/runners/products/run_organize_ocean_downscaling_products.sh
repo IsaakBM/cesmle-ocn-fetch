@@ -34,9 +34,6 @@ MODEL="${MODEL:-auto}"
 REALIZATION="${REALIZATION:-auto}"
 SCENARIO="${SCENARIO:-auto}"
 DOWNSCALED_ROOT="${DOWNSCALED_ROOT:-/home/SB5/downscaled}"
-CESM_MODEL_LABEL="${CESM_MODEL_LABEL:-cesm_f09_g16}"
-CESM_REALIZATION="${CESM_REALIZATION:-001}"
-CESM_FORCING_LABEL="${CESM_FORCING_LABEL:-rcp85}"
 CESM_LEGACY_DOWNSCALED_ROOT="${CESM_LEGACY_DOWNSCALED_ROOT:-/home/SB5/downscaled_rcp85}"
 
 mkdir -p "${LOG_DIR}"
@@ -68,7 +65,7 @@ echo "Submitting curated ocean product organization jobs by subtree:"
 for task in "${TASKS[@]}"; do
   read -r scope var window <<<"${task}"
   job_tag="${scope}_${var}"
-  wrap_cmd="ORGANIZE_SCOPE='${scope}' VAR='${var}' NPROC='${NPROC}' MODEL='${MODEL}' REALIZATION='${REALIZATION}' SCENARIO='${SCENARIO}' DOWNSCALED_ROOT='${DOWNSCALED_ROOT}' CESM_MODEL_LABEL='${CESM_MODEL_LABEL}' CESM_REALIZATION='${CESM_REALIZATION}' CESM_FORCING_LABEL='${CESM_FORCING_LABEL}' CESM_LEGACY_DOWNSCALED_ROOT='${CESM_LEGACY_DOWNSCALED_ROOT}'"
+  wrap_cmd="ORGANIZE_SCOPE='${scope}' VAR='${var}' NPROC='${NPROC}' MODEL='${MODEL}' REALIZATION='${REALIZATION}' SCENARIO='${SCENARIO}' DOWNSCALED_ROOT='${DOWNSCALED_ROOT}' CESM_LEGACY_DOWNSCALED_ROOT='${CESM_LEGACY_DOWNSCALED_ROOT}'"
   if [[ "${scope}" == "future" ]]; then
     job_tag="${job_tag}_${window}"
     wrap_cmd="${wrap_cmd} WINDOW='${window}'"

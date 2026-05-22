@@ -20,19 +20,34 @@ ORGANIZE_SCOPE="${ORGANIZE_SCOPE:-all}"
 VAR="${VAR:-}"
 WINDOW="${WINDOW:-}"
 NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-4}}"
+OVERWRITE="${OVERWRITE:-no}"
 
 copy_one() {
   local src="$1"
   local dest_dir="$2"
+  local dest_file
 
   if [[ ! -f "${src}" ]]; then
     echo "[WARN] Missing source file: ${src}" >&2
     return 0
   fi
 
+  dest_file="${dest_dir}/$(basename "${src}")"
   mkdir -p "${dest_dir}"
+
+  if [[ -f "${dest_file}" && "${OVERWRITE}" != "yes" ]]; then
+    echo "[SKIP] ${dest_file} exists (OVERWRITE=${OVERWRITE})"
+    return 0
+  fi
+
   cp -p "${src}" "${dest_dir}/"
   echo "[COPY] ${src} -> ${dest_dir}/"
+}
+
+dest_has_netcdf_files() {
+  local dest_dir="$1"
+
+  [[ -d "${dest_dir}" ]] && find "${dest_dir}" -maxdepth 1 -type f -name '*.nc' -print -quit | grep -q .
 }
 
 copy_all_from_dir_parallel() {
@@ -46,6 +61,12 @@ copy_all_from_dir_parallel() {
   fi
 
   mkdir -p "${dest_dir}"
+
+  if dest_has_netcdf_files "${dest_dir}" && [[ "${OVERWRITE}" != "yes" ]]; then
+    echo "[SKIP] ${mode_label}: ${dest_dir} already has NetCDF files (OVERWRITE=${OVERWRITE})"
+    return 0
+  fi
+
   shopt -s nullglob
   local files=("${src_dir}"/*.nc)
   shopt -u nullglob
@@ -214,6 +235,7 @@ echo "SCOPE         : ${ORGANIZE_SCOPE}"
 echo "VAR           : ${VAR:-<all>}"
 echo "WINDOW        : ${WINDOW:-<all>}"
 echo "PARALLEL COPY : ${NPROC}"
+echo "OVERWRITE     : ${OVERWRITE}"
 echo "============================================================"
 
 mkdir -p "${BASELINE_DIR}" "${FUTURE_DIR}"

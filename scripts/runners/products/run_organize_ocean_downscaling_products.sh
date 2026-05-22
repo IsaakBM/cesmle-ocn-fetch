@@ -35,6 +35,7 @@ REALIZATION="${REALIZATION:-auto}"
 SCENARIO="${SCENARIO:-auto}"
 DOWNSCALED_ROOT="${DOWNSCALED_ROOT:-/home/SB5/downscaled}"
 CESM_LEGACY_DOWNSCALED_ROOT="${CESM_LEGACY_DOWNSCALED_ROOT:-/home/SB5/downscaled_rcp85}"
+OVERWRITE="${OVERWRITE:-no}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -65,7 +66,7 @@ echo "Submitting curated ocean product organization jobs by subtree:"
 for task in "${TASKS[@]}"; do
   read -r scope var window <<<"${task}"
   job_tag="${scope}_${var}"
-  wrap_cmd="ORGANIZE_SCOPE='${scope}' VAR='${var}' NPROC='${NPROC}' MODEL='${MODEL}' REALIZATION='${REALIZATION}' SCENARIO='${SCENARIO}' DOWNSCALED_ROOT='${DOWNSCALED_ROOT}' CESM_LEGACY_DOWNSCALED_ROOT='${CESM_LEGACY_DOWNSCALED_ROOT}'"
+  wrap_cmd="ORGANIZE_SCOPE='${scope}' VAR='${var}' NPROC='${NPROC}' MODEL='${MODEL}' REALIZATION='${REALIZATION}' SCENARIO='${SCENARIO}' DOWNSCALED_ROOT='${DOWNSCALED_ROOT}' CESM_LEGACY_DOWNSCALED_ROOT='${CESM_LEGACY_DOWNSCALED_ROOT}' OVERWRITE='${OVERWRITE}'"
   if [[ "${scope}" == "future" ]]; then
     job_tag="${job_tag}_${window}"
     wrap_cmd="${wrap_cmd} WINDOW='${window}'"

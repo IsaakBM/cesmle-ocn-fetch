@@ -939,6 +939,14 @@ For one CESM member:
 MODEL=cesm_f09_g16 REALIZATION=002 SCENARIO=rcp85 ./scripts/runners/products/run_organize_ocean_downscaling_products.sh
 ```
 
+The organizer is incremental by default. If a destination folder or baseline
+file already contains NetCDF output, it is skipped. To refresh existing curated
+products, run with:
+
+```bash
+OVERWRITE=yes ./scripts/runners/products/run_organize_ocean_downscaling_products.sh
+```
+
 Expected output root:
 
 ```text
@@ -984,6 +992,7 @@ Notes:
     left as `auto`
 - within each submitted job, the tool can copy multiple NetCDF files in
   parallel using the allocated CPUs
+- existing destination NetCDF files are skipped unless `OVERWRITE=yes`
 - future branches preserve both `0p25` and `0p05` products
   under each future window when that layout exists
 - the tool copies files; it does not move or delete the original workflow trees

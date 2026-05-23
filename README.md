@@ -362,7 +362,8 @@ packaging/export/organization steps than as reusable scientific operators.
     `/home/SB5/ocean_downscaling_products_layers`
     `/home/SB5/ocean_downscaling_products_pelagic`
   - is designed to run on subtree-specific inputs such as `baseline/<var>` or
-    `future/<var>`, while still parallelizing across files inside that subtree
+    `future/<model>/<realization>/<scenario>/<var>`, while still
+    parallelizing across files inside that subtree
   - supports two bin sets:
     - fine depth intervals such as `0-25 m`, `25-50 m`, `50-100 m`
     - broad pelagic zones such as `epipelagic`, `mesopelagic`,
@@ -1040,17 +1041,23 @@ Expected output root:
 ```text
 /home/SB5/ocean_downscaling_products_layers/
 ├── baseline/
+│   └── <var>/<resolution>/
 └── future/
+    └── <model>/<realization>/<scenario>/<var>/<window>/<resolution>/
 ```
 
 Notes:
 
-- mirrors the curated `baseline/future` structure
+- mirrors the curated `baseline/future` structure, including model,
+  realization/member/statistic, scenario, window, and resolution for future
+  products
 - each 3D NetCDF file becomes one NetCDF file per fine depth interval
 - the runner submits one job per main subtree:
   - `baseline/<var>`
-  - `future/<var>`
+  - `future/<model>/<realization>/<scenario>/<var>`
 - within each submitted job, the tool still parallelizes over files
+- `OVERWRITE=no` by default skips existing layer products; set
+  `OVERWRITE=yes` to refresh them
 - current intervals are left-closed and right-open:
   - `[0,25)`
   - `[25,50)`
@@ -1107,17 +1114,23 @@ Expected output root:
 ```text
 /home/SB5/ocean_downscaling_products_pelagic/
 ├── baseline/
+│   └── <var>/<resolution>/
 └── future/
+    └── <model>/<realization>/<scenario>/<var>/<window>/<resolution>/
 ```
 
 Notes:
 
-- mirrors the curated `baseline/future` structure
+- mirrors the curated `baseline/future` structure, including model,
+  realization/member/statistic, scenario, window, and resolution for future
+  products
 - each 3D NetCDF file becomes one NetCDF file per pelagic zone
 - the runner submits one job per main subtree:
   - `baseline/<var>`
-  - `future/<var>`
+  - `future/<model>/<realization>/<scenario>/<var>`
 - within each submitted job, the tool still parallelizes over files
+- `OVERWRITE=no` by default skips existing pelagic products; set
+  `OVERWRITE=yes` to refresh them
 - current zones are:
   - `epipelagic` for `[0,200)`
   - `mesopelagic` for `[200,1000)`

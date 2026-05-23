@@ -13,6 +13,7 @@ TOOL_SCRIPT="${SCRIPT_DIR}/../../tools/aggregate_ocean_downscaling_products_by_d
 LOG_DIR="/home/sandbox-sparc/cesmle-ocn-fetch/logs"
 SOURCE_ROOT="${SOURCE_ROOT:-/home/SB5/ocean_downscaling_products}"
 TARGET_ROOT="${TARGET_ROOT:-/home/SB5/ocean_downscaling_products_layers}"
+OVERWRITE="${OVERWRITE:-no}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -26,17 +27,19 @@ if [[ ! -d "${SOURCE_ROOT}" ]]; then
   exit 1
 fi
 
-mapfile -t SUBTREES < <(
-  find "${SOURCE_ROOT}/baseline" "${SOURCE_ROOT}/future" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort
-)
+mapfile -t SUBTREES < <({
+  find "${SOURCE_ROOT}/baseline" -mindepth 1 -maxdepth 1 -type d 2>/dev/null
+  find "${SOURCE_ROOT}/future" -mindepth 4 -maxdepth 4 -type d 2>/dev/null
+} | sort)
 if (( ${#SUBTREES[@]} == 0 )); then
-  echo "ERROR: No baseline/future variable directories found under: ${SOURCE_ROOT}"
+  echo "ERROR: No baseline/future aggregation subtrees found under: ${SOURCE_ROOT}"
   exit 1
 fi
 
 echo "Submitting curated ocean product fine depth-layer aggregation jobs by subtree:"
 echo "SOURCE ROOT: ${SOURCE_ROOT}"
 echo "TARGET ROOT: ${TARGET_ROOT}"
+echo "OVERWRITE  : ${OVERWRITE}"
 for subtree in "${SUBTREES[@]}"; do
   rel_path="${subtree#${SOURCE_ROOT}/}"
   out_subtree="${TARGET_ROOT}/${rel_path}"
@@ -46,7 +49,7 @@ for subtree in "${SUBTREES[@]}"; do
       --job-name="fine_${job_tag}" \
       --output="${LOG_DIR}/fine_layers_${job_tag}_%j.out" \
       --error="${LOG_DIR}/fine_layers_${job_tag}_%j.err" \
-      --export=ALL,BIN_SET=fine,IN_ROOT="${subtree}",OUT_ROOT="${out_subtree}" \
+      --export=ALL,BIN_SET=fine,IN_ROOT="${subtree}",OUT_ROOT="${out_subtree}",OVERWRITE="${OVERWRITE}" \
       "${TOOL_SCRIPT}"
   )
   echo "  submitted SUBTREE=${rel_path} as jobid=${jid}"

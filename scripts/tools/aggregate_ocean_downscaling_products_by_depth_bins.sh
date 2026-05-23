@@ -53,7 +53,7 @@ shopt -s nullglob
 #   OVERWRITE     : yes | no
 #                   yes -> replace existing outputs
 #                   no  -> keep existing outputs
-#                   (default: yes)
+#                   (default: no)
 # ==============================================================================
 IN_ROOT="${IN_ROOT:-/home/SB5/ocean_downscaling_products}"
 BIN_SET="${BIN_SET:-fine}"
@@ -74,7 +74,7 @@ esac
 OUT_ROOT="${OUT_ROOT:-${DEFAULT_OUT_ROOT}}"
 TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_depth_bins}"
 COPY_2D_FILES="${COPY_2D_FILES:-yes}"
-OVERWRITE="${OVERWRITE:-yes}"
+OVERWRITE="${OVERWRITE:-no}"
 NPROC="${SLURM_CPUS_PER_TASK:-6}"
 
 if [[ ! -d "${IN_ROOT}" ]]; then

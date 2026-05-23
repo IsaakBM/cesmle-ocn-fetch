@@ -1231,8 +1231,15 @@ Expected output root:
 ```text
 /home/SB5/ocean_downscaling_sample_products_geotiff/
 ├── layers/
+│   ├── baseline/<var>/0p05/*.tif
+│   └── future/<scenario>/<var>/<window>/0p05/*.tif
 ├── pelagic/
+│   ├── baseline/<var>/0p05/*.tif
+│   └── future/<scenario>/<var>/<window>/0p05/*.tif
 └── manifests/
+    ├── layers_geotiff_manifest.csv
+    ├── pelagic_geotiff_manifest.csv
+    └── geotiff_manifest.csv
 ```
 
 Notes:
@@ -1240,12 +1247,18 @@ Notes:
 - this is a copy-only staging step for viewer deployment tests
 - it reads from the layer and pelagic GeoTIFF trees
 - it only stages `0p05` products
-- for future `thetao`, `so`, and `uo`, it keeps only the selected ensemble
-  member, defaulting to `001`
+- future outputs are staged by `scenario/variable/window/resolution` for the
+  Shiny app, while the manifests retain `model`, `realization`, `scenario`,
+  `variable`, `window`, and `resolution`
+- when a future model/scenario/variable/window has multiple realizations, it
+  keeps the first sorted realization only, so CESM currently stages member
+  `001` and IPCC/ESGF currently stages `r1i1p1f2`
 - it stages filtered manifests for the copied GeoTIFFs:
   - `layers_geotiff_manifest.csv`
   - `pelagic_geotiff_manifest.csv`
   - `geotiff_manifest.csv`
+- manifests preserve GeoTIFF scale/decode metadata so the Shiny app can recover
+  physical values from integer rasters
 - dry run is the default; use `DRY_RUN=no` to copy files
 
 Typical commands:

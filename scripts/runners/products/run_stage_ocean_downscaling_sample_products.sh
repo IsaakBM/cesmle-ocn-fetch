@@ -52,7 +52,7 @@ echo "LAYERS SOURCE  : ${LAYERS_SOURCE_ROOT}"
 echo "PELAGIC SOURCE : ${PELAGIC_SOURCE_ROOT}"
 echo "STAGE ROOT     : ${STAGE_ROOT}"
 echo "RESOLUTION     : ${RESOLUTION}"
-echo "MEMBER         : ${MEMBER}"
+echo "REALIZATION    : first sorted per model/scenario/variable/window"
 echo "DRY RUN        : ${DRY_RUN}"
 echo "STAGE MANIFESTS: ${STAGE_MANIFESTS}"
 

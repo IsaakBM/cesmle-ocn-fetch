@@ -23,7 +23,7 @@
 #SBATCH --job-name=to_parquet
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=6
+#SBATCH --cpus-per-task=5
 #SBATCH --mem=128G
 #SBATCH -t 1-00:00:00
 #SBATCH --mail-type=END,FAIL
@@ -51,7 +51,11 @@ shopt -s nullglob
 #   PARQUET_ENGINE   : parquet backend for pandas
 #                      (default: pyarrow)
 #   NPROC            : number of files to process in parallel
-#                      (default: SLURM_CPUS_PER_TASK or 6)
+#                      (default: SLURM_CPUS_PER_TASK or 5)
+#   OVERWRITE        : yes | no
+#                      yes -> replace existing outputs
+#                      no  -> keep existing outputs
+#                      (default: no)
 # ==============================================================================
 IN_ROOT="${IN_ROOT:-/home/SB5/ocean_downscaling_products_layers}"
 OUT_ROOT="${OUT_ROOT:-/home/SB5/ocean_downscaling_products_layers_parquet}"
@@ -59,7 +63,8 @@ TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_export_parquet}"
 DROP_MISSING="${DROP_MISSING:-yes}"
 PARQUET_PYTHON="${PARQUET_PYTHON:-/home/ibrito/venvs/parquet_export/bin/python}"
 PARQUET_ENGINE="${PARQUET_ENGINE:-pyarrow}"
-NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-6}}"
+NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-5}}"
+OVERWRITE="${OVERWRITE:-no}"
 
 if [[ ! -d "${IN_ROOT}" ]]; then
   echo "ERROR: IN_ROOT does not exist: ${IN_ROOT}"
@@ -68,6 +73,11 @@ fi
 
 if [[ "${DROP_MISSING}" != "yes" && "${DROP_MISSING}" != "no" ]]; then
   echo "ERROR: DROP_MISSING must be yes or no"
+  exit 1
+fi
+
+if [[ "${OVERWRITE}" != "yes" && "${OVERWRITE}" != "no" ]]; then
+  echo "ERROR: OVERWRITE must be yes or no"
   exit 1
 fi
 
@@ -114,6 +124,10 @@ process_one_file() {
   outfile="${OUT_ROOT}/${rel_dir}/${base}.parquet"
 
   mkdir -p "$(dirname "${outfile}")"
+  if [[ -f "${outfile}" && "${OVERWRITE}" == "no" ]]; then
+    echo "[SKIP ] ${outfile} exists (OVERWRITE=no)"
+    return 0
+  fi
   rm -f "${outfile}"
 
   echo
@@ -239,6 +253,7 @@ echo "DROP MISSING    : ${DROP_MISSING}"
 echo "PARQUET PYTHON  : ${PARQUET_PYTHON}"
 echo "PARQUET ENGINE  : ${PARQUET_ENGINE}"
 echo "PARALLEL FILES  : ${NPROC}"
+echo "OVERWRITE       : ${OVERWRITE}"
 echo "============================================================"
 
 mapfile -t files < <(find "${IN_ROOT}" -type f -name "*.nc" | sort)
@@ -263,7 +278,7 @@ except Exception as exc:
     )
 PY
 
-export IN_ROOT OUT_ROOT TMP_DIR DROP_MISSING PARQUET_PYTHON PARQUET_ENGINE
+export IN_ROOT OUT_ROOT TMP_DIR DROP_MISSING PARQUET_PYTHON PARQUET_ENGINE OVERWRITE
 export -f process_one_file
 
 printf '%s\0' "${files[@]}" \

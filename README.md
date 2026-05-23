@@ -1170,6 +1170,13 @@ Notes:
 
 - mirrors the fine-layer or pelagic NetCDF tree
 - exports each 2D NetCDF file to one Parquet table
+- the runners submit one job per main subtree:
+  - `baseline/<var>`
+  - `future/<model>`
+- within each submitted job, the tool parallelizes over files and is
+  configured to use `5` CPUs per Slurm task
+- `OVERWRITE=no` by default skips existing Parquet products; set
+  `OVERWRITE=yes` to refresh them
 - Parquet columns are:
   - `x`
   - `y`

@@ -1053,8 +1053,8 @@ Notes:
   products
 - each 3D NetCDF file becomes one NetCDF file per fine depth interval
 - the runner submits one job per main subtree:
-  - `baseline`
-  - `future/<model>/<realization>/<scenario>`
+  - `baseline/<var>`
+  - `future/<model>`
 - within each submitted job, the tool still parallelizes over files
 - `OVERWRITE=no` by default skips existing layer products; set
   `OVERWRITE=yes` to refresh them
@@ -1086,7 +1086,7 @@ Notes:
   - `depth_bin_mode`
   - `vertical_aggregation_method`
   - `vertical_bounds_source`
-- the current tool uses file-level parallelism and is configured to use `6`
+- the current tool uses file-level parallelism and is configured to use `5`
   CPUs per Slurm task
 - output filenames follow patterns such as:
   - `global_ocean_biogeochemistry_hindcast_chl_clim_2006-2014_layer_0000_0025m.nc`
@@ -1126,8 +1126,8 @@ Notes:
   products
 - each 3D NetCDF file becomes one NetCDF file per pelagic zone
 - the runner submits one job per main subtree:
-  - `baseline`
-  - `future/<model>/<realization>/<scenario>`
+  - `baseline/<var>`
+  - `future/<model>`
 - within each submitted job, the tool still parallelizes over files
 - `OVERWRITE=no` by default skips existing pelagic products; set
   `OVERWRITE=yes` to refresh them
@@ -1138,7 +1138,7 @@ Notes:
   - `abyssopelagic` for `[4000,6000)`
 - the same weighting and single-level fallback rules used for fine layers also
   apply here
-- the current tool uses file-level parallelism and is configured to use `6`
+- the current tool uses file-level parallelism and is configured to use `5`
   CPUs per Slurm task
 - output filenames follow patterns such as:
   - `global_ocean_biogeochemistry_hindcast_chl_clim_2006-2014_zone_epipelagic_0000_0200m.nc`

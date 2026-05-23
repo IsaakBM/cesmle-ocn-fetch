@@ -24,7 +24,7 @@
 #SBATCH --job-name=depth_bins
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=6
+#SBATCH --cpus-per-task=5
 #SBATCH --mem=512G
 #SBATCH -t 1-00:00:00
 #SBATCH --mail-type=END,FAIL
@@ -75,7 +75,7 @@ OUT_ROOT="${OUT_ROOT:-${DEFAULT_OUT_ROOT}}"
 TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_depth_bins}"
 COPY_2D_FILES="${COPY_2D_FILES:-yes}"
 OVERWRITE="${OVERWRITE:-no}"
-NPROC="${SLURM_CPUS_PER_TASK:-6}"
+NPROC="${SLURM_CPUS_PER_TASK:-5}"
 
 if [[ ! -d "${IN_ROOT}" ]]; then
   echo "ERROR: IN_ROOT does not exist: ${IN_ROOT}"

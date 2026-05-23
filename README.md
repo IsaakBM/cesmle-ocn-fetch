@@ -1053,8 +1053,8 @@ Notes:
   products
 - each 3D NetCDF file becomes one NetCDF file per fine depth interval
 - the runner submits one job per main subtree:
-  - `baseline/<var>`
-  - `future/<model>/<realization>/<scenario>/<var>`
+  - `baseline`
+  - `future/<model>/<realization>/<scenario>`
 - within each submitted job, the tool still parallelizes over files
 - `OVERWRITE=no` by default skips existing layer products; set
   `OVERWRITE=yes` to refresh them
@@ -1126,8 +1126,8 @@ Notes:
   products
 - each 3D NetCDF file becomes one NetCDF file per pelagic zone
 - the runner submits one job per main subtree:
-  - `baseline/<var>`
-  - `future/<model>/<realization>/<scenario>/<var>`
+  - `baseline`
+  - `future/<model>/<realization>/<scenario>`
 - within each submitted job, the tool still parallelizes over files
 - `OVERWRITE=no` by default skips existing pelagic products; set
   `OVERWRITE=yes` to refresh them

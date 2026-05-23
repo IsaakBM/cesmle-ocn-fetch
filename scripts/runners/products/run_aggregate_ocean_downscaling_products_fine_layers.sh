@@ -28,8 +28,8 @@ if [[ ! -d "${SOURCE_ROOT}" ]]; then
 fi
 
 mapfile -t SUBTREES < <({
-  find "${SOURCE_ROOT}/baseline" -mindepth 1 -maxdepth 1 -type d 2>/dev/null
-  find "${SOURCE_ROOT}/future" -mindepth 4 -maxdepth 4 -type d 2>/dev/null
+  find "${SOURCE_ROOT}/baseline" -mindepth 0 -maxdepth 0 -type d 2>/dev/null
+  find "${SOURCE_ROOT}/future" -mindepth 3 -maxdepth 3 -type d 2>/dev/null
 } | sort)
 if (( ${#SUBTREES[@]} == 0 )); then
   echo "ERROR: No baseline/future aggregation subtrees found under: ${SOURCE_ROOT}"

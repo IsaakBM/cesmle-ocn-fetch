@@ -25,7 +25,7 @@
 #SBATCH --job-name=to_geotiff
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=6
+#SBATCH --cpus-per-task=5
 #SBATCH --mem=128G
 #SBATCH -t 1-00:00:00
 #SBATCH --mail-type=END,FAIL
@@ -60,7 +60,11 @@ shopt -s nullglob
 #   COMPRESS       : GeoTIFF compression codec
 #                    (default: DEFLATE)
 #   NPROC          : number of files to process in parallel
-#                    (default: SLURM_CPUS_PER_TASK or 6)
+#                    (default: SLURM_CPUS_PER_TASK or 5)
+#   OVERWRITE      : yes | no
+#                    yes -> replace existing outputs
+#                    no  -> keep existing outputs
+#                    (default: no)
 # ==============================================================================
 IN_ROOT="${IN_ROOT:-/home/SB5/ocean_downscaling_products_layers}"
 OUT_ROOT="${OUT_ROOT:-/home/SB5/ocean_downscaling_products_layers_geotiff}"
@@ -71,7 +75,8 @@ SCALE_FACTORS="${SCALE_FACTORS:-thetao=100,TEMP=100,so=100,SALT=100,uo=100,UVEL=
 DEFAULT_SCALE="${DEFAULT_SCALE:-100}"
 ENCODE_DTYPE="${ENCODE_DTYPE:-auto}"
 COMPRESS="${COMPRESS:-DEFLATE}"
-NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-6}}"
+NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-5}}"
+OVERWRITE="${OVERWRITE:-no}"
 
 if [[ ! -d "${IN_ROOT}" ]]; then
   echo "ERROR: IN_ROOT does not exist: ${IN_ROOT}"
@@ -87,6 +92,14 @@ case "${ENCODE_DTYPE}" in
   auto|int16|int32) ;;
   *)
     echo "ERROR: ENCODE_DTYPE must be auto, int16, or int32"
+    exit 1
+    ;;
+esac
+
+case "${OVERWRITE}" in
+  yes|no) ;;
+  *)
+    echo "ERROR: OVERWRITE must be yes or no"
     exit 1
     ;;
 esac
@@ -158,9 +171,6 @@ process_one_file() {
   manifest_key="$(echo "${rel_path}" | tr '/' '_' | tr -cd '[:alnum:]_.-')"
   manifest_part="${TMP_DIR}/manifest_parts/${manifest_key}.$$.csv"
 
-  mkdir -p "$(dirname "${outfile}")"
-  rm -f "${outfile}"
-
   echo
   echo "[START] ${rel_path}"
 
@@ -173,6 +183,7 @@ process_one_file() {
     "${ENCODE_DTYPE}" \
     "${COMPRESS}" \
     "${manifest_part}" \
+    "${OVERWRITE}" \
     "${TMP_DIR}/$(basename "${manifest_part}" .csv).encoded.tmp.nc" <<'PY'
 import csv
 import os
@@ -205,8 +216,9 @@ except Exception:
     encode_dtype,
     compress,
     manifest_part,
+    overwrite,
     tmp_encoded_nc,
-) = sys.argv[1:10]
+) = sys.argv[1:11]
 
 preferred_xy = [
     ("lon", "lat"),
@@ -361,7 +373,10 @@ with xr.open_dataset(infile) as ds:
 
     units = str(da.attrs.get("units", ""))
     os.makedirs(os.path.dirname(outfile), exist_ok=True)
-    if rasterio is not None:
+    skip_existing = os.path.exists(outfile) and overwrite == "no"
+    if skip_existing:
+        print(f"[SKIP ] {outfile} exists (OVERWRITE=no)")
+    elif rasterio is not None:
         profile = {
             "driver": "GTiff",
             "height": out_array.shape[0],
@@ -530,7 +545,11 @@ with xr.open_dataset(infile) as ds:
         writer.writerow(row)
 PY
 
-  echo "[DONE ] ${outfile}"
+  if [[ -f "${outfile}" && "${OVERWRITE}" == "no" ]]; then
+    echo "[DONE ] manifest refreshed for existing ${outfile}"
+  else
+    echo "[DONE ] ${outfile}"
+  fi
 }
 
 echo "============================================================"
@@ -545,6 +564,7 @@ echo "DEFAULT SCALE  : ${DEFAULT_SCALE}"
 echo "ENCODE DTYPE   : ${ENCODE_DTYPE}"
 echo "COMPRESS       : ${COMPRESS}"
 echo "PARALLEL FILES : ${NPROC}"
+echo "OVERWRITE      : ${OVERWRITE}"
 echo "============================================================"
 
 mapfile -t files < <(find "${IN_ROOT}" -type f -name "*.nc" | sort)
@@ -569,7 +589,7 @@ except Exception as exc:
     )
 PY
 
-export IN_ROOT OUT_ROOT TMP_DIR GEOTIFF_PYTHON GDAL_TRANSLATE SCALE_FACTORS DEFAULT_SCALE ENCODE_DTYPE COMPRESS
+export IN_ROOT OUT_ROOT TMP_DIR GEOTIFF_PYTHON GDAL_TRANSLATE SCALE_FACTORS DEFAULT_SCALE ENCODE_DTYPE COMPRESS OVERWRITE
 export -f process_one_file
 
 set +e

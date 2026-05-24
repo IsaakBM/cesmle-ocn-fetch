@@ -1493,6 +1493,34 @@ assumptions that should be kept in mind when interpreting the outputs.
   anomalies, interpolation, and remapping. It is not a dynamical ocean-model
   simulation.
 
+## Next Steps For Future Statistical Improvements
+
+Potential future additions should focus on evaluating and extending the current
+change-field workflow rather than replacing it wholesale.
+
+- Add a hindcast-style validation experiment for the downscaling method. For
+  example, use an earlier historical/current model window and trusted baseline
+  to predict a later trusted target window, then compare the predicted field
+  against the observed or hindcast target using bias, RMSE/MAE, spatial
+  correlation, and depth- or region-specific diagnostics.
+
+- Add variable-specific delta modes and compare them during validation. The
+  current additive change field is appropriate for many physical variables, but
+  strictly positive or strongly skewed variables such as `chl` may need a
+  multiplicative ratio or log-space change field. Candidate modes include:
+  additive, multiplicative, and log-delta.
+
+- Add distribution diagnostics for final products. Even when full temporal
+  downscaling is not needed, the workflow should be able to flag cases where a
+  delta mode creates implausible values, negative concentrations, compressed
+  variability, or unrealistic depth/region distributions.
+
+- Treat full empirical-statistical downscaling methods such as analogs, GLMs,
+  neural networks, or full quantile mapping as optional later work. Those
+  methods should only be added if validation shows that the simpler
+  climatological change-field approach is not adequate for a specific variable
+  or use case.
+
 ## Important Current Distinctions
 
 To avoid confusion:

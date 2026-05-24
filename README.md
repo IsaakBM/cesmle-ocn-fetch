@@ -1495,31 +1495,32 @@ assumptions that should be kept in mind when interpreting the outputs.
 
 ## Next Steps For Future Statistical Improvements
 
-Potential future additions should focus on evaluating and extending the current
-change-field workflow rather than replacing it wholesale.
+The most useful future additions would be small validation and sensitivity
+checks around the current change-field method, not a full empirical-statistical
+downscaling framework.
 
-- Add a hindcast-style validation experiment for the downscaling method. For
-  example, use an earlier historical/current model window and trusted baseline
-  to predict a later trusted target window, then compare the predicted field
-  against the observed or hindcast target using bias, RMSE/MAE, spatial
-  correlation, and depth- or region-specific diagnostics.
+- Validation first: add a historical pseudo-future test. For example, use an
+  earlier model window to predict a later observed, hindcast, or GLORYS window,
+  then compare the predicted field against the trusted target. Useful metrics
+  include bias, RMSE/MAE, spatial correlation, and possibly quantile error. This
+  would show whether the current method is already good enough.
 
-- Add variable-specific delta modes and compare them during validation. The
-  current additive change field is appropriate for many physical variables, but
-  strictly positive or strongly skewed variables such as `chl` may need a
-  multiplicative ratio or log-space change field. Candidate modes include:
-  additive, multiplicative, and log-delta.
+- Variable-specific delta modes: keep additive deltas for `thetao`, probably
+  `so`, and velocities depending on interpretation. For `chl`, test
+  multiplicative or log-ratio deltas:
 
-- Add distribution diagnostics for final products. Even when full temporal
-  downscaling is not needed, the workflow should be able to flag cases where a
-  delta mode creates implausible values, negative concentrations, compressed
-  variability, or unrealistic depth/region distributions.
+  ```text
+  downscaled = baseline * future_model / historical_model
+  log(downscaled) = log(baseline) + [log(future_model) - log(historical_model)]
+  ```
 
-- Treat full empirical-statistical downscaling methods such as analogs, GLMs,
-  neural networks, or full quantile mapping as optional later work. Those
-  methods should only be added if validation shows that the simpler
-  climatological change-field approach is not adequate for a specific variable
-  or use case.
+  This is likely more useful than adding GLMs, analogs, or neural networks.
+
+- Distribution check, not full quantile mapping: full daily or monthly quantile
+  mapping is probably unnecessary if temporal structure is not needed. A simpler
+  check can compare baseline and future distributions by depth or region and
+  flag cases where additive deltas create strange values, compressed
+  variability, or negative `chl`/`o2`.
 
 ## Important Current Distinctions
 

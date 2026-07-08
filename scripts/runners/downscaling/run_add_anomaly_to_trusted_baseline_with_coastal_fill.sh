@@ -20,6 +20,9 @@ set -euo pipefail
 #   - BASELINE_FILE_TEMPLATE resolves to the intended target climatology file
 #   - ANOMALY_FILE_TEMPLATE resolves to the anomaly file
 #   - ANOMALY_GRIDFILE matches the trusted target grid
+#   - optional COASTAL_MASK_FILE or COASTAL_MASK_FILE_TEMPLATE resolves to an
+#     external wet-mask/coastline file when the fill domain should differ from
+#     the baseline value field
 #
 # Variable mapping is controlled with VAR_MAP entries of the form:
 #   source_var:target_var
@@ -56,8 +59,14 @@ FORCING_LABEL="${FORCING_LABEL:-${SCENARIO_LABEL:-}}"
 #   __TGT_VAR__
 #   __WINDOW__
 #   __BASELINE_TAG__
+#   __COASTAL_MASK_ROOT__
 BASELINE_FILE_TEMPLATE="${BASELINE_FILE_TEMPLATE:-__BASELINE_ROOT__/__TGT_VAR__/clim_windows/global_ocean_biogeochemistry_hindcast___TGT_VAR___clim___BASELINE_TAG___grid_0p05_global.nc}"
 ANOMALY_FILE_TEMPLATE="${ANOMALY_FILE_TEMPLATE:-__ANOMALY_ROOT__/__SRC_VAR__/delta_windows_0p25/ipcc_esgf_ssp585___SRC_VAR___delta___WINDOW___minus___BASELINE_TAG___grid_0p25_global.nc}"
+COASTAL_MASK_ROOT="${COASTAL_MASK_ROOT:-}"
+COASTAL_MASK_FILE="${COASTAL_MASK_FILE:-}"
+COASTAL_MASK_FILE_TEMPLATE="${COASTAL_MASK_FILE_TEMPLATE:-}"
+COASTAL_MASK_VAR="${COASTAL_MASK_VAR:-}"
+FILL_BASELINE_COASTAL_GAPS="${FILL_BASELINE_COASTAL_GAPS:-no}"
 
 REMAP_ANOMALY_TO_BASELINE="${REMAP_ANOMALY_TO_BASELINE:-yes}"
 ANOMALY_GRIDFILE="${ANOMALY_GRIDFILE:-/home/SB5/glorys12v1_monthly_0p05/grid_0p05_global.txt}"
@@ -91,6 +100,7 @@ render_template() {
   template="${template//__TGT_VAR__/${tgt_var}}"
   template="${template//__WINDOW__/${window}}"
   template="${template//__BASELINE_TAG__/${BASELINE_TAG}}"
+  template="${template//__COASTAL_MASK_ROOT__/${COASTAL_MASK_ROOT}}"
   printf '%s\n' "$template"
 }
 
@@ -106,6 +116,11 @@ if [[ "$REGRID_OUTPUT" == "yes" && ! -f "$REGRID_GRIDFILE" ]]; then
   exit 1
 fi
 
+if [[ -n "$COASTAL_MASK_FILE" && ! -f "$COASTAL_MASK_FILE" ]]; then
+  echo "ERROR: coastal mask file not found: $COASTAL_MASK_FILE"
+  exit 1
+fi
+
 echo "Submitting anomaly-to-trusted-baseline downscaling jobs with coastal fill:"
 echo "DATASET LABEL        : ${DATASET_LABEL}"
 echo "BASELINE ROOT        : ${BASELINE_ROOT}"
@@ -115,6 +130,10 @@ echo "MODEL LABEL          : ${MODEL_LABEL:-<none>}"
 echo "REALIZATION LABEL    : ${REALIZATION_LABEL:-<none>}"
 echo "FORCING LABEL        : ${FORCING_LABEL:-<none>}"
 echo "ANOMALY GRIDFILE     : ${ANOMALY_GRIDFILE}"
+echo "COASTAL MASK FILE    : ${COASTAL_MASK_FILE:-<baseline finite mask>}"
+echo "COASTAL MASK TEMPLATE: ${COASTAL_MASK_FILE_TEMPLATE:-<none>}"
+echo "COASTAL MASK VAR     : ${COASTAL_MASK_VAR:-<auto>}"
+echo "FILL BASELINE GAPS   : ${FILL_BASELINE_COASTAL_GAPS}"
 echo "REGRID OUTPUT        : ${REGRID_OUTPUT}"
 
 for spec in "${VAR_MAP[@]}"; do
@@ -122,6 +141,10 @@ for spec in "${VAR_MAP[@]}"; do
   tgt_var="${spec##*:}"
 
   BASELINE_FILE="$(render_template "${BASELINE_FILE_TEMPLATE}" "${src_var}" "${tgt_var}")"
+  COASTAL_MASK_FILE_FOR_VAR="${COASTAL_MASK_FILE}"
+  if [[ -n "${COASTAL_MASK_FILE_TEMPLATE}" ]]; then
+    COASTAL_MASK_FILE_FOR_VAR="$(render_template "${COASTAL_MASK_FILE_TEMPLATE}" "${src_var}" "${tgt_var}")"
+  fi
   ANOMALY_PARENT="$(dirname "$(render_template "${ANOMALY_FILE_TEMPLATE}" "${src_var}" "${tgt_var}" "window_stub")")"
   if [[ -n "${MODEL_LABEL}" && -n "${REALIZATION_LABEL}" && -n "${FORCING_LABEL}" ]]; then
     TMP_DIR="${OUTROOT}/${MODEL_LABEL}/${REALIZATION_LABEL}/${FORCING_LABEL}/${tgt_var}/tmp_add_coastal_fill"
@@ -136,6 +159,11 @@ for spec in "${VAR_MAP[@]}"; do
 
   if [[ ! -d "$ANOMALY_PARENT" ]]; then
     echo "WARN: Anomaly directory not found, skipping SRC=${src_var} TGT=${tgt_var}: ${ANOMALY_PARENT}"
+    continue
+  fi
+
+  if [[ -n "$COASTAL_MASK_FILE_FOR_VAR" && ! -f "$COASTAL_MASK_FILE_FOR_VAR" ]]; then
+    echo "WARN: Coastal mask file not found, skipping SRC=${src_var} TGT=${tgt_var}: ${COASTAL_MASK_FILE_FOR_VAR}"
     continue
   fi
 
@@ -174,6 +202,9 @@ for spec in "${VAR_MAP[@]}"; do
       ANOMALY_AUTO_METHOD_CURVILINEAR="$ANOMALY_AUTO_METHOD_CURVILINEAR" \
       COASTAL_FILL="$COASTAL_FILL" \
       COASTAL_FILL_METHOD="$COASTAL_FILL_METHOD" \
+      COASTAL_MASK_FILE="$COASTAL_MASK_FILE_FOR_VAR" \
+      COASTAL_MASK_VAR="$COASTAL_MASK_VAR" \
+      FILL_BASELINE_COASTAL_GAPS="$FILL_BASELINE_COASTAL_GAPS" \
       COASTAL_FILL_MAX_STEPS="$COASTAL_FILL_MAX_STEPS" \
       COASTAL_FILL_WEIGHT_POWER="$COASTAL_FILL_WEIGHT_POWER" \
       COASTAL_FILL_MIN_DONORS="$COASTAL_FILL_MIN_DONORS" \

@@ -74,6 +74,14 @@ export OMP_NUM_THREADS=1
 #   COASTAL_FILL              : yes | no (default: yes)
 #   COASTAL_FILL_METHOD       : nearest | distance_weighted
 #                               (default: distance_weighted)
+#   COASTAL_MASK_FILE         : optional file defining wet mask/fill domain.
+#                               If unset, baseline finite cells define the mask.
+#   COASTAL_MASK_VAR          : optional variable name in COASTAL_MASK_FILE.
+#                               If unset, first non-bounds variable is used.
+#   FILL_BASELINE_COASTAL_GAPS
+#                             : yes | no, fill missing baseline cells inside
+#                               the coastal mask before adding anomaly
+#                               (default: no)
 #   COASTAL_FILL_MAX_STEPS    : maximum neighbor-expansion steps for coastal fill
 #                               on the trusted baseline wet mask (default: 12)
 #   COASTAL_FILL_WEIGHT_POWER : inverse-distance weighting exponent used when
@@ -111,6 +119,9 @@ ANOMALY_AUTO_METHOD_DEFAULT="${ANOMALY_AUTO_METHOD_DEFAULT:-remapbil}"
 ANOMALY_AUTO_METHOD_CURVILINEAR="${ANOMALY_AUTO_METHOD_CURVILINEAR:-remapdis}"
 COASTAL_FILL="${COASTAL_FILL:-yes}"
 COASTAL_FILL_METHOD="${COASTAL_FILL_METHOD:-distance_weighted}"
+COASTAL_MASK_FILE="${COASTAL_MASK_FILE:-}"
+COASTAL_MASK_VAR="${COASTAL_MASK_VAR:-}"
+FILL_BASELINE_COASTAL_GAPS="${FILL_BASELINE_COASTAL_GAPS:-no}"
 COASTAL_FILL_MAX_STEPS="${COASTAL_FILL_MAX_STEPS:-12}"
 COASTAL_FILL_WEIGHT_POWER="${COASTAL_FILL_WEIGHT_POWER:-2.0}"
 COASTAL_FILL_MIN_DONORS="${COASTAL_FILL_MIN_DONORS:-4}"
@@ -131,7 +142,7 @@ if [[ ! -f "$ANOMALY_FILE" ]]; then
   exit 1
 fi
 
-for flag_var in WRITE_NATIVE_OUTPUT FILL_TOP_MISSING WRITE_FILLED_ANOM REGRID_OUTPUT REMAP_ANOMALY_TO_BASELINE COASTAL_FILL; do
+for flag_var in WRITE_NATIVE_OUTPUT FILL_TOP_MISSING WRITE_FILLED_ANOM REGRID_OUTPUT REMAP_ANOMALY_TO_BASELINE COASTAL_FILL FILL_BASELINE_COASTAL_GAPS; do
   flag_val="${!flag_var}"
   if [[ "$flag_val" != "yes" && "$flag_val" != "no" ]]; then
     echo "ERROR: ${flag_var} must be yes or no"
@@ -146,6 +157,11 @@ fi
 
 if [[ "$REMAP_ANOMALY_TO_BASELINE" == "yes" && ! -f "$ANOMALY_GRIDFILE" ]]; then
   echo "ERROR: ANOMALY_GRIDFILE must exist when REMAP_ANOMALY_TO_BASELINE=yes"
+  exit 1
+fi
+
+if [[ -n "$COASTAL_MASK_FILE" && ! -f "$COASTAL_MASK_FILE" ]]; then
+  echo "ERROR: COASTAL_MASK_FILE does not exist: ${COASTAL_MASK_FILE}"
   exit 1
 fi
 
@@ -255,6 +271,9 @@ echo "COASTAL FILL METHOD  : ${COASTAL_FILL_METHOD}"
 echo "COASTAL FILL STEPS   : ${COASTAL_FILL_MAX_STEPS}"
 echo "COASTAL FILL POWER   : ${COASTAL_FILL_WEIGHT_POWER}"
 echo "COASTAL FILL DONORS  : ${COASTAL_FILL_MIN_DONORS}"
+echo "COASTAL MASK FILE    : ${COASTAL_MASK_FILE:-<baseline finite mask>}"
+echo "COASTAL MASK VAR     : ${COASTAL_MASK_VAR:-<auto>}"
+echo "FILL BASELINE GAPS   : ${FILL_BASELINE_COASTAL_GAPS}"
 if [[ "$REMAP_ANOMALY_TO_BASELINE" == "yes" ]]; then
   echo "ANOM GRIDFILE        : ${ANOMALY_GRIDFILE}"
   echo "ANOM REGRID METHOD   : ${ANOMALY_REGRID_METHOD}"
@@ -298,6 +317,8 @@ import xarray as xr
 
 baseline_file = "${BASELINE_FILE}"
 anomaly_file = "${ANOMALY_FOR_PYTHON}"
+coastal_mask_file = "${COASTAL_MASK_FILE}"
+coastal_mask_var = "${COASTAL_MASK_VAR}"
 tmp_native = "${TMP_NATIVE}"
 write_native = "${WRITE_NATIVE_OUTPUT}" == "yes"
 fill_top_missing = "${FILL_TOP_MISSING}" == "yes"
@@ -305,14 +326,22 @@ write_filled_anom = "${WRITE_FILLED_ANOM}" == "yes"
 filled_anom_file = "${FILLED_ANOM_FILE}"
 coastal_fill = "${COASTAL_FILL}" == "yes"
 coastal_fill_method = "${COASTAL_FILL_METHOD}"
+fill_baseline_coastal_gaps = "${FILL_BASELINE_COASTAL_GAPS}" == "yes"
 coastal_fill_max_steps = int("${COASTAL_FILL_MAX_STEPS}")
 coastal_fill_weight_power = float("${COASTAL_FILL_WEIGHT_POWER}")
 coastal_fill_min_donors = int("${COASTAL_FILL_MIN_DONORS}")
 
 ds_base = xr.open_dataset(baseline_file)
 ds_anom = xr.open_dataset(anomaly_file)
+ds_mask = xr.open_dataset(coastal_mask_file) if coastal_mask_file else None
 
-def pick_main_var(ds):
+def pick_main_var(ds, requested=None):
+    if requested:
+        if requested not in ds.data_vars:
+            raise ValueError(
+                f"Requested variable {requested!r} not found in dataset: {list(ds.data_vars)}"
+            )
+        return requested
     candidates = [
         v for v in ds.data_vars
         if "bnds" not in v.lower() and "bounds" not in v.lower()
@@ -334,6 +363,27 @@ def infer_xy_dims(da):
     if da.ndim < 2:
         raise ValueError(f"Expected at least two dims to infer horizontal axes: {da.dims}")
     return da.dims[-2], da.dims[-1]
+
+def align_to_base_dims(da, da_base, label):
+    aligned = da.copy()
+    extra_dims = [d for d in aligned.dims if d not in da_base.dims]
+    for dim in extra_dims:
+        if aligned.sizes.get(dim) == 1:
+            aligned = aligned.isel({dim: 0}, drop=True)
+        else:
+            raise ValueError(
+                f"{label} has unsupported dimension {dim!r}; "
+                f"expected subset of baseline dims {da_base.dims}"
+            )
+
+    for dim in da_base.dims:
+        if dim in aligned.dims and dim in da_base.coords:
+            aligned = aligned.assign_coords({dim: da_base.coords[dim]})
+        elif dim not in aligned.dims:
+            coord = da_base.coords[dim] if dim in da_base.coords else np.arange(da_base.sizes[dim])
+            aligned = aligned.expand_dims({dim: coord})
+
+    return aligned.transpose(*da_base.dims)
 
 _fill_geometry_cache = {}
 
@@ -379,6 +429,7 @@ def build_fill_geometry(max_steps, weight_power):
 
 def fill_slice_nearest(data2d, wet2d, geometry):
     filled = np.array(data2d, dtype=float, copy=True)
+    source = np.array(data2d, dtype=float, copy=True)
     wet = np.array(wet2d, dtype=bool, copy=False)
     pending_idx = np.argwhere(wet & ~np.isfinite(filled))
     if pending_idx.size == 0:
@@ -389,7 +440,7 @@ def fill_slice_nearest(data2d, wet2d, geometry):
     dx = geometry["dx"]
     radius_cutoffs = geometry["radius_cutoffs"]
 
-    padded_vals = np.pad(filled, max_radius, mode="constant", constant_values=np.nan)
+    padded_vals = np.pad(source, max_radius, mode="constant", constant_values=np.nan)
     padded_wet = np.pad(wet, max_radius, mode="constant", constant_values=False)
     filled_count = 0
 
@@ -408,7 +459,6 @@ def fill_slice_nearest(data2d, wet2d, geometry):
 
             first = int(np.flatnonzero(valid)[0])
             filled[iy, ix] = float(padded_vals[neigh_y[first], neigh_x[first]])
-            padded_vals[py, px] = filled[iy, ix]
             filled_count += 1
             found = True
             break
@@ -420,6 +470,7 @@ def fill_slice_nearest(data2d, wet2d, geometry):
 
 def fill_slice_distance_weighted(data2d, wet2d, geometry, min_donors):
     filled = np.array(data2d, dtype=float, copy=True)
+    source = np.array(data2d, dtype=float, copy=True)
     wet = np.array(wet2d, dtype=bool, copy=False)
     pending_idx = np.argwhere(wet & ~np.isfinite(filled))
     if pending_idx.size == 0:
@@ -431,12 +482,12 @@ def fill_slice_distance_weighted(data2d, wet2d, geometry, min_donors):
     weights = geometry["weights"]
     radius_cutoffs = geometry["radius_cutoffs"]
 
-    if not np.any(wet & np.isfinite(filled)):
+    if not np.any(wet & np.isfinite(source)):
         return filled, 0
 
     target_donors = max(1, min_donors)
     filled_count = 0
-    padded_vals = np.pad(filled, max_radius, mode="constant", constant_values=np.nan)
+    padded_vals = np.pad(source, max_radius, mode="constant", constant_values=np.nan)
     padded_wet = np.pad(wet, max_radius, mode="constant", constant_values=False)
 
     for iy, ix in pending_idx:
@@ -471,7 +522,6 @@ def fill_slice_distance_weighted(data2d, wet2d, geometry, min_donors):
             continue
 
         filled[iy, ix] = float(np.sum(donor_weights * donor_vals) / weight_sum)
-        padded_vals[py, px] = filled[iy, ix]
         filled_count += 1
 
     return filled, filled_count
@@ -497,6 +547,11 @@ if anom_var is None:
 
 da_base = ds_base[base_var]
 da_anom = ds_anom[anom_var]
+da_mask = None
+mask_var = None
+if ds_mask is not None:
+    mask_var = pick_main_var(ds_mask, coastal_mask_var or None)
+    da_mask = align_to_base_dims(ds_mask[mask_var], da_base, "coastal mask")
 
 da_anom_aligned = da_anom.copy()
 for dim in da_base.dims:
@@ -508,22 +563,50 @@ xy_dims = infer_xy_dims(da_base)
 other_dims = [d for d in da_base.dims if d not in xy_dims]
 
 coastal_fill_count = 0
+baseline_fill_count = 0
+da_base_filled = da_base
 if coastal_fill:
     trans_base = da_base.transpose(*other_dims, *xy_dims)
     trans_anom = da_anom_aligned.transpose(*other_dims, *xy_dims)
+    trans_mask = da_mask.transpose(*other_dims, *xy_dims) if da_mask is not None else None
 
-    base_arr = trans_base.values
+    base_arr = np.array(trans_base.values, dtype=float, copy=True)
     anom_arr = np.array(trans_anom.values, dtype=float, copy=True)
+    mask_arr = np.array(trans_mask.values, copy=False) if trans_mask is not None else None
 
     flat_base = base_arr.reshape((-1,) + base_arr.shape[-2:])
     flat_anom = anom_arr.reshape((-1,) + anom_arr.shape[-2:])
+    flat_mask = (
+        mask_arr.reshape((-1,) + mask_arr.shape[-2:])
+        if mask_arr is not None
+        else None
+    )
     fill_geometry = build_fill_geometry(
         coastal_fill_max_steps,
         coastal_fill_weight_power,
     )
 
     for idx in range(flat_anom.shape[0]):
-        wet_mask = np.isfinite(flat_base[idx])
+        if flat_mask is not None:
+            wet_mask = np.isfinite(flat_mask[idx])
+        else:
+            wet_mask = np.isfinite(flat_base[idx])
+
+        if fill_baseline_coastal_gaps:
+            if coastal_fill_method == "nearest":
+                filled_base_slice, added_base = fill_slice_nearest(
+                    flat_base[idx], wet_mask, fill_geometry
+                )
+            else:
+                filled_base_slice, added_base = fill_slice_distance_weighted(
+                    flat_base[idx],
+                    wet_mask,
+                    fill_geometry,
+                    coastal_fill_min_donors,
+                )
+            flat_base[idx] = filled_base_slice
+            baseline_fill_count += added_base
+
         if coastal_fill_method == "nearest":
             filled_slice, added = fill_slice_nearest(
                 flat_anom[idx], wet_mask, fill_geometry
@@ -538,6 +621,14 @@ if coastal_fill:
         flat_anom[idx] = filled_slice
         coastal_fill_count += added
 
+    da_base_filled = xr.DataArray(
+        flat_base.reshape(base_arr.shape),
+        coords=trans_base.coords,
+        dims=trans_base.dims,
+        attrs=da_base.attrs,
+        name=da_base.name,
+    ).transpose(*da_base.dims)
+
     da_anom_filled = xr.DataArray(
         flat_anom.reshape(anom_arr.shape),
         coords=trans_anom.coords,
@@ -548,7 +639,7 @@ if coastal_fill:
 else:
     da_anom_filled = da_anom_aligned
 
-da_out = da_base + da_anom_filled
+da_out = da_base_filled + da_anom_filled
 da_out.name = base_var
 
 filled_top_count = 0
@@ -606,9 +697,12 @@ encoding = {base_var: {"zlib": True, "complevel": 1}}
 
 print(f"BASE VAR              : {base_var}")
 print(f"ANOM VAR              : {anom_var}")
+print(f"COASTAL MASK FILE     : {coastal_mask_file or '<baseline finite mask>'}")
+print(f"COASTAL MASK VAR      : {mask_var or '<none>'}")
 print(f"COASTAL FILL ENABLED  : {coastal_fill}")
 print(f"COASTAL FILL METHOD   : {coastal_fill_method}")
-print(f"COASTAL CELLS FILLED  : {coastal_fill_count}")
+print(f"BASELINE CELLS FILLED : {baseline_fill_count}")
+print(f"ANOMALY CELLS FILLED  : {coastal_fill_count}")
 print(f"FIRST VALID INDEX     : {first_valid_index}")
 print(f"TOP LEVELS FILLED     : {filled_top_count}")
 
@@ -623,6 +717,8 @@ if write_filled_anom:
 
 ds_base.close()
 ds_anom.close()
+if ds_mask is not None:
+    ds_mask.close()
 PY
 
 if [[ "$WRITE_NATIVE_OUTPUT" == "yes" ]]; then

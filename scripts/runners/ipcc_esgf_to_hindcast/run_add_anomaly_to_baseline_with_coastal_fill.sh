@@ -17,6 +17,25 @@ source "${DISCOVERY_LIB}"
 
 IPCC_ROOT="${IPCC_ROOT:-/home/SB5/ipcc_esgf_monthly_1deg}"
 MEMBER="${MEMBER:-auto}"
+BASELINE_TAG="${BASELINE_TAG:-2006-2014}"
+GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/glorys12v1_monthly_0p05}"
+COASTAL_MASK_FILE="${COASTAL_MASK_FILE:-${GLORYS_ROOT}/thetao/clim_windows/glorys12v1_thetao_clim_${BASELINE_TAG}.nc}"
+COASTAL_MASK_VAR="${COASTAL_MASK_VAR:-thetao}"
+FILL_BASELINE_COASTAL_GAPS="${FILL_BASELINE_COASTAL_GAPS:-yes}"
+COASTAL_MASK_VARS="${COASTAL_MASK_VARS:-chl o2 zos}"
+
+uses_coastal_mask() {
+  local candidate="$1"
+  local mask_var
+
+  for mask_var in ${COASTAL_MASK_VARS}; do
+    if [[ "$candidate" == "$mask_var" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
 
 mapfile -t DISCOVERED_GROUPS < <(ipcc_esgf_discover_monthly_groups "${IPCC_ROOT}" "delta_windows_0p25" | awk -F '\t' '$2 ~ /^ssp[0-9][0-9][0-9]$/' | sort -u)
 
@@ -37,6 +56,14 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
   }
 
   dataset_label="${DATASET_LABEL_PREFIX:-ipcc_esgf_${model}_${scenario}_${member}_to_hindcast}"
+  coastal_mask_file_for_var=""
+  coastal_mask_var_for_var=""
+  fill_baseline_gaps_for_var="no"
+  if uses_coastal_mask "$var"; then
+    coastal_mask_file_for_var="$COASTAL_MASK_FILE"
+    coastal_mask_var_for_var="$COASTAL_MASK_VAR"
+    fill_baseline_gaps_for_var="$FILL_BASELINE_COASTAL_GAPS"
+  fi
 
   DATASET_LABEL="${dataset_label}" \
   MODEL_LABEL="${model}" \
@@ -44,11 +71,15 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
   FORCING_LABEL="${scenario}" \
   VAR_MAP_SPEC="${var}:${var}" \
   BASELINE_ROOT="${BASELINE_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05}" \
+  BASELINE_TAG="${BASELINE_TAG}" \
   BASELINE_FILE_TEMPLATE="${BASELINE_FILE_TEMPLATE:-__BASELINE_ROOT__/__TGT_VAR__/clim_windows/global_ocean_biogeochemistry_hindcast___TGT_VAR___clim___BASELINE_TAG___grid_0p05_global.nc}" \
   ANOMALY_ROOT="${IPCC_ROOT}/${model}/${scenario}" \
   ANOMALY_FILE_TEMPLATE="${ANOMALY_FILE_TEMPLATE:-__ANOMALY_ROOT__/__SRC_VAR__/delta_windows_0p25/ipcc_esgf_${model}_${scenario}_${member}___SRC_VAR___delta___WINDOW___minus___BASELINE_TAG___grid_0p25_global.nc}" \
   OUTROOT="${OUTROOT:-/home/SB5/downscaled}" \
   ANOMALY_GRIDFILE="${ANOMALY_GRIDFILE:-/home/SB5/glorys12v1_monthly_0p05/grid_0p05_global.txt}" \
+  COASTAL_MASK_FILE="${coastal_mask_file_for_var}" \
+  COASTAL_MASK_VAR="${coastal_mask_var_for_var}" \
+  FILL_BASELINE_COASTAL_GAPS="${fill_baseline_gaps_for_var}" \
   COASTAL_FILL_METHOD="${COASTAL_FILL_METHOD:-distance_weighted}" \
   COASTAL_FILL_WEIGHT_POWER="${COASTAL_FILL_WEIGHT_POWER:-2.0}" \
   COASTAL_FILL_MIN_DONORS="${COASTAL_FILL_MIN_DONORS:-4}" \

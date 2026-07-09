@@ -19,6 +19,12 @@
 #
 #  Intended to be run on Slurm-based HPC systems.
 # ==============================================================================
+#
+# LEGACY CANDIDATE:
+#   This is the no-coastal-fill anomaly adder. The main future/downscaling path
+#   is expected to use add_anomaly_to_baseline_with_coastal_fill.slurm.sh when
+#   GLORYS-coast products become the trusted workflow.
+# ==============================================================================
 
 #SBATCH -p grit_nodes
 #SBATCH --job-name=add_anom

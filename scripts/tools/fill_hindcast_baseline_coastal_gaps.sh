@@ -9,6 +9,12 @@
 #  NO GUARANTEES THAT THIS CODE IS CORRECT.
 #  Use at your own risk. Caveat emptor.
 # ==============================================================================
+#
+# LEGACY CANDIDATE:
+#   This patch-style tool fills coastal gaps after the 0.05 hindcast root already
+#   exists. It is likely to move to legacy after the planned all-variable
+#   0.25 -> 0.05_glorys_coast remap-and-fill workflow is implemented and tested.
+# ==============================================================================
 
 set -euo pipefail
 

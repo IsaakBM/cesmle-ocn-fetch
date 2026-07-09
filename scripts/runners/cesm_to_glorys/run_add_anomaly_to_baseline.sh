@@ -5,6 +5,12 @@
 #  This code was created by Isaac Brito-Morales
 #  (ibrito@conservation.org)
 # ==============================================================================
+#
+# LEGACY CANDIDATE:
+#   This runner uses the no-coastal-fill anomaly adder. Keep for historical CESM
+#   reproduction until the coastal-fill workflow is confirmed as the only trusted
+#   downscaling path.
+# ==============================================================================
 
 set -euo pipefail
 

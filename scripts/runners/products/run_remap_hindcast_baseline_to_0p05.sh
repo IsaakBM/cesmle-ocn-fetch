@@ -5,6 +5,11 @@
 #  This code was created by Isaac Brito-Morales
 #  (ibrito@conservation.org)
 # ==============================================================================
+#
+# POSSIBLE LEGACY CANDIDATE:
+#   This submits the original 0.25 -> 0.05 remap without GLORYS-coast filling.
+#   Keep it until the all-variable 0.25 -> 0.05_glorys_coast runner is proven.
+# ==============================================================================
 
 set -euo pipefail
 

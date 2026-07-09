@@ -9,6 +9,12 @@
 #  NO GUARANTEES THAT THIS CODE IS CORRECT.
 #  Use at your own risk. Caveat emptor.
 # ==============================================================================
+#
+# POSSIBLE LEGACY CANDIDATE:
+#   This creates the original 0.05 hindcast root without GLORYS-coast filling.
+#   Keep it until the planned all-variable 0.25 -> 0.05_glorys_coast
+#   remap-and-fill workflow is implemented, tested, and accepted.
+# ==============================================================================
 
 set -euo pipefail
 shopt -s nullglob

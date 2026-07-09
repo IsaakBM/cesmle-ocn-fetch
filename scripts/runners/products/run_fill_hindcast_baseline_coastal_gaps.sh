@@ -5,6 +5,12 @@
 #  This code was created by Isaac Brito-Morales
 #  (ibrito@conservation.org)
 # ==============================================================================
+#
+# LEGACY CANDIDATE:
+#   This submits the patch-style baseline coastal-fill tool. It is likely to move
+#   to legacy after the planned all-variable 0.25 -> 0.05_glorys_coast
+#   remap-and-fill runner replaces this intermediate step.
+# ==============================================================================
 
 set -euo pipefail
 

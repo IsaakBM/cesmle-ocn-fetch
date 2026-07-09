@@ -693,6 +693,9 @@ if fill_top_missing:
 ds_out = ds_base.copy()
 ds_out[base_var] = da_out
 
+# FLAG: the final native downscaled output is intentionally rewritten as
+# NetCDF4 with zlib compression. Old/new file sizes are not a reliable
+# coverage check; compare valid/missing cell counts instead.
 encoding = {base_var: {"zlib": True, "complevel": 1}}
 
 print(f"BASE VAR              : {base_var}")

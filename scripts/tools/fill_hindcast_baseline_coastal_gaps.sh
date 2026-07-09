@@ -34,6 +34,11 @@ set -euo pipefail
 #                               (default: 4)
 #   OVERWRITE                 : yes | no
 #                               (default: no)
+#
+# Note:
+#   Outputs are rewritten as NetCDF4 with zlib compression enabled.
+#   File sizes can therefore be much smaller than the original hindcast files
+#   even when the output contains more valid coastal cells.
 # ==============================================================================
 
 IN_ROOT="${IN_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05}"
@@ -352,6 +357,10 @@ try:
 
     ds_out = ds_base.copy()
     ds_out[base_var] = da_filled
+
+    # FLAG: this rewrite intentionally enables NetCDF4 zlib compression.
+    # Do not compare old/new file sizes as a data-coverage check; compare
+    # valid/missing cell counts instead.
     encoding = {base_var: {"zlib": True, "complevel": 1}}
     ds_out.to_netcdf(outfile, format="NETCDF4", encoding=encoding)
 

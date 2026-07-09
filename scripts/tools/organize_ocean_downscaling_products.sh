@@ -4,13 +4,14 @@ set -euo pipefail
 # Build a curated copy-only product tree for delivery/sharing without
 # disturbing the original workflow-oriented directory structure.
 
-ROOT="/home/SB5/ocean_downscaling_products"
+ROOT="${PRODUCT_ROOT:-/home/SB5/ocean_downscaling_products}"
 BASELINE_DIR="${ROOT}/baseline"
 FUTURE_DIR="${ROOT}/future"
 
-HINDCAST_0P25_ROOT="/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25"
-HINDCAST_0P05_ROOT="/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05"
-GLORYS_ROOT="/home/SB5/glorys12v1_monthly_0p05"
+HINDCAST_0P25_ROOT="${HINDCAST_0P25_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25}"
+HINDCAST_0P05_ROOT="${HINDCAST_0P05_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05}"
+HINDCAST_0P05_COASTAL_FILLED_ROOT="${HINDCAST_0P05_COASTAL_FILLED_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_coastal_filled}"
+GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/glorys12v1_monthly_0p05}"
 DOWNSCALED_ROOT="${DOWNSCALED_ROOT:-${IPCC_DOWNSCALED_ROOT:-/home/SB5/downscaled}}"
 CESM_LEGACY_DOWNSCALED_ROOT="${CESM_LEGACY_DOWNSCALED_ROOT:-${CESM_DOWNSCALED_ROOT:-/home/SB5/downscaled_rcp85}}"
 MODEL="${MODEL:-auto}"
@@ -21,6 +22,8 @@ VAR="${VAR:-}"
 WINDOW="${WINDOW:-}"
 NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-4}}"
 OVERWRITE="${OVERWRITE:-no}"
+USE_COASTAL_FILLED_BASELINE="${USE_COASTAL_FILLED_BASELINE:-yes}"
+COASTAL_FILLED_BASELINE_VARS="${COASTAL_FILLED_BASELINE_VARS:-chl o2 zos}"
 
 copy_one() {
   local src="$1"
@@ -149,6 +152,34 @@ copy_baseline_product() {
   copy_one "${src}" "${BASELINE_DIR}/${var}/${resolution}"
 }
 
+uses_coastal_filled_baseline() {
+  local var="$1"
+  local candidate
+
+  [[ "${USE_COASTAL_FILLED_BASELINE}" == "yes" ]] || return 1
+  for candidate in ${COASTAL_FILLED_BASELINE_VARS}; do
+    [[ "${candidate}" == "${var}" ]] && return 0
+  done
+  return 1
+}
+
+hindcast_0p05_baseline_file() {
+  local var="$1"
+  local filename="$2"
+  local original="${HINDCAST_0P05_ROOT}/${var}/clim_windows/${filename}"
+  local filled="${HINDCAST_0P05_COASTAL_FILLED_ROOT}/${var}/clim_windows/${filename}"
+
+  if uses_coastal_filled_baseline "${var}"; then
+    if [[ -f "${filled}" ]]; then
+      printf '%s\n' "${filled}"
+      return 0
+    fi
+    echo "[WARN] Coastal-filled baseline requested but missing; falling back to original: ${filled}" >&2
+  fi
+
+  printf '%s\n' "${original}"
+}
+
 organize_one_baseline_var() {
   local var="$1"
 
@@ -159,7 +190,7 @@ organize_one_baseline_var() {
         "chl" \
         "0p25"
       copy_baseline_product \
-        "${HINDCAST_0P05_ROOT}/chl/clim_windows/global_ocean_biogeochemistry_hindcast_chl_clim_2006-2014_grid_0p05_global.nc" \
+        "$(hindcast_0p05_baseline_file chl global_ocean_biogeochemistry_hindcast_chl_clim_2006-2014_grid_0p05_global.nc)" \
         "chl" \
         "0p05"
       ;;
@@ -169,8 +200,14 @@ organize_one_baseline_var() {
         "o2" \
         "0p25"
       copy_baseline_product \
-        "${HINDCAST_0P05_ROOT}/o2/clim_windows/global_ocean_biogeochemistry_hindcast_o2_clim_2006-2014_grid_0p05_global.nc" \
+        "$(hindcast_0p05_baseline_file o2 global_ocean_biogeochemistry_hindcast_o2_clim_2006-2014_grid_0p05_global.nc)" \
         "o2" \
+        "0p05"
+      ;;
+    zos)
+      copy_baseline_product \
+        "$(hindcast_0p05_baseline_file zos global_ocean_biogeochemistry_hindcast_zos_clim_2006-2014_grid_0p05_global.nc)" \
+        "zos" \
         "0p05"
       ;;
     thetao)
@@ -198,7 +235,7 @@ organize_one_baseline_var() {
 }
 
 organize_all_baselines() {
-  for var in chl o2 thetao so uo; do
+  for var in chl o2 zos thetao so uo; do
     organize_one_baseline_var "${var}"
   done
 }
@@ -211,7 +248,7 @@ organize_one_future_var_window() {
 
 organize_all_futures() {
   local var window
-  for var in chl o2 so thetao uo; do
+  for var in chl o2 zos so thetao uo; do
     for window in 2050-2060 2090-2100; do
       organize_one_future_var_window "${var}" "${window}"
     done
@@ -225,6 +262,7 @@ echo "BASELINE DIR  : ${BASELINE_DIR}"
 echo "FUTURE DIR    : ${FUTURE_DIR}"
 echo "HINDCAST 0.25 : ${HINDCAST_0P25_ROOT}"
 echo "HINDCAST 0.05 : ${HINDCAST_0P05_ROOT}"
+echo "HINDCAST FILL : ${HINDCAST_0P05_COASTAL_FILLED_ROOT}"
 echo "GLORYS 0.05   : ${GLORYS_ROOT}"
 echo "DOWN ROOT     : ${DOWNSCALED_ROOT}"
 echo "CESM LEGACY   : ${CESM_LEGACY_DOWNSCALED_ROOT}"
@@ -236,6 +274,8 @@ echo "VAR           : ${VAR:-<all>}"
 echo "WINDOW        : ${WINDOW:-<all>}"
 echo "PARALLEL COPY : ${NPROC}"
 echo "OVERWRITE     : ${OVERWRITE}"
+echo "USE FILL BASE : ${USE_COASTAL_FILLED_BASELINE}"
+echo "FILL BASE VARS: ${COASTAL_FILLED_BASELINE_VARS}"
 echo "============================================================"
 
 mkdir -p "${BASELINE_DIR}" "${FUTURE_DIR}"

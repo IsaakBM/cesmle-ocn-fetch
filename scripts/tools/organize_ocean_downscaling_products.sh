@@ -9,7 +9,7 @@ BASELINE_DIR="${ROOT}/baseline"
 FUTURE_DIR="${ROOT}/future"
 
 HINDCAST_0P25_ROOT="${HINDCAST_0P25_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25}"
-HINDCAST_0P05_ROOT="${HINDCAST_0P05_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05}"
+HINDCAST_0P05_ROOT="${HINDCAST_0P05_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast}"
 HINDCAST_0P05_COASTAL_FILLED_ROOT="${HINDCAST_0P05_COASTAL_FILLED_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_coastal_filled}"
 GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/glorys12v1_monthly_0p05}"
 DOWNSCALED_ROOT="${DOWNSCALED_ROOT:-${IPCC_DOWNSCALED_ROOT:-/home/SB5/downscaled}}"
@@ -22,7 +22,7 @@ VAR="${VAR:-}"
 WINDOW="${WINDOW:-}"
 NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-4}}"
 OVERWRITE="${OVERWRITE:-no}"
-USE_COASTAL_FILLED_BASELINE="${USE_COASTAL_FILLED_BASELINE:-yes}"
+USE_COASTAL_FILLED_BASELINE="${USE_COASTAL_FILLED_BASELINE:-no}"
 COASTAL_FILLED_BASELINE_VARS="${COASTAL_FILLED_BASELINE_VARS:-chl o2 zos}"
 
 copy_one() {

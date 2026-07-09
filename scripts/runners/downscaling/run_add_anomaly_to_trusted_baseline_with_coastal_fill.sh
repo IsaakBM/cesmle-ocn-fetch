@@ -42,7 +42,7 @@ WINDOWS=(
 )
 
 DATASET_LABEL="${DATASET_LABEL:-anomaly_to_trusted_baseline}"
-BASELINE_ROOT="${BASELINE_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05}"
+BASELINE_ROOT="${BASELINE_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast}"
 ANOMALY_ROOT="${ANOMALY_ROOT:-/home/SB5/ipcc_esgf_monthly_1deg/ssp585}"
 OUTROOT="${OUTROOT:-/home/SB5/downscaled}"
 BASELINE_TAG="${BASELINE_TAG:-2006-2014}"

@@ -21,12 +21,16 @@ BASELINE_TAG="${BASELINE_TAG:-2006-2014}"
 GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/glorys12v1_monthly_0p05}"
 COASTAL_MASK_FILE="${COASTAL_MASK_FILE:-${GLORYS_ROOT}/thetao/clim_windows/glorys12v1_thetao_clim_${BASELINE_TAG}.nc}"
 COASTAL_MASK_VAR="${COASTAL_MASK_VAR:-thetao}"
-FILL_BASELINE_COASTAL_GAPS="${FILL_BASELINE_COASTAL_GAPS:-yes}"
-COASTAL_MASK_VARS="${COASTAL_MASK_VARS:-chl o2 zos}"
+FILL_BASELINE_COASTAL_GAPS="${FILL_BASELINE_COASTAL_GAPS:-no}"
+COASTAL_MASK_VARS="${COASTAL_MASK_VARS:-all}"
 
 uses_coastal_mask() {
   local candidate="$1"
   local mask_var
+
+  if [[ "${COASTAL_MASK_VARS}" == "all" ]]; then
+    return 0
+  fi
 
   for mask_var in ${COASTAL_MASK_VARS}; do
     if [[ "$candidate" == "$mask_var" ]]; then
@@ -70,7 +74,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
   REALIZATION_LABEL="${member}" \
   FORCING_LABEL="${scenario}" \
   VAR_MAP_SPEC="${var}:${var}" \
-  BASELINE_ROOT="${BASELINE_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05}" \
+  BASELINE_ROOT="${BASELINE_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast}" \
   BASELINE_TAG="${BASELINE_TAG}" \
   BASELINE_FILE_TEMPLATE="${BASELINE_FILE_TEMPLATE:-__BASELINE_ROOT__/__TGT_VAR__/clim_windows/global_ocean_biogeochemistry_hindcast___TGT_VAR___clim___BASELINE_TAG___grid_0p05_global.nc}" \
   ANOMALY_ROOT="${IPCC_ROOT}/${model}/${scenario}" \

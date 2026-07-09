@@ -35,6 +35,7 @@ CPUS_PER_TASK="${CPUS_PER_TASK:-4}"
 MEMORY="${MEMORY:-256G}"
 WALLTIME="${WALLTIME:-2-00:00:00}"
 NPROC="${NPROC:-${CPUS_PER_TASK}}"
+EXCLUDE_NODES="${EXCLUDE_NODES:-${SBATCH_EXCLUDE:-}}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -80,8 +81,14 @@ echo "FILL POWER       : ${COASTAL_FILL_WEIGHT_POWER}"
 echo "FILL DONORS      : ${COASTAL_FILL_MIN_DONORS}"
 echo "METHOD           : ${METHOD}"
 echo "OVERWRITE        : ${OVERWRITE}"
+echo "EXCLUDE NODES    : ${EXCLUDE_NODES:-<none>}"
 
 for var in "${VAR_LIST[@]}"; do
+  sbatch_args=()
+  if [[ -n "${EXCLUDE_NODES}" ]]; then
+    sbatch_args+=(--exclude="${EXCLUDE_NODES}")
+  fi
+
   jid=$(
     sbatch --parsable \
       --job-name="hind05gc_${var}" \
@@ -93,6 +100,7 @@ for var in "${VAR_LIST[@]}"; do
       --time="${WALLTIME}" \
       --output="${LOG_DIR}/hindcast_0p05_glorys_coast_${var}_%j.out" \
       --error="${LOG_DIR}/hindcast_0p05_glorys_coast_${var}_%j.err" \
+      "${sbatch_args[@]}" \
       --export=ALL,IN_ROOT="${IN_ROOT}",OUT_ROOT="${OUT_ROOT}",GRIDFILE="${GRIDFILE}",VARS="${var}",METHOD="${METHOD}",AUTO_METHOD_DEFAULT="${AUTO_METHOD_DEFAULT}",AUTO_METHOD_CURVILINEAR="${AUTO_METHOD_CURVILINEAR}",COASTAL_MASK_FILE="${COASTAL_MASK_FILE}",COASTAL_MASK_VAR="${COASTAL_MASK_VAR}",COASTAL_FILL_METHOD="${COASTAL_FILL_METHOD}",COASTAL_FILL_MAX_STEPS="${COASTAL_FILL_MAX_STEPS}",COASTAL_FILL_WEIGHT_POWER="${COASTAL_FILL_WEIGHT_POWER}",COASTAL_FILL_MIN_DONORS="${COASTAL_FILL_MIN_DONORS}",OVERWRITE="${OVERWRITE}",NPROC="${NPROC}" \
       --wrap="bash '${TOOL_SCRIPT}'"
   )

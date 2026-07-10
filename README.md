@@ -303,6 +303,10 @@ Reusable worker scripts. These do the actual processing.
   - can optionally require complete anomaly coverage inside the wet mask after
     the bounded donor search; this second pass lets repaired anomaly cells
     propagate locally to fill any remaining wet-mask gaps
+  - when complete coverage is required, any anomaly cells still missing after
+    local propagation can receive an explicit fallback anomaly value; the
+    current IPCC/ESGF biogeochemistry default is `0`, meaning baseline
+    unchanged where no anomaly donor exists
   - adds the repaired anomaly to the baseline
   - then dynamically fills missing top layers in the final output
   - writes the native output and can optionally regrid a final delivery copy
@@ -926,11 +930,17 @@ Methodological note:
   mask are filled by local propagation from neighboring already-repaired
   anomaly cells so the final future product keeps the same GLORYS coastal
   domain as the fixed hindcast baseline.
+- if local propagation still cannot find any connected anomaly donor,
+  `COASTAL_FILL_COMPLETE_FALLBACK_VALUE=0` assigns a zero anomaly to the
+  remaining GLORYS wet-mask cells. In the additive workflow this means the
+  fixed hindcast baseline is carried forward unchanged at those cells.
 - the force-complete fallback is a methodological assumption. It prioritizes
   shared GLORYS-mask coverage for coastal species products over leaving tiny
-  unresolved IPCC/ESGF anomaly holes as missing values. The fallback is not a
-  conservative remapping method and should be revisited if coastal anomaly
-  gradients become a central validation target.
+  unresolved IPCC/ESGF anomaly holes as missing values. The zero-anomaly
+  fallback is stronger than interpolation: it assumes no modeled future change
+  where no anomaly donor exists. This is not a conservative remapping method
+  and should be revisited if coastal anomaly gradients become a central
+  validation target.
 - the code comments also document possible later conservative variants, such as
   only filling cells adjacent to originally valid anomaly cells or reducing the
   effective fill distance
@@ -951,6 +961,10 @@ Current coastal-fill controls exposed by the runners:
     locally propagated after the bounded fill
   - generic default is `no`
   - current IPCC/ESGF biogeochemistry wrapper default is `yes`
+- `COASTAL_FILL_COMPLETE_FALLBACK_VALUE`
+  - numeric fallback assigned to any anomaly cells still missing after local
+    propagation when complete coverage is required
+  - current IPCC/ESGF biogeochemistry wrapper default is `0`
 
 Runner layout for this coastal-fill branch:
 
@@ -1619,6 +1633,9 @@ assumptions that should be kept in mind when interpreting the outputs.
   neighboring repaired anomaly cells. This is an explicit coverage assumption
   so future products share the same GLORYS coastal domain as the fixed hindcast
   baseline.
+- If no connected anomaly donor exists even after local propagation, the
+  current IPCC/ESGF biogeochemistry path assigns a zero anomaly. This carries
+  the fixed hindcast baseline forward unchanged at those cells.
 
 - The final absolute future field is not horizontally filled after addition.
   The two repaired inputs are the GLORYS-coast baseline product and the
@@ -1632,7 +1649,8 @@ assumptions that should be kept in mind when interpreting the outputs.
 - The force-complete anomaly fallback is not conservative remapping. It is a
   pragmatic choice for coastal biological delivery products where consistent
   wet-mask coverage is more important than preserving tiny unresolved anomaly
-  holes from coarse IPCC/ESGF source fields.
+  holes from coarse IPCC/ESGF source fields. The zero-anomaly fallback should be
+  treated as a caveat in any interpretation of fine coastal anomaly patterns.
 
 - Horizontal remapping method is not assumed to be universal across all model
   products:

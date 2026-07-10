@@ -95,6 +95,12 @@ export OMP_NUM_THREADS=1
 #                               filling remaining missing anomaly cells inside
 #                               the wet mask by local propagation until the mask
 #                               is complete or no donors exist (default: no)
+#   COASTAL_FILL_COMPLETE_FALLBACK_VALUE
+#                             : numeric value assigned to any wet-mask anomaly
+#                               cells still missing after force-complete local
+#                               propagation. For additive anomalies, 0 means
+#                               keep the baseline unchanged where no anomaly
+#                               donor exists (default: 0)
 # ==============================================================================
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"
@@ -131,6 +137,7 @@ COASTAL_FILL_MAX_STEPS="${COASTAL_FILL_MAX_STEPS:-12}"
 COASTAL_FILL_WEIGHT_POWER="${COASTAL_FILL_WEIGHT_POWER:-2.0}"
 COASTAL_FILL_MIN_DONORS="${COASTAL_FILL_MIN_DONORS:-4}"
 COASTAL_FILL_REQUIRE_COMPLETE="${COASTAL_FILL_REQUIRE_COMPLETE:-no}"
+COASTAL_FILL_COMPLETE_FALLBACK_VALUE="${COASTAL_FILL_COMPLETE_FALLBACK_VALUE:-0}"
 
 if [[ -z "$VAR" || -z "$BASELINE_FILE" || -z "$ANOMALY_FILE" || -z "$OUT_DIR" ]]; then
   echo "ERROR: Missing required environment variables."
@@ -281,6 +288,7 @@ echo "COASTAL MASK FILE    : ${COASTAL_MASK_FILE:-<baseline finite mask>}"
 echo "COASTAL MASK VAR     : ${COASTAL_MASK_VAR:-<auto>}"
 echo "FILL BASELINE GAPS   : ${FILL_BASELINE_COASTAL_GAPS}"
 echo "REQUIRE COMPLETE FILL: ${COASTAL_FILL_REQUIRE_COMPLETE}"
+echo "COMPLETE FALLBACK VAL: ${COASTAL_FILL_COMPLETE_FALLBACK_VALUE}"
 if [[ "$REMAP_ANOMALY_TO_BASELINE" == "yes" ]]; then
   echo "ANOM GRIDFILE        : ${ANOMALY_GRIDFILE}"
   echo "ANOM REGRID METHOD   : ${ANOMALY_REGRID_METHOD}"
@@ -336,6 +344,7 @@ coastal_fill = "${COASTAL_FILL}" == "yes"
 coastal_fill_method = "${COASTAL_FILL_METHOD}"
 fill_baseline_coastal_gaps = "${FILL_BASELINE_COASTAL_GAPS}" == "yes"
 coastal_fill_require_complete = "${COASTAL_FILL_REQUIRE_COMPLETE}" == "yes"
+coastal_fill_complete_fallback_value = float("${COASTAL_FILL_COMPLETE_FALLBACK_VALUE}")
 coastal_fill_max_steps = int("${COASTAL_FILL_MAX_STEPS}")
 coastal_fill_weight_power = float("${COASTAL_FILL_WEIGHT_POWER}")
 coastal_fill_min_donors = int("${COASTAL_FILL_MIN_DONORS}")
@@ -646,6 +655,7 @@ coastal_fill_count = 0
 coastal_force_fill_count = 0
 coastal_force_remaining = 0
 coastal_force_iterations = 0
+coastal_force_fallback_count = 0
 baseline_fill_count = 0
 da_base_filled = da_base
 if coastal_fill:
@@ -711,13 +721,19 @@ if coastal_fill:
             )
             flat_anom[idx] = completed_slice
             coastal_force_fill_count += forced_added
-            coastal_force_remaining += forced_remaining
             coastal_force_iterations = max(coastal_force_iterations, forced_iterations)
+            if forced_remaining > 0:
+                fallback_mask = wet_mask & ~np.isfinite(flat_anom[idx])
+                fallback_count = int(fallback_mask.sum())
+                flat_anom[idx][fallback_mask] = coastal_fill_complete_fallback_value
+                coastal_force_fallback_count += fallback_count
+                completed_remaining = int((wet_mask & ~np.isfinite(flat_anom[idx])).sum())
+                coastal_force_remaining += completed_remaining
 
     if coastal_fill_require_complete and coastal_force_remaining > 0:
         raise ValueError(
             "COASTAL_FILL_REQUIRE_COMPLETE=yes, but some wet-mask anomaly cells "
-            f"still could not be filled: remaining={coastal_force_remaining}"
+            f"remain missing after fallback assignment: remaining={coastal_force_remaining}"
         )
 
     da_base_filled = xr.DataArray(
@@ -807,6 +823,7 @@ print(f"REQUIRE COMPLETE FILL : {coastal_fill_require_complete}")
 print(f"BASELINE CELLS FILLED : {baseline_fill_count}")
 print(f"ANOMALY CELLS FILLED  : {coastal_fill_count}")
 print(f"ANOMALY FORCE FILLED  : {coastal_force_fill_count}")
+print(f"ANOMALY FALLBACK ZERO : {coastal_force_fallback_count}")
 print(f"FORCE FILL MAX WAVE   : {coastal_force_iterations}")
 print(f"FIRST VALID INDEX     : {first_valid_index}")
 print(f"TOP LEVELS FILLED     : {filled_top_count}")

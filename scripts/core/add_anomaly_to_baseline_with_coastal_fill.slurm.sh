@@ -321,6 +321,7 @@ echo "[STEP3] Filling coastal anomaly gaps on the target wet mask and adding to 
 python3 - <<PY
 import numpy as np
 import xarray as xr
+from collections import deque
 
 baseline_file = "${BASELINE_FILE}"
 anomaly_file = "${ANOMALY_FOR_PYTHON}"
@@ -543,41 +544,67 @@ def fill_slice_require_complete(data2d, wet2d):
     """
     filled = np.array(data2d, dtype=float, copy=True)
     wet = np.array(wet2d, dtype=bool, copy=False)
+    pending = wet & ~np.isfinite(filled)
+    if not np.any(pending):
+        return filled, 0, 0, 0
+
+    if not np.any(wet & np.isfinite(filled)):
+        return filled, 0, int(pending.sum()), 0
+
+    ny, nx = filled.shape
+    queued = np.zeros(filled.shape, dtype=bool)
+    q = deque()
+
+    def finite_wet_neighbors(iy, ix):
+        y0 = max(0, iy - 1)
+        y1 = min(ny, iy + 2)
+        x0 = max(0, ix - 1)
+        x1 = min(nx, ix + 2)
+        values = filled[y0:y1, x0:x1]
+        wet_window = wet[y0:y1, x0:x1]
+        valid = wet_window & np.isfinite(values)
+        if valid.size:
+            valid[iy - y0, ix - x0] = False
+        return values[valid]
+
+    for iy, ix in np.argwhere(pending):
+        if finite_wet_neighbors(int(iy), int(ix)).size:
+            q.append((int(iy), int(ix), 1))
+            queued[iy, ix] = True
+
     total_added = 0
-    iterations = 0
-    max_iterations = int(max(filled.shape[-2:]))
+    max_wave = 0
+    while q:
+        iy, ix, wave = q.popleft()
+        if not pending[iy, ix]:
+            continue
 
-    while iterations < max_iterations:
-        missing = wet & ~np.isfinite(filled)
-        if not np.any(missing):
-            return filled, total_added, 0, iterations
+        donors = finite_wet_neighbors(iy, ix)
+        if donors.size == 0:
+            continue
 
-        padded = np.pad(filled, 1, mode="constant", constant_values=np.nan)
-        donor_sum = np.zeros_like(filled, dtype=float)
-        donor_count = np.zeros(filled.shape, dtype=np.int16)
+        filled[iy, ix] = float(np.mean(donors))
+        pending[iy, ix] = False
+        total_added += 1
+        max_wave = max(max_wave, int(wave))
 
         for dy in (-1, 0, 1):
             for dx in (-1, 0, 1):
                 if dy == 0 and dx == 0:
                     continue
-                neigh = padded[
-                    1 + dy:1 + dy + filled.shape[0],
-                    1 + dx:1 + dx + filled.shape[1],
-                ]
-                valid = np.isfinite(neigh)
-                donor_sum[valid] += neigh[valid]
-                donor_count[valid] += 1
+                yy = iy + dy
+                xx = ix + dx
+                if (
+                    0 <= yy < ny
+                    and 0 <= xx < nx
+                    and pending[yy, xx]
+                    and not queued[yy, xx]
+                ):
+                    q.append((yy, xx, wave + 1))
+                    queued[yy, xx] = True
 
-        fillable = missing & (donor_count > 0)
-        if not np.any(fillable):
-            return filled, total_added, int(missing.sum()), iterations
-
-        filled[fillable] = donor_sum[fillable] / donor_count[fillable]
-        total_added += int(fillable.sum())
-        iterations += 1
-
-    remaining = int((wet & ~np.isfinite(filled)).sum())
-    return filled, total_added, remaining, iterations
+    remaining = int(pending.sum())
+    return filled, total_added, remaining, max_wave
 
 base_var = pick_main_var(ds_base)
 
@@ -780,7 +807,7 @@ print(f"REQUIRE COMPLETE FILL : {coastal_fill_require_complete}")
 print(f"BASELINE CELLS FILLED : {baseline_fill_count}")
 print(f"ANOMALY CELLS FILLED  : {coastal_fill_count}")
 print(f"ANOMALY FORCE FILLED  : {coastal_force_fill_count}")
-print(f"FORCE FILL ITERATIONS : {coastal_force_iterations}")
+print(f"FORCE FILL MAX WAVE   : {coastal_force_iterations}")
 print(f"FIRST VALID INDEX     : {first_valid_index}")
 print(f"TOP LEVELS FILLED     : {filled_top_count}")
 

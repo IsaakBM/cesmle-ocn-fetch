@@ -188,6 +188,7 @@ cesmle-ocn-fetch/
 │   │   ├── products/
 │   │   │   ├── run_organize_ocean_downscaling_products.sh
 │   │   │   ├── run_remap_hindcast_baseline_to_0p05.sh
+│   │   │   ├── run_remap_hindcast_baseline_to_0p05_glorys_coast.sh
 │   │   │   ├── run_aggregate_ocean_downscaling_products_fine_layers.sh
 │   │   │   ├── run_aggregate_ocean_downscaling_products_pelagic_layers.sh
 │   │   │   ├── run_split_ocean_downscaling_products_by_depth.sh
@@ -203,6 +204,7 @@ cesmle-ocn-fetch/
 │   ├── tools/                      # Packaging/export/organization utilities
 │   │   ├── organize_ocean_downscaling_products.sh
 │   │   ├── remap_hindcast_baseline_to_0p05.sh
+│   │   ├── remap_hindcast_baseline_to_0p05_glorys_coast.sh
 │   │   ├── aggregate_ocean_downscaling_products_by_depth_bins.sh
 │   │   ├── split_ocean_downscaling_products_by_depth.sh
 │   │   ├── export_ocean_downscaling_products_bydepth_to_csv.sh
@@ -282,11 +284,17 @@ Reusable worker scripts. These do the actual processing.
   - current production final addition/downscaling worker
   - reads one trusted baseline climatology and one anomaly/delta file
   - can remap the anomaly onto the trusted target grid before addition
-  - can repair missing anomaly cells only inside the trusted target wet mask
+  - can repair missing anomaly cells only inside the trusted target wet mask or
+    an external coastal mask such as the GLORYS `thetao` wet mask
+  - can optionally fill missing baseline cells inside an external coastal mask
+    before addition, but the current IPCC/ESGF biogeochemistry path now reads
+    an already-filled GLORYS-coast hindcast baseline and leaves this option off
   - currently supports `nearest` and `distance_weighted` anomaly fill methods
   - the current distance-weighted implementation reuses precomputed local
     donor geometry instead of rebuilding the donor search from scratch for
     every missing coastal cell
+  - donor values come only from the original finite field being repaired, so
+    newly filled coastal cells do not become donors during the same fill pass
   - adds the repaired anomaly to the baseline
   - then dynamically fills missing top layers in the final output
   - writes the native output and can optionally regrid a final delivery copy
@@ -342,6 +350,23 @@ packaging/export/organization steps than as reusable scientific operators.
     - `remapbil` for regular lon/lat sources
     - `remapdis` for curvilinear or unstructured sources
   - parallelizes at the file level by default
+
+- [remap_hindcast_baseline_to_0p05_glorys_coast.sh](scripts/tools/remap_hindcast_baseline_to_0p05_glorys_coast.sh)
+  - current preferred biogeochemistry baseline derivation for downscaling
+  - reads hindcast baseline climatologies from:
+    `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25`
+  - remaps each variable to the GLORYS `0.05` grid
+  - fills missing coastal cells inside the GLORYS wet mask, currently taken
+    from the GLORYS `thetao` `2006-2014` climatology
+  - writes a complete all-variable root:
+    `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast`
+  - keeps the same `<var>/clim_windows/` tree and
+    `_grid_0p05_global.nc` filename suffix
+  - uses only originally finite cells as donors during coastal interpolation;
+    newly filled cells do not become donors during the same pass
+  - rewrites outputs as NetCDF4 with zlib compression, so old/new file sizes
+    are not a reliable coverage check; compare valid/missing cell counts
+    instead
 
 - [split_ocean_downscaling_products_by_depth.sh](scripts/tools/split_ocean_downscaling_products_by_depth.sh)
   - reads curated 3D products from:
@@ -585,7 +610,8 @@ Closest modern abstraction:
   [delta_from_climatologies.slurm.sh](scripts/core/delta_from_climatologies.slurm.sh)
 - baseline plus anomaly:
   [add_anomaly_to_baseline.slurm.sh](scripts/core/add_anomaly_to_baseline.slurm.sh)
-- baseline plus anomaly with coastal fill on the trusted target wet mask:
+- baseline plus anomaly with coastal fill on a target wet mask, currently the
+  GLORYS wet mask for IPCC/ESGF biogeochemistry:
   [add_anomaly_to_baseline_with_coastal_fill.slurm.sh](scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh)
 
 Modern CESM runners now live in:
@@ -748,19 +774,22 @@ Relevant runners:
 
 Current logic:
 
-1. use hindcast climatology at `0.05 x 0.05` as the trusted baseline
+1. use the GLORYS-coast-filled hindcast biogeochemistry climatology at
+   `0.05 x 0.05` as the trusted baseline
 2. use IPCC/ESGF change fields at `0.25 x 0.25`
 3. remap those change fields to the trusted hindcast baseline grid
-4. add the remapped change fields to the hindcast baseline
-5. if the final product still has missing top layers, fill them from the first
+4. fill missing anomaly cells inside the GLORYS wet mask
+5. add the repaired anomaly to the already GLORYS-coast-filled hindcast
+   baseline
+6. if the final product still has missing top layers, fill them from the first
    deeper level with valid values
-6. write the native downscaled output at `0.05 x 0.05`
-7. optionally regrid the downscaled product to `0.25 x 0.25`
+7. write the native downscaled output at `0.05 x 0.05`
+8. optionally regrid the downscaled product to `0.25 x 0.25`
 
 Expected inputs:
 
-- hindcast baseline climatologies:
-  `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05/<var>/clim_windows/*.nc`
+- GLORYS-coast-filled hindcast baseline climatologies:
+  `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast/<var>/clim_windows/*.nc`
 - IPCC/ESGF change-field files already regridded to `0.25 x 0.25`:
   `/home/SB5/ipcc_esgf_monthly_1deg/<model>/<scenario>/<var>/delta_windows_0p25/*.nc`
 
@@ -789,10 +818,13 @@ Example:
 Operational sequence for this final stage:
 
 1. run [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh)
-   - reads hindcast baseline climatology files from `clim_windows/`
+   - reads GLORYS-coast hindcast baseline climatology files from
+     `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast`
    - reads IPCC/ESGF delta files from `delta_windows_0p25/`
    - writes to `/home/SB5/downscaled/<model>/<realization>/<scenario>/<var>/`
-   - first computes baseline plus anomaly
+   - remaps the anomaly to the GLORYS `0.05` grid
+   - fills anomaly coastal gaps inside the GLORYS wet mask
+   - computes fixed baseline plus fixed anomaly
    - then fills top missing layers dynamically in the final output
    - writes the native downscaled output at `0.05`
    - also writes a `0.25` product using `remapdis`
@@ -831,6 +863,10 @@ What this worker changes relative to the generic adder:
 - it can optionally remap the anomaly to the trusted target baseline grid
   before addition
 - it can optionally fill anomaly gaps only within the trusted target wet mask
+  or an external mask such as the GLORYS `thetao` wet mask
+- it can optionally fill baseline gaps before addition, but this is now off by
+  default for IPCC/ESGF biogeochemistry because the baseline root is already
+  `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast`
 - it now supports multiple anomaly-fill methods, including
   `distance_weighted`
 - it still applies the dynamic top-layer fill after baseline plus anomaly
@@ -840,19 +876,28 @@ Methodological note:
 
 - the trusted target can be hindcast, GLORYS, or another current-conditions
   product
-- the trusted target baseline file defines the horizontal grid, vertical
-  levels, and wet mask used by the coastal-fill logic
-- the current implementation relies on that trusted target wet mask to control
-  where fill is allowed
-- the fill is applied to the anomaly only, never directly to the final
-  absolute field
-- the current default method is a distance-weighted anomaly fill on the
-  trusted target grid, intended to reduce unresolved empty coastal target
+- the trusted target baseline file defines the horizontal grid and vertical
+  levels
+- an external GLORYS wet mask can define the ocean/coastline domain where fill
+  is allowed; this is the current IPCC/ESGF biogeochemistry default
+- the current IPCC/ESGF biogeochemistry path applies GLORYS-mask coastal fill
+  twice in separate steps:
+  1. while building the full hindcast baseline root
+     `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast`
+  2. while repairing remapped IPCC/ESGF anomaly gaps before adding them to that
+     baseline
+- the fill is applied to the baseline product and to the anomaly product, not
+  to the final absolute field after addition
+- the current default method is distance-weighted fill on the trusted target
+  grid and allowed wet mask, intended to reduce unresolved empty coastal target
   cells more smoothly than a pure nearest-value fill
 - the current implementation keeps that same distance-weighted philosophy but
   speeds it up by reusing precomputed local donor geometry on the trusted
   target mask, rather than recomputing donor neighborhoods from scratch for
-  each missing anomaly cell
+  each missing coastal cell
+- donor values are read from the original finite source field for each fill
+  pass; cells created by interpolation are not allowed to become donors in the
+  same pass
 - the code comments also document possible later conservative variants, such as
   only filling cells adjacent to originally valid anomaly cells or reducing the
   effective fill distance
@@ -979,8 +1024,9 @@ Notes:
 
 - `baseline/` stores curated climatological reference products
 - baseline products are now organized by resolution when available
-- `chl` and `o2` can include both `0p25` and derived `0p05` hindcast baseline
-  products
+- biogeochemistry variables can include both `0p25` and derived `0p05`
+  hindcast baseline products; the current preferred `0p05` baseline source is
+  the GLORYS-coast-filled hindcast root
 - `thetao`, `so`, and `uo` currently contribute `0p05` baseline products from
   the GLORYS reference branch
 - `future/` stores curated future/downscaled products
@@ -998,7 +1044,7 @@ Notes:
   under each future window when that layout exists
 - the tool copies files; it does not move or delete the original workflow trees
 
-### Derived hindcast baseline 0.05 tree
+### Original Derived Hindcast Baseline 0.05 Tree
 
 Built with:
 
@@ -1017,6 +1063,8 @@ Notes:
 
 - derives `0.05 x 0.05` hindcast baseline climatologies from the existing
   hindcast `0.25 x 0.25` climatology tree
+- remaps to the same GLORYS `0.05` grid description, but does not fill the
+  hindcast coastline to the GLORYS wet mask
 - keeps the same variable-folder and `clim_windows/` structure under a new
   top-level root
 - the runner submits one Slurm job per variable directory
@@ -1028,6 +1076,45 @@ Notes:
   - `remapbil` for regular lon/lat sources
   - `remapdis` for curvilinear/unstructured sources
 - parallelizes at the file level by default, using the allocated Slurm CPUs
+
+This original `0p05` root is kept for reproducibility and comparison. The
+current preferred biogeochemistry baseline for downscaling is the
+GLORYS-coast-filled root described below.
+
+### GLORYS-Coast Hindcast Baseline 0.05 Tree
+
+Built with:
+
+- [remap_hindcast_baseline_to_0p05_glorys_coast.sh](scripts/tools/remap_hindcast_baseline_to_0p05_glorys_coast.sh)
+- [run_remap_hindcast_baseline_to_0p05_glorys_coast.sh](scripts/runners/products/run_remap_hindcast_baseline_to_0p05_glorys_coast.sh)
+
+Expected output root:
+
+```text
+/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast/
+└── <var>/
+    └── clim_windows/
+```
+
+Notes:
+
+- derives a complete all-variable `0.05 x 0.05` hindcast biogeochemistry
+  baseline from the existing `0.25 x 0.25` hindcast climatology tree
+- first remaps each variable to the GLORYS `0.05` grid with `cdo`
+- then fills missing coastal cells inside the GLORYS wet mask, currently using:
+  `/home/SB5/glorys12v1_monthly_0p05/thetao/clim_windows/glorys12v1_thetao_clim_2006-2014.nc`
+- keeps the same variable-folder and `clim_windows/` structure:
+  `chl`, `fe`, `no3`, `nppv`, `o2`, `ph`, `phyc`, `po4`, and `si` are
+  expected when all current hindcast biogeochemistry variables are present
+- output filenames add the suffix `_grid_0p05_global.nc`
+- the runner submits one Slurm job per variable directory
+- `EXCLUDE_NODES` or `SBATCH_EXCLUDE` can be set to pass an `--exclude` list to
+  `sbatch` when a cluster node is unhealthy
+- outputs are NetCDF4/zlib-compressed, so file size differences from the
+  original `0p05` tree are expected; use valid/missing cell counts for coverage
+  checks
+- this root is now the default `BASELINE_ROOT` for the IPCC/ESGF-to-hindcast
+  coastal-fill downscaling runners
 
 ### Curated depth-layer NetCDF tree
 
@@ -1405,6 +1492,8 @@ Common paths used in the current workflows include:
 - `/home/sandbox-sparc/cesmle-ocn-fetch/bgc_monthly_0p25`
 - `/home/SB5/glorys12v1_monthly_0p05`
 - `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25`
+- `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05`
+- `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast`
 - `/home/SB5/ipcc_esgf_downloads`
 - `/home/SB5/ipcc_esgf_monthly_1deg`
 - `/home/SB5/rcp85`
@@ -1443,25 +1532,28 @@ assumptions that should be kept in mind when interpreting the outputs.
   climatology and delta steps for branches where comparable vertical structure
   is required.
 
-- In the coastal-fill variant of the final addition step, missing anomaly cells
-  may be filled only within the trusted target wet mask defined by the target
-  baseline/current-conditions product. That means the trusted target product
-  controls the horizontal grid, vertical levels, and ocean-mask geometry used
-  by the fill logic.
+- For current IPCC/ESGF biogeochemistry downscaling, the target horizontal
+  domain is the GLORYS `0.05` grid plus the GLORYS wet mask. GLORYS supplies
+  the grid and coastline mask, not the biogeochemical values.
 
-- The current default coastal-fill method is distance-weighted anomaly repair
-  on that trusted target geometry. The anomaly, not the final absolute field,
-  is what gets reconstructed before the addition step.
+- The hindcast biogeochemistry baseline is first rebuilt from the `0.25`
+  hindcast climatology tree into a complete `0.05` GLORYS-coast-filled
+  baseline product. Future anomaly fields are then remapped and repaired
+  against the same GLORYS wet mask before being added to that baseline.
 
-- The current faster implementation keeps that same method but reuses
-  precomputed local donor geometry on the trusted target mask so repeated
-  coastal-cell donor searches do not have to be rebuilt from scratch for every
-  file.
+- The current default coastal-fill method is distance-weighted interpolation.
+  During a fill pass, donor values come from the original finite source field;
+  newly filled cells are not reused as donors for other missing cells in that
+  same pass.
 
-- The current coastal-fill implementation is intentionally target-mask-based,
-  not coastline-shape-aware beyond that mask. It is meant as an anomaly-repair
-  step on the trusted target geometry, not as a guarantee of fully conservative
-  coastal behavior in every application.
+- The final absolute future field is not horizontally filled after addition.
+  The two repaired inputs are the GLORYS-coast baseline product and the
+  remapped anomaly product.
+
+- The coastal-fill implementation is target-mask-based, not a guarantee of
+  fully conservative coastal behavior in every application. Its purpose here is
+  to make the hindcast baseline and future anomaly fields share the same
+  GLORYS-coast ocean domain before final addition.
 
 - Horizontal remapping method is not assumed to be universal across all model
   products:
@@ -1546,9 +1638,10 @@ To avoid confusion:
 - `add_anomaly_to_baseline.slurm.sh` and
   `add_anomaly_to_baseline_with_coastal_fill.slurm.sh` are the final
   addition/downscaling workers.
-  They combine a baseline climatology with an anomaly/delta field, with the
-  coastal-fill variant first repairing missing anomaly cells on the trusted
-  target wet mask before addition.
+  They combine a baseline climatology with an anomaly/delta field. In the
+  current IPCC/ESGF biogeochemistry path, the coastal-fill variant reads the
+  GLORYS-coast-filled hindcast baseline and repairs missing remapped anomaly
+  cells inside the GLORYS wet mask before addition.
 
 - The downscaling part of the overall workflow still continues after
   climatologies. Climatologies are not the final product; they are the inputs to

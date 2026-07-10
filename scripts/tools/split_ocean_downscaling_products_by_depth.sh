@@ -45,7 +45,8 @@ shopt -s nullglob
 #                   (default: <OUT_ROOT>/tmp_split_bydepth)
 #   MAX_DEPTH_M   : optional maximum depth center to export, in meters
 #                   empty/all -> export all depths
-#   MIN_DECIMALS  : minimum decimals in depth token (default: 2)
+#   MIN_DECIMALS  : decimals in depth token (default: 3)
+#                   increase if a source file has depth-token collisions
 #   INTEGER_WIDTH : zero-padded width for the integer part of depth tokens
 #                   (default: 4)
 #   COPY_2D_FILES : yes | no
@@ -64,7 +65,7 @@ if [[ -z "${OUT_ROOT:-}" ]]; then
   fi
 fi
 TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_split_bydepth}"
-MIN_DECIMALS="${MIN_DECIMALS:-2}"
+MIN_DECIMALS="${MIN_DECIMALS:-3}"
 INTEGER_WIDTH="${INTEGER_WIDTH:-4}"
 COPY_2D_FILES="${COPY_2D_FILES:-yes}"
 NPROC="${SLURM_CPUS_PER_TASK:-6}"
@@ -164,6 +165,8 @@ with xr.open_dataset(infile) as ds:
 
     exported = 0
     skipped = 0
+    selected = []
+    tokens = {}
     for idx, level_value in enumerate(levels):
         depth_value = float(level_value)
         if max_depth is not None and depth_value > max_depth:
@@ -171,6 +174,17 @@ with xr.open_dataset(infile) as ds:
             continue
 
         token = depth_token(depth_value)
+        if token in tokens:
+            other_idx, other_depth = tokens[token]
+            raise ValueError(
+                f"Depth token collision in {infile}: "
+                f"level {other_idx} depth={other_depth} and level {idx} depth={depth_value} "
+                f"both map to depth_{token}. Increase MIN_DECIMALS."
+            )
+        tokens[token] = (idx, depth_value)
+        selected.append((idx, depth_value, token))
+
+    for idx, depth_value, token in selected:
         outfile = os.path.join(out_dir, f"{base}_depth_{token}.nc")
         if os.path.exists(outfile):
           os.remove(outfile)
@@ -178,7 +192,7 @@ with xr.open_dataset(infile) as ds:
         # export steps can recover the exact depth directly from the file.
         out = ds.isel({zdim: idx}, drop=False)
         out.to_netcdf(outfile)
-        print(f"[DONE ] {outfile}")
+        print(f"[DONE ] {outfile} depth_m={depth_value:.10g}")
         exported += 1
 
     if max_depth is not None:

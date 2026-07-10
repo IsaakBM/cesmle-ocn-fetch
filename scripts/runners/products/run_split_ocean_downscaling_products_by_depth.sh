@@ -38,7 +38,7 @@ if [[ -z "${OUT_ROOT:-}" ]]; then
   fi
 fi
 TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_split_bydepth}"
-MIN_DECIMALS="${MIN_DECIMALS:-2}"
+MIN_DECIMALS="${MIN_DECIMALS:-3}"
 INTEGER_WIDTH="${INTEGER_WIDTH:-4}"
 COPY_2D_FILES="${COPY_2D_FILES:-yes}"
 

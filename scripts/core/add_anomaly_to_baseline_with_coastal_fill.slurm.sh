@@ -90,6 +90,11 @@ export OMP_NUM_THREADS=1
 #   COASTAL_FILL_MIN_DONORS   : target minimum donor count for
 #                               COASTAL_FILL_METHOD=distance_weighted
 #                               (default: 4)
+#   COASTAL_FILL_REQUIRE_COMPLETE
+#                             : yes | no, after the bounded donor search, keep
+#                               filling remaining missing anomaly cells inside
+#                               the wet mask by local propagation until the mask
+#                               is complete or no donors exist (default: no)
 # ==============================================================================
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"
@@ -125,6 +130,7 @@ FILL_BASELINE_COASTAL_GAPS="${FILL_BASELINE_COASTAL_GAPS:-no}"
 COASTAL_FILL_MAX_STEPS="${COASTAL_FILL_MAX_STEPS:-12}"
 COASTAL_FILL_WEIGHT_POWER="${COASTAL_FILL_WEIGHT_POWER:-2.0}"
 COASTAL_FILL_MIN_DONORS="${COASTAL_FILL_MIN_DONORS:-4}"
+COASTAL_FILL_REQUIRE_COMPLETE="${COASTAL_FILL_REQUIRE_COMPLETE:-no}"
 
 if [[ -z "$VAR" || -z "$BASELINE_FILE" || -z "$ANOMALY_FILE" || -z "$OUT_DIR" ]]; then
   echo "ERROR: Missing required environment variables."
@@ -142,7 +148,7 @@ if [[ ! -f "$ANOMALY_FILE" ]]; then
   exit 1
 fi
 
-for flag_var in WRITE_NATIVE_OUTPUT FILL_TOP_MISSING WRITE_FILLED_ANOM REGRID_OUTPUT REMAP_ANOMALY_TO_BASELINE COASTAL_FILL FILL_BASELINE_COASTAL_GAPS; do
+for flag_var in WRITE_NATIVE_OUTPUT FILL_TOP_MISSING WRITE_FILLED_ANOM REGRID_OUTPUT REMAP_ANOMALY_TO_BASELINE COASTAL_FILL FILL_BASELINE_COASTAL_GAPS COASTAL_FILL_REQUIRE_COMPLETE; do
   flag_val="${!flag_var}"
   if [[ "$flag_val" != "yes" && "$flag_val" != "no" ]]; then
     echo "ERROR: ${flag_var} must be yes or no"
@@ -274,6 +280,7 @@ echo "COASTAL FILL DONORS  : ${COASTAL_FILL_MIN_DONORS}"
 echo "COASTAL MASK FILE    : ${COASTAL_MASK_FILE:-<baseline finite mask>}"
 echo "COASTAL MASK VAR     : ${COASTAL_MASK_VAR:-<auto>}"
 echo "FILL BASELINE GAPS   : ${FILL_BASELINE_COASTAL_GAPS}"
+echo "REQUIRE COMPLETE FILL: ${COASTAL_FILL_REQUIRE_COMPLETE}"
 if [[ "$REMAP_ANOMALY_TO_BASELINE" == "yes" ]]; then
   echo "ANOM GRIDFILE        : ${ANOMALY_GRIDFILE}"
   echo "ANOM REGRID METHOD   : ${ANOMALY_REGRID_METHOD}"
@@ -327,6 +334,7 @@ filled_anom_file = "${FILLED_ANOM_FILE}"
 coastal_fill = "${COASTAL_FILL}" == "yes"
 coastal_fill_method = "${COASTAL_FILL_METHOD}"
 fill_baseline_coastal_gaps = "${FILL_BASELINE_COASTAL_GAPS}" == "yes"
+coastal_fill_require_complete = "${COASTAL_FILL_REQUIRE_COMPLETE}" == "yes"
 coastal_fill_max_steps = int("${COASTAL_FILL_MAX_STEPS}")
 coastal_fill_weight_power = float("${COASTAL_FILL_WEIGHT_POWER}")
 coastal_fill_min_donors = int("${COASTAL_FILL_MIN_DONORS}")
@@ -526,6 +534,51 @@ def fill_slice_distance_weighted(data2d, wet2d, geometry, min_donors):
 
     return filled, filled_count
 
+def fill_slice_require_complete(data2d, wet2d):
+    """Propagate remaining missing wet cells from neighboring repaired donors.
+
+    The bounded coastal fill above uses the source field as donors. This
+    fallback is intentionally different: it completes any remaining wet-mask
+    cells by letting already repaired anomaly cells become local donors.
+    """
+    filled = np.array(data2d, dtype=float, copy=True)
+    wet = np.array(wet2d, dtype=bool, copy=False)
+    total_added = 0
+    iterations = 0
+    max_iterations = int(max(filled.shape[-2:]))
+
+    while iterations < max_iterations:
+        missing = wet & ~np.isfinite(filled)
+        if not np.any(missing):
+            return filled, total_added, 0, iterations
+
+        padded = np.pad(filled, 1, mode="constant", constant_values=np.nan)
+        donor_sum = np.zeros_like(filled, dtype=float)
+        donor_count = np.zeros(filled.shape, dtype=np.int16)
+
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dy == 0 and dx == 0:
+                    continue
+                neigh = padded[
+                    1 + dy:1 + dy + filled.shape[0],
+                    1 + dx:1 + dx + filled.shape[1],
+                ]
+                valid = np.isfinite(neigh)
+                donor_sum[valid] += neigh[valid]
+                donor_count[valid] += 1
+
+        fillable = missing & (donor_count > 0)
+        if not np.any(fillable):
+            return filled, total_added, int(missing.sum()), iterations
+
+        filled[fillable] = donor_sum[fillable] / donor_count[fillable]
+        total_added += int(fillable.sum())
+        iterations += 1
+
+    remaining = int((wet & ~np.isfinite(filled)).sum())
+    return filled, total_added, remaining, iterations
+
 base_var = pick_main_var(ds_base)
 
 anom_candidates = [
@@ -563,6 +616,9 @@ xy_dims = infer_xy_dims(da_base)
 other_dims = [d for d in da_base.dims if d not in xy_dims]
 
 coastal_fill_count = 0
+coastal_force_fill_count = 0
+coastal_force_remaining = 0
+coastal_force_iterations = 0
 baseline_fill_count = 0
 da_base_filled = da_base
 if coastal_fill:
@@ -620,6 +676,22 @@ if coastal_fill:
             )
         flat_anom[idx] = filled_slice
         coastal_fill_count += added
+
+        if coastal_fill_require_complete:
+            completed_slice, forced_added, forced_remaining, forced_iterations = fill_slice_require_complete(
+                flat_anom[idx],
+                wet_mask,
+            )
+            flat_anom[idx] = completed_slice
+            coastal_force_fill_count += forced_added
+            coastal_force_remaining += forced_remaining
+            coastal_force_iterations = max(coastal_force_iterations, forced_iterations)
+
+    if coastal_fill_require_complete and coastal_force_remaining > 0:
+        raise ValueError(
+            "COASTAL_FILL_REQUIRE_COMPLETE=yes, but some wet-mask anomaly cells "
+            f"still could not be filled: remaining={coastal_force_remaining}"
+        )
 
     da_base_filled = xr.DataArray(
         flat_base.reshape(base_arr.shape),
@@ -704,8 +776,11 @@ print(f"COASTAL MASK FILE     : {coastal_mask_file or '<baseline finite mask>'}"
 print(f"COASTAL MASK VAR      : {mask_var or '<none>'}")
 print(f"COASTAL FILL ENABLED  : {coastal_fill}")
 print(f"COASTAL FILL METHOD   : {coastal_fill_method}")
+print(f"REQUIRE COMPLETE FILL : {coastal_fill_require_complete}")
 print(f"BASELINE CELLS FILLED : {baseline_fill_count}")
 print(f"ANOMALY CELLS FILLED  : {coastal_fill_count}")
+print(f"ANOMALY FORCE FILLED  : {coastal_force_fill_count}")
+print(f"FORCE FILL ITERATIONS : {coastal_force_iterations}")
 print(f"FIRST VALID INDEX     : {first_valid_index}")
 print(f"TOP LEVELS FILLED     : {filled_top_count}")
 

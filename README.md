@@ -300,6 +300,9 @@ Reusable worker scripts. These do the actual processing.
     every missing coastal cell
   - donor values come only from the original finite field being repaired, so
     newly filled coastal cells do not become donors during the same fill pass
+  - can optionally require complete anomaly coverage inside the wet mask after
+    the bounded donor search; this second pass lets repaired anomaly cells
+    propagate locally to fill any remaining wet-mask gaps
   - adds the repaired anomaly to the baseline
   - then dynamically fills missing top layers in the final output
   - writes the native output and can optionally regrid a final delivery copy
@@ -384,7 +387,10 @@ packaging/export/organization steps than as reusable scientific operators.
     `MAX_DEPTH_M=600`
   - parallelizes at the file level using the allocated Slurm CPUs
   - includes a zero-padded depth token in filenames such as:
-    `depth_0005p08m`
+    `depth_0005p079m`
+  - depth tokens use `MIN_DECIMALS=3` by default; if two source depths round to
+    the same token, the splitter stops with an error instead of overwriting
+    output files
   - the runner can also submit a dependent GeoTIFF export job with
     `GEOTIFF=yes`, reusing
     [export_ocean_downscaling_products_to_geotiff.sh](scripts/tools/export_ocean_downscaling_products_to_geotiff.sh)
@@ -790,6 +796,8 @@ Current logic:
 2. use IPCC/ESGF change fields at `0.25 x 0.25`
 3. remap those change fields to the trusted hindcast baseline grid
 4. fill missing anomaly cells inside the GLORYS wet mask
+   - for current IPCC/ESGF biogeochemistry, remaining missing anomaly cells
+     inside that mask are forced complete with a local propagation fallback
 5. add the repaired anomaly to the already GLORYS-coast-filled hindcast
    baseline
 6. if the final product still has missing top layers, fill them from the first
@@ -834,7 +842,8 @@ Operational sequence for this final stage:
    - reads IPCC/ESGF delta files from `delta_windows_0p25/`
    - writes to `/home/SB5/downscaled/<model>/<realization>/<scenario>/<var>/`
    - remaps the anomaly to the GLORYS `0.05` grid
-   - fills anomaly coastal gaps inside the GLORYS wet mask
+   - fills anomaly coastal gaps inside the GLORYS wet mask, including the
+     force-complete fallback for remaining wet-mask cells
    - computes fixed baseline plus fixed anomaly
    - then fills top missing layers dynamically in the final output
    - writes the native downscaled output at `0.05`
@@ -880,6 +889,8 @@ What this worker changes relative to the generic adder:
   `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast`
 - it now supports multiple anomaly-fill methods, including
   `distance_weighted`
+- it can optionally require complete anomaly coverage inside the allowed wet
+  mask with `COASTAL_FILL_REQUIRE_COMPLETE=yes`
 - it still applies the dynamic top-layer fill after baseline plus anomaly
 - it can still optionally regrid the final downscaled output afterward
 
@@ -909,6 +920,17 @@ Methodological note:
 - donor values are read from the original finite source field for each fill
   pass; cells created by interpolation are not allowed to become donors in the
   same pass
+- for current IPCC/ESGF biogeochemistry, `COASTAL_FILL_REQUIRE_COMPLETE=yes`
+  is enabled by default after that bounded fill. This is a deliberate
+  force-complete fallback: any anomaly cells still missing inside the GLORYS wet
+  mask are filled by local propagation from neighboring already-repaired
+  anomaly cells so the final future product keeps the same GLORYS coastal
+  domain as the fixed hindcast baseline.
+- the force-complete fallback is a methodological assumption. It prioritizes
+  shared GLORYS-mask coverage for coastal species products over leaving tiny
+  unresolved IPCC/ESGF anomaly holes as missing values. The fallback is not a
+  conservative remapping method and should be revisited if coastal anomaly
+  gradients become a central validation target.
 - the code comments also document possible later conservative variants, such as
   only filling cells adjacent to originally valid anomaly cells or reducing the
   effective fill distance
@@ -924,6 +946,11 @@ Current coastal-fill controls exposed by the runners:
   - inverse-distance weighting exponent for the distance-weighted method
 - `COASTAL_FILL_MIN_DONORS`
   - target minimum donor count for the distance-weighted method
+- `COASTAL_FILL_REQUIRE_COMPLETE`
+  - `yes` forces remaining missing anomaly cells inside the wet mask to be
+    locally propagated after the bounded fill
+  - generic default is `no`
+  - current IPCC/ESGF biogeochemistry wrapper default is `yes`
 
 Runner layout for this coastal-fill branch:
 
@@ -1404,10 +1431,13 @@ Notes:
 - the current tool uses file-level parallelism and is configured to use `6`
   CPUs per Slurm task
 - depth is encoded in the filename with a zero-padded safe token such as:
-  - `depth_0000p49m`
-  - `depth_0005p08m`
-  - `depth_0453p94m`
-  - `depth_5727p92m`
+  - `depth_0000p494m`
+  - `depth_0005p079m`
+  - `depth_0453p938m`
+  - `depth_5727p917m`
+- depth tokens use `MIN_DECIMALS=3` by default; if two selected depth centers
+  round to the same filename token, the splitter stops with an error and asks
+  for a higher `MIN_DECIMALS` value
 
 Typical commands:
 
@@ -1583,6 +1613,13 @@ assumptions that should be kept in mind when interpreting the outputs.
   newly filled cells are not reused as donors for other missing cells in that
   same pass.
 
+- For current IPCC/ESGF biogeochemistry, the anomaly fill then requires
+  complete coverage inside the GLORYS wet mask. Any anomaly cells still missing
+  after the bounded distance-weighted pass are filled by local propagation from
+  neighboring repaired anomaly cells. This is an explicit coverage assumption
+  so future products share the same GLORYS coastal domain as the fixed hindcast
+  baseline.
+
 - The final absolute future field is not horizontally filled after addition.
   The two repaired inputs are the GLORYS-coast baseline product and the
   remapped anomaly product.
@@ -1591,6 +1628,11 @@ assumptions that should be kept in mind when interpreting the outputs.
   fully conservative coastal behavior in every application. Its purpose here is
   to make the hindcast baseline and future anomaly fields share the same
   GLORYS-coast ocean domain before final addition.
+
+- The force-complete anomaly fallback is not conservative remapping. It is a
+  pragmatic choice for coastal biological delivery products where consistent
+  wet-mask coverage is more important than preserving tiny unresolved anomaly
+  holes from coarse IPCC/ESGF source fields.
 
 - Horizontal remapping method is not assumed to be universal across all model
   products:
@@ -1678,7 +1720,9 @@ To avoid confusion:
   They combine a baseline climatology with an anomaly/delta field. In the
   current IPCC/ESGF biogeochemistry path, the coastal-fill variant reads the
   GLORYS-coast-filled hindcast baseline and repairs missing remapped anomaly
-  cells inside the GLORYS wet mask before addition.
+  cells inside the GLORYS wet mask before addition. That branch now requires
+  complete anomaly coverage inside the GLORYS mask, using local propagation for
+  any cells still missing after the bounded donor search.
 
 - The downscaling part of the overall workflow still continues after
   climatologies. Climatologies are not the final product; they are the inputs to

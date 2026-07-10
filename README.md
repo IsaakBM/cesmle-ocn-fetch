@@ -1038,6 +1038,25 @@ copy only one branch:
 MODEL=CNRM-ESM2-1 REALIZATION=r1i1p1f2 SCENARIO=ssp585 ./scripts/runners/products/run_organize_ocean_downscaling_products.sh
 ```
 
+The Slurm runner can also be scoped to a subset of variables, scopes, and
+future windows. For example, to refresh only `chl` and `o2` baseline/current
+products plus the two CNRM future windows after rebuilding the GLORYS-coast
+biogeochemistry products:
+
+```bash
+ORGANIZE_SCOPES="baseline future" \
+VARS="chl o2" \
+WINDOWS="2050-2060 2090-2100" \
+MODEL=CNRM-ESM2-1 \
+REALIZATION=r1i1p1f2 \
+SCENARIO=ssp585 \
+HINDCAST_0P05_ROOT=/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast \
+DOWNSCALED_ROOT=/home/SB5/downscaled \
+PRODUCT_ROOT=/home/SB5/ocean_downscaling_products \
+OVERWRITE=yes \
+bash scripts/runners/products/run_organize_ocean_downscaling_products.sh
+```
+
 For one CESM member:
 
 ```bash

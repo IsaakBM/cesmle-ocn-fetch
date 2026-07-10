@@ -43,6 +43,9 @@ CESM_LEGACY_DOWNSCALED_ROOT="${CESM_LEGACY_DOWNSCALED_ROOT:-/home/SB5/downscaled
 OVERWRITE="${OVERWRITE:-no}"
 USE_COASTAL_FILLED_BASELINE="${USE_COASTAL_FILLED_BASELINE:-no}"
 COASTAL_FILLED_BASELINE_VARS="${COASTAL_FILLED_BASELINE_VARS:-chl o2 zos}"
+ORGANIZE_SCOPES="${ORGANIZE_SCOPES:-baseline future}"
+VARS="${VARS:-chl o2 zos thetao so uo}"
+WINDOWS="${WINDOWS:-2050-2060 2090-2100}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -51,26 +54,42 @@ if [[ ! -x "${TOOL_SCRIPT}" ]]; then
   exit 1
 fi
 
-declare -a TASKS=(
-  "baseline chl"
-  "baseline o2"
-  "baseline zos"
-  "baseline thetao"
-  "baseline so"
-  "baseline uo"
-  "future chl 2050-2060"
-  "future chl 2090-2100"
-  "future o2 2050-2060"
-  "future o2 2090-2100"
-  "future zos 2050-2060"
-  "future zos 2090-2100"
-  "future thetao 2050-2060"
-  "future thetao 2090-2100"
-  "future so 2050-2060"
-  "future so 2090-2100"
-  "future uo 2050-2060"
-  "future uo 2090-2100"
-)
+read -r -a SCOPE_LIST <<< "${ORGANIZE_SCOPES}"
+read -r -a VAR_LIST <<< "${VARS}"
+read -r -a WINDOW_LIST <<< "${WINDOWS}"
+
+declare -a TASKS=()
+for scope in "${SCOPE_LIST[@]}"; do
+  case "${scope}" in
+    baseline)
+      for var in "${VAR_LIST[@]}"; do
+        TASKS+=("baseline ${var}")
+      done
+      ;;
+    future)
+      for var in "${VAR_LIST[@]}"; do
+        for window in "${WINDOW_LIST[@]}"; do
+          TASKS+=("future ${var} ${window}")
+        done
+      done
+      ;;
+    *)
+      echo "ERROR: ORGANIZE_SCOPES entries must be baseline or future: ${scope}"
+      exit 1
+      ;;
+  esac
+done
+
+echo "ORGANIZE SCOPES : ${SCOPE_LIST[*]}"
+echo "VARS            : ${VAR_LIST[*]}"
+echo "WINDOWS         : ${WINDOW_LIST[*]}"
+echo "MODEL           : ${MODEL}"
+echo "REALIZATION     : ${REALIZATION}"
+echo "SCENARIO        : ${SCENARIO}"
+echo "PRODUCT ROOT    : ${PRODUCT_ROOT}"
+echo "DOWNSCALED ROOT : ${DOWNSCALED_ROOT}"
+echo "OVERWRITE       : ${OVERWRITE}"
+echo
 
 echo "Submitting curated ocean product organization jobs by subtree:"
 for task in "${TASKS[@]}"; do

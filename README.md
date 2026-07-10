@@ -799,9 +799,11 @@ Current logic:
    `0.05 x 0.05` as the trusted baseline
 2. use IPCC/ESGF change fields at `0.25 x 0.25`
 3. remap those change fields to the trusted hindcast baseline grid
-4. fill missing anomaly cells inside the GLORYS wet mask
+4. fill missing anomaly cells inside the GLORYS wet mask plus any cells that
+   are already valid in the fixed hindcast baseline
    - for current IPCC/ESGF biogeochemistry, remaining missing anomaly cells
-     inside that mask are forced complete with a local propagation fallback
+     inside that allowed domain are forced complete with a local propagation
+     fallback
 5. add the repaired anomaly to the already GLORYS-coast-filled hindcast
    baseline
 6. if the final product still has missing top layers, fill them from the first
@@ -846,8 +848,9 @@ Operational sequence for this final stage:
    - reads IPCC/ESGF delta files from `delta_windows_0p25/`
    - writes to `/home/SB5/downscaled/<model>/<realization>/<scenario>/<var>/`
    - remaps the anomaly to the GLORYS `0.05` grid
-   - fills anomaly coastal gaps inside the GLORYS wet mask, including the
-     force-complete fallback for remaining wet-mask cells
+   - fills anomaly coastal gaps inside the GLORYS wet mask plus any
+     baseline-valid cells, including the force-complete fallback for remaining
+     allowed-domain cells
    - computes fixed baseline plus fixed anomaly
    - then fills top missing layers dynamically in the final output
    - writes the native downscaled output at `0.05`
@@ -906,6 +909,10 @@ Methodological note:
   levels
 - an external GLORYS wet mask can define the ocean/coastline domain where fill
   is allowed; this is the current IPCC/ESGF biogeochemistry default
+- when an external mask is used, the active fill domain is the union of that
+  mask and cells already valid in the trusted baseline. This keeps the final
+  output from dropping cells that the GLORYS-coast-filled hindcast baseline
+  already owns, even if a mask slice has a small mismatch.
 - the current IPCC/ESGF biogeochemistry path applies GLORYS-mask coastal fill
   twice in separate steps:
   1. while building the full hindcast baseline root
@@ -926,14 +933,14 @@ Methodological note:
   same pass
 - for current IPCC/ESGF biogeochemistry, `COASTAL_FILL_REQUIRE_COMPLETE=yes`
   is enabled by default after that bounded fill. This is a deliberate
-  force-complete fallback: any anomaly cells still missing inside the GLORYS wet
-  mask are filled by local propagation from neighboring already-repaired
-  anomaly cells so the final future product keeps the same GLORYS coastal
-  domain as the fixed hindcast baseline.
+  force-complete fallback: any anomaly cells still missing inside the allowed
+  GLORYS-plus-baseline domain are filled by local propagation from neighboring
+  already-repaired anomaly cells so the final future product keeps the same
+  coastal domain as the fixed hindcast baseline.
 - if local propagation still cannot find any connected anomaly donor,
   `COASTAL_FILL_COMPLETE_FALLBACK_VALUE=0` assigns a zero anomaly to the
-  remaining GLORYS wet-mask cells. In the additive workflow this means the
-  fixed hindcast baseline is carried forward unchanged at those cells.
+  remaining allowed-domain cells. In the additive workflow this means the fixed
+  hindcast baseline is carried forward unchanged at those cells.
 - the force-complete fallback is a methodological assumption. It prioritizes
   shared GLORYS-mask coverage for coastal species products over leaving tiny
   unresolved IPCC/ESGF anomaly holes as missing values. The zero-anomaly
@@ -1620,7 +1627,8 @@ assumptions that should be kept in mind when interpreting the outputs.
 - The hindcast biogeochemistry baseline is first rebuilt from the `0.25`
   hindcast climatology tree into a complete `0.05` GLORYS-coast-filled
   baseline product. Future anomaly fields are then remapped and repaired
-  against the same GLORYS wet mask before being added to that baseline.
+  against the same GLORYS wet mask plus any cells already valid in that fixed
+  baseline before being added to it.
 
 - The current default coastal-fill method is distance-weighted interpolation.
   During a fill pass, donor values come from the original finite source field;
@@ -1628,11 +1636,11 @@ assumptions that should be kept in mind when interpreting the outputs.
   same pass.
 
 - For current IPCC/ESGF biogeochemistry, the anomaly fill then requires
-  complete coverage inside the GLORYS wet mask. Any anomaly cells still missing
-  after the bounded distance-weighted pass are filled by local propagation from
-  neighboring repaired anomaly cells. This is an explicit coverage assumption
-  so future products share the same GLORYS coastal domain as the fixed hindcast
-  baseline.
+  complete coverage inside the allowed GLORYS-plus-baseline domain. Any anomaly
+  cells still missing after the bounded distance-weighted pass are filled by
+  local propagation from neighboring repaired anomaly cells. This is an
+  explicit coverage assumption so future products share the same coastal domain
+  as the fixed hindcast baseline.
 - If no connected anomaly donor exists even after local propagation, the
   current IPCC/ESGF biogeochemistry path assigns a zero anomaly. This carries
   the fixed hindcast baseline forward unchanged at those cells.
@@ -1738,9 +1746,10 @@ To avoid confusion:
   They combine a baseline climatology with an anomaly/delta field. In the
   current IPCC/ESGF biogeochemistry path, the coastal-fill variant reads the
   GLORYS-coast-filled hindcast baseline and repairs missing remapped anomaly
-  cells inside the GLORYS wet mask before addition. That branch now requires
-  complete anomaly coverage inside the GLORYS mask, using local propagation for
-  any cells still missing after the bounded donor search.
+  cells inside the GLORYS wet mask plus any baseline-valid cells before
+  addition. That branch now requires complete anomaly coverage inside that
+  allowed domain, using local propagation for any cells still missing after the
+  bounded donor search.
 
 - The downscaling part of the overall workflow still continues after
   climatologies. Climatologies are not the final product; they are the inputs to

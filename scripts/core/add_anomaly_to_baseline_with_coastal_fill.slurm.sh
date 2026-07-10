@@ -656,6 +656,7 @@ coastal_force_fill_count = 0
 coastal_force_remaining = 0
 coastal_force_iterations = 0
 coastal_force_fallback_count = 0
+baseline_domain_extension_count = 0
 baseline_fill_count = 0
 da_base_filled = da_base
 if coastal_fill:
@@ -680,10 +681,13 @@ if coastal_fill:
     )
 
     for idx in range(flat_anom.shape[0]):
+        baseline_valid_mask = np.isfinite(flat_base[idx])
         if flat_mask is not None:
-            wet_mask = np.isfinite(flat_mask[idx])
+            external_wet_mask = np.isfinite(flat_mask[idx])
+            wet_mask = external_wet_mask | baseline_valid_mask
+            baseline_domain_extension_count += int((baseline_valid_mask & ~external_wet_mask).sum())
         else:
-            wet_mask = np.isfinite(flat_base[idx])
+            wet_mask = baseline_valid_mask
 
         if fill_baseline_coastal_gaps:
             if coastal_fill_method == "nearest":
@@ -820,6 +824,7 @@ print(f"COASTAL MASK VAR      : {mask_var or '<none>'}")
 print(f"COASTAL FILL ENABLED  : {coastal_fill}")
 print(f"COASTAL FILL METHOD   : {coastal_fill_method}")
 print(f"REQUIRE COMPLETE FILL : {coastal_fill_require_complete}")
+print(f"BASELINE DOMAIN ADDED : {baseline_domain_extension_count}")
 print(f"BASELINE CELLS FILLED : {baseline_fill_count}")
 print(f"ANOMALY CELLS FILLED  : {coastal_fill_count}")
 print(f"ANOMALY FORCE FILLED  : {coastal_force_fill_count}")

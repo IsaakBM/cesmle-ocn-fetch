@@ -99,6 +99,11 @@ The current curated-product chain is:
 7. [run_export_ocean_downscaling_products_pelagic_to_geotiff.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_geotiff.sh)
 8. [run_stage_ocean_downscaling_sample_products.sh](scripts/runners/products/run_stage_ocean_downscaling_sample_products.sh)
 
+Optional individual-depth products can also be derived from the same curated
+3D tree with [run_split_ocean_downscaling_products_by_depth.sh](scripts/runners/products/run_split_ocean_downscaling_products_by_depth.sh).
+Set `MAX_DEPTH_M=600` and `GEOTIFF=yes` to create shallow individual-depth
+NetCDF and GeoTIFF products for species workflows.
+
 ## Purpose
 
 At a high level, the repository now supports three reusable processing stages:
@@ -371,14 +376,18 @@ packaging/export/organization steps than as reusable scientific operators.
 - [split_ocean_downscaling_products_by_depth.sh](scripts/tools/split_ocean_downscaling_products_by_depth.sh)
   - reads curated 3D products from:
     `/home/SB5/ocean_downscaling_products`
-  - mirrors them into:
+  - mirrors them into one of:
     `/home/SB5/ocean_downscaling_products_bydepth`
+    `/home/SB5/ocean_downscaling_products_depths`
   - writes one NetCDF file per depth layer
+  - supports `MAX_DEPTH_M` to limit exported depth centers, for example
+    `MAX_DEPTH_M=600`
   - parallelizes at the file level using the allocated Slurm CPUs
   - includes a zero-padded depth token in filenames such as:
     `depth_0005p08m`
-  - this remains available for individual-depth slice products, but it is not
-    the currently active derived-product workflow
+  - the runner can also submit a dependent GeoTIFF export job with
+    `GEOTIFF=yes`, reusing
+    [export_ocean_downscaling_products_to_geotiff.sh](scripts/tools/export_ocean_downscaling_products_to_geotiff.sh)
 
 - [aggregate_ocean_downscaling_products_by_depth_bins.sh](scripts/tools/aggregate_ocean_downscaling_products_by_depth_bins.sh)
   - reads curated 3D products from:
@@ -412,12 +421,14 @@ packaging/export/organization steps than as reusable scientific operators.
     part of the current active derived-product workflow
 
 - [export_ocean_downscaling_products_to_geotiff.sh](scripts/tools/export_ocean_downscaling_products_to_geotiff.sh)
-  - reads aggregated 2D NetCDF layer or pelagic products from trees such as:
+  - reads 2D NetCDF products from trees such as:
     `/home/SB5/ocean_downscaling_products_layers`
     `/home/SB5/ocean_downscaling_products_pelagic`
+    `/home/SB5/ocean_downscaling_products_depths`
   - mirrors them into compressed GeoTIFF trees such as:
     `/home/SB5/ocean_downscaling_products_layers_geotiff`
     `/home/SB5/ocean_downscaling_products_pelagic_geotiff`
+    `/home/SB5/ocean_downscaling_products_depths_geotiff`
   - encodes floating-point values as integers:
     `stored_value = round(real_value * scale_factor)`
   - stores the corresponding decode rule as:
@@ -1355,14 +1366,14 @@ Typical commands:
 DRY_RUN=no ./scripts/runners/products/run_stage_ocean_downscaling_sample_products.sh
 ```
 
-### Curated by-depth NetCDF tree
+### Curated by-depth NetCDF and GeoTIFF trees
 
 Built with:
 
 - [split_ocean_downscaling_products_by_depth.sh](scripts/tools/split_ocean_downscaling_products_by_depth.sh)
 - [run_split_ocean_downscaling_products_by_depth.sh](scripts/runners/products/run_split_ocean_downscaling_products_by_depth.sh)
 
-Expected output root:
+Default all-depth NetCDF output root:
 
 ```text
 /home/SB5/ocean_downscaling_products_bydepth/
@@ -1370,10 +1381,26 @@ Expected output root:
 └── future/
 ```
 
+Shallow individual-depth roots for species workflows:
+
+```text
+/home/SB5/ocean_downscaling_products_depths/
+/home/SB5/ocean_downscaling_products_depths_geotiff/
+```
+
 Notes:
 
 - mirrors the curated `baseline/future` structure
 - each 3D NetCDF file becomes one 2D NetCDF file per depth layer
+- `MAX_DEPTH_M` can limit exported depth centers:
+  - empty or `all` exports all depths
+  - `600` exports only depth centers `<= 600 m`
+- when `MAX_DEPTH_M` is set and `OUT_ROOT` is not, the runner writes NetCDFs to
+  `/home/SB5/ocean_downscaling_products_depths`
+- set `GEOTIFF=yes` or `GEOTIFF=true` to submit a dependent GeoTIFF export job
+  after the NetCDF split succeeds
+- the default GeoTIFF root is `${OUT_ROOT}_geotiff`, so the 600 m default is:
+  `/home/SB5/ocean_downscaling_products_depths_geotiff`
 - the current tool uses file-level parallelism and is configured to use `6`
   CPUs per Slurm task
 - depth is encoded in the filename with a zero-padded safe token such as:
@@ -1381,8 +1408,18 @@ Notes:
   - `depth_0005p08m`
   - `depth_0453p94m`
   - `depth_5727p92m`
-- this workflow remains available for producing individual-depth slices, but it
-  is not the current active derived-product path
+
+Typical commands:
+
+```bash
+# Original behavior: all depths to /home/SB5/ocean_downscaling_products_bydepth
+bash scripts/runners/products/run_split_ocean_downscaling_products_by_depth.sh
+
+# Species workflow: original depth slices through 600 m plus matching GeoTIFFs
+MAX_DEPTH_M=600 \
+GEOTIFF=yes \
+bash scripts/runners/products/run_split_ocean_downscaling_products_by_depth.sh
+```
 
 ### Curated by-depth CSV tree
 

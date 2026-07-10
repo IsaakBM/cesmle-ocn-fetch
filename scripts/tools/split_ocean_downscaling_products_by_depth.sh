@@ -38,9 +38,13 @@ shopt -s nullglob
 # Optional env vars
 #   IN_ROOT       : curated input root (default: /home/SB5/ocean_downscaling_products)
 #   OUT_ROOT      : curated by-depth output root
-#                   (default: /home/SB5/ocean_downscaling_products_bydepth)
+#                   (default: /home/SB5/ocean_downscaling_products_bydepth,
+#                   or /home/SB5/ocean_downscaling_products_depths when
+#                   MAX_DEPTH_M is set)
 #   TMP_DIR       : temp / bookkeeping directory
 #                   (default: <OUT_ROOT>/tmp_split_bydepth)
+#   MAX_DEPTH_M   : optional maximum depth center to export, in meters
+#                   empty/all -> export all depths
 #   MIN_DECIMALS  : minimum decimals in depth token (default: 2)
 #   INTEGER_WIDTH : zero-padded width for the integer part of depth tokens
 #                   (default: 4)
@@ -50,7 +54,15 @@ shopt -s nullglob
 #                   (default: yes)
 # ==============================================================================
 IN_ROOT="${IN_ROOT:-/home/SB5/ocean_downscaling_products}"
-OUT_ROOT="${OUT_ROOT:-/home/SB5/ocean_downscaling_products_bydepth}"
+MAX_DEPTH_M="${MAX_DEPTH_M:-}"
+MAX_DEPTH_M_LOWER="${MAX_DEPTH_M,,}"
+if [[ -z "${OUT_ROOT:-}" ]]; then
+  if [[ -n "${MAX_DEPTH_M}" && "${MAX_DEPTH_M_LOWER}" != "all" ]]; then
+    OUT_ROOT="/home/SB5/ocean_downscaling_products_depths"
+  else
+    OUT_ROOT="/home/SB5/ocean_downscaling_products_bydepth"
+  fi
+fi
 TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_split_bydepth}"
 MIN_DECIMALS="${MIN_DECIMALS:-2}"
 INTEGER_WIDTH="${INTEGER_WIDTH:-4}"
@@ -65,6 +77,15 @@ fi
 if [[ "${COPY_2D_FILES}" != "yes" && "${COPY_2D_FILES}" != "no" ]]; then
   echo "ERROR: COPY_2D_FILES must be yes or no"
   exit 1
+fi
+
+if [[ -n "${MAX_DEPTH_M}" && "${MAX_DEPTH_M_LOWER}" != "all" ]]; then
+  python3 - "${MAX_DEPTH_M}" <<'PY'
+import sys
+value = float(sys.argv[1])
+if value < 0:
+    raise SystemExit("MAX_DEPTH_M must be >= 0")
+PY
 fi
 
 mkdir -p "${OUT_ROOT}" "${TMP_DIR}"
@@ -117,7 +138,7 @@ extract_all_levels() {
   local base="$3"
   local zdim="$4"
 
-  python3 - "$infile" "$out_dir" "$base" "$zdim" "$MIN_DECIMALS" "$INTEGER_WIDTH" <<'PY'
+  python3 - "$infile" "$out_dir" "$base" "$zdim" "$MIN_DECIMALS" "$INTEGER_WIDTH" "$MAX_DEPTH_M" <<'PY'
 import os
 import sys
 import xarray as xr
@@ -125,6 +146,8 @@ import xarray as xr
 infile, out_dir, base, zdim = sys.argv[1:5]
 min_decimals = int(sys.argv[5])
 integer_width = int(sys.argv[6])
+max_depth_text = sys.argv[7]
+max_depth = None if max_depth_text.lower() in ("", "all") else float(max_depth_text)
 
 def depth_token(value: float) -> str:
     formatted = f"{float(value):.{min_decimals}f}"
@@ -139,8 +162,15 @@ with xr.open_dataset(infile) as ds:
     if getattr(levels, "ndim", 0) == 0:
         levels = [levels.item()]
 
+    exported = 0
+    skipped = 0
     for idx, level_value in enumerate(levels):
-        token = depth_token(float(level_value))
+        depth_value = float(level_value)
+        if max_depth is not None and depth_value > max_depth:
+            skipped += 1
+            continue
+
+        token = depth_token(depth_value)
         outfile = os.path.join(out_dir, f"{base}_depth_{token}.nc")
         if os.path.exists(outfile):
           os.remove(outfile)
@@ -149,6 +179,10 @@ with xr.open_dataset(infile) as ds:
         out = ds.isel({zdim: idx}, drop=False)
         out.to_netcdf(outfile)
         print(f"[DONE ] {outfile}")
+        exported += 1
+
+    if max_depth is not None:
+        print(f"[INFO ] {base}: exported {exported} levels with {zdim} <= {max_depth:g} m; skipped {skipped} deeper levels")
 PY
 }
 
@@ -200,6 +234,7 @@ echo "Starting curated ocean product split by depth"
 echo "IN ROOT         : ${IN_ROOT}"
 echo "OUT ROOT        : ${OUT_ROOT}"
 echo "TMP DIR         : ${TMP_DIR}"
+echo "MAX DEPTH M     : ${MAX_DEPTH_M:-<all>}"
 echo "MIN DECIMALS    : ${MIN_DECIMALS}"
 echo "INTEGER WIDTH   : ${INTEGER_WIDTH}"
 echo "COPY 2D FILES   : ${COPY_2D_FILES}"
@@ -216,7 +251,7 @@ for infile in "${files[@]}"; do
   :
 done
 
-export IN_ROOT OUT_ROOT TMP_DIR MIN_DECIMALS INTEGER_WIDTH COPY_2D_FILES
+export IN_ROOT OUT_ROOT TMP_DIR MAX_DEPTH_M MIN_DECIMALS INTEGER_WIDTH COPY_2D_FILES
 export -f find_vertical_dim depth_token_from_value extract_all_levels process_one_file
 
 printf '%s\0' "${files[@]}" \

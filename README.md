@@ -1184,7 +1184,9 @@ Notes:
 - `COASTAL_FILL_REQUIRE_COMPLETE=yes` is now the default for this GLORYS-coast
   baseline builder. After the bounded nearest or distance-weighted fill, any
   remaining GLORYS-wet baseline gaps are locally propagated from neighboring
-  finite baseline values. This is intentionally not a zero fallback.
+  finite baseline values. If disconnected mask breaks still remain, the final
+  fallback uses the nearest finite baseline donor in the same 2-D field. This
+  is intentionally not a zero fallback.
 - keeps the same variable-folder and `clim_windows/` structure:
   `chl`, `fe`, `no3`, `nppv`, `o2`, `ph`, `phyc`, `po4`, and `si` are
   expected when all current hindcast biogeochemistry variables are present
@@ -1666,9 +1668,10 @@ assumptions that should be kept in mind when interpreting the outputs.
   baseline before being added to it.
 - Baseline completion and anomaly completion use different fallback meanings.
   Remaining GLORYS-wet baseline gaps are completed by local propagation from
-  finite biogeochemistry baseline values. Remaining anomaly gaps can use a zero
-  anomaly fallback only after local propagation fails, which means carrying the
-  fixed baseline forward unchanged.
+  finite biogeochemistry baseline values, then by the nearest finite baseline
+  donor if a GLORYS-wet cell is disconnected from local donors. Remaining
+  anomaly gaps can use a zero anomaly fallback only after local propagation
+  fails, which means carrying the fixed baseline forward unchanged.
 
 - The current default coastal-fill method is distance-weighted interpolation.
   During a fill pass, donor values come from the original finite source field;

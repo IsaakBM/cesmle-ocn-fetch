@@ -159,7 +159,7 @@ process_file() {
     return 0
   fi
 
-  rm -f "${tmp_remap}" "${tmp_out}" "${outfile}"
+  rm -f "${tmp_remap}" "${tmp_out}"
 
   method_to_use="$(resolve_method "${infile}")"
   echo
@@ -368,7 +368,14 @@ def fill_slice_distance_weighted(data2d, wet2d, geometry, min_donors):
     return filled, filled_count
 
 def fill_slice_require_complete(data2d, wet2d):
-    """Complete remaining wet-mask gaps from neighboring finite baseline cells."""
+    """Complete remaining wet-mask gaps from neighboring finite baseline cells.
+
+    The first pass locally propagates along connected GLORYS-wet cells. Any
+    remaining cells are filled from the nearest finite baseline donor in the
+    same 2-D field; this avoids zero inventing while still forcing complete
+    coverage for GLORYS-wet cells where the source biogeochemistry has small
+    coastline/mask breaks.
+    """
     filled = np.array(data2d, dtype=float, copy=True)
     wet = np.array(wet2d, dtype=bool, copy=False)
     pending = wet & ~np.isfinite(filled)
@@ -433,7 +440,30 @@ def fill_slice_require_complete(data2d, wet2d):
                     queued[yy, xx] = True
 
     remaining = int(pending.sum())
-    return filled, total_added, remaining, max_wave
+    if remaining == 0:
+        return filled, total_added, 0, max_wave
+
+    donor_mask = np.isfinite(filled)
+    if not np.any(donor_mask):
+        return filled, total_added, remaining, max_wave
+
+    try:
+        from scipy import ndimage
+    except ImportError as exc:
+        raise RuntimeError(
+            "COASTAL_FILL_REQUIRE_COMPLETE=yes needs scipy for the final "
+            "nearest-donor baseline fallback when local propagation cannot "
+            "reach all GLORYS-wet cells."
+        ) from exc
+
+    _, indices = ndimage.distance_transform_edt(~donor_mask, return_indices=True)
+    yy = indices[0][pending]
+    xx = indices[1][pending]
+    filled[pending] = filled[yy, xx]
+    total_added += remaining
+    pending[pending] = False
+
+    return filled, total_added, 0, max_wave
 
 ds_base = xr.open_dataset(infile)
 ds_mask = xr.open_dataset(mask_file)
@@ -581,8 +611,15 @@ for var in "${VAR_LIST[@]}"; do
 
   echo
   echo "[VAR  ] ${var}"
+  set +e
   printf '%s\0' "${files[@]}" \
     | xargs -0 -n 1 -P "${NPROC}" bash -c 'process_file "$1"' _
+  status=$?
+  set -e
+  if (( status != 0 )); then
+    echo "ERROR: One or more files failed while processing var=${var}"
+    exit "${status}"
+  fi
 done
 
 echo

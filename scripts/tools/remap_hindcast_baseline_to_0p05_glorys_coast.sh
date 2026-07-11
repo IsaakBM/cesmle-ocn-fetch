@@ -41,6 +41,12 @@ shopt -s nullglob
 #                               (default: 2.0)
 #   COASTAL_FILL_MIN_DONORS   : target donor count for distance-weighted fill
 #                               (default: 4)
+#   COASTAL_FILL_REQUIRE_COMPLETE
+#                             : yes | no
+#                               yes -> locally propagate remaining wet-mask
+#                                      gaps from finite baseline values after
+#                                      the bounded fill
+#                               (default: yes)
 #   OVERWRITE                 : yes | no
 #                               (default: yes)
 #   NPROC                     : number of files to process in parallel
@@ -65,6 +71,7 @@ COASTAL_FILL_METHOD="${COASTAL_FILL_METHOD:-distance_weighted}"
 COASTAL_FILL_MAX_STEPS="${COASTAL_FILL_MAX_STEPS:-12}"
 COASTAL_FILL_WEIGHT_POWER="${COASTAL_FILL_WEIGHT_POWER:-2.0}"
 COASTAL_FILL_MIN_DONORS="${COASTAL_FILL_MIN_DONORS:-4}"
+COASTAL_FILL_REQUIRE_COMPLETE="${COASTAL_FILL_REQUIRE_COMPLETE:-yes}"
 OVERWRITE="${OVERWRITE:-yes}"
 NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-4}}"
 
@@ -85,6 +92,11 @@ fi
 
 if [[ "${COASTAL_FILL_METHOD}" != "nearest" && "${COASTAL_FILL_METHOD}" != "distance_weighted" ]]; then
   echo "ERROR: COASTAL_FILL_METHOD must be nearest or distance_weighted"
+  exit 1
+fi
+
+if [[ "${COASTAL_FILL_REQUIRE_COMPLETE}" != "yes" && "${COASTAL_FILL_REQUIRE_COMPLETE}" != "no" ]]; then
+  echo "ERROR: COASTAL_FILL_REQUIRE_COMPLETE must be yes or no"
   exit 1
 fi
 
@@ -165,8 +177,10 @@ process_file() {
   COASTAL_FILL_MAX_STEPS="${COASTAL_FILL_MAX_STEPS}" \
   COASTAL_FILL_WEIGHT_POWER="${COASTAL_FILL_WEIGHT_POWER}" \
   COASTAL_FILL_MIN_DONORS="${COASTAL_FILL_MIN_DONORS}" \
+  COASTAL_FILL_REQUIRE_COMPLETE="${COASTAL_FILL_REQUIRE_COMPLETE}" \
   python3 - <<'PY'
 import os
+from collections import deque
 import numpy as np
 import xarray as xr
 
@@ -179,6 +193,7 @@ fill_method = os.environ["COASTAL_FILL_METHOD"]
 max_steps = int(os.environ["COASTAL_FILL_MAX_STEPS"])
 weight_power = float(os.environ["COASTAL_FILL_WEIGHT_POWER"])
 min_donors = int(os.environ["COASTAL_FILL_MIN_DONORS"])
+require_complete = os.environ["COASTAL_FILL_REQUIRE_COMPLETE"] == "yes"
 
 def pick_main_var(ds, requested=None):
     if requested and requested in ds.data_vars:
@@ -352,6 +367,74 @@ def fill_slice_distance_weighted(data2d, wet2d, geometry, min_donors):
 
     return filled, filled_count
 
+def fill_slice_require_complete(data2d, wet2d):
+    """Complete remaining wet-mask gaps from neighboring finite baseline cells."""
+    filled = np.array(data2d, dtype=float, copy=True)
+    wet = np.array(wet2d, dtype=bool, copy=False)
+    pending = wet & ~np.isfinite(filled)
+    if not np.any(pending):
+        return filled, 0, 0, 0
+
+    if not np.any(wet & np.isfinite(filled)):
+        return filled, 0, int(pending.sum()), 0
+
+    ny, nx = filled.shape
+    queued = np.zeros(filled.shape, dtype=bool)
+    q = deque()
+
+    def finite_wet_neighbors(iy, ix):
+        y0 = max(0, iy - 1)
+        y1 = min(ny, iy + 2)
+        x0 = max(0, ix - 1)
+        x1 = min(nx, ix + 2)
+        values = filled[y0:y1, x0:x1]
+        wet_window = wet[y0:y1, x0:x1]
+        valid = wet_window & np.isfinite(values)
+        if valid.size:
+            valid[iy - y0, ix - x0] = False
+        return values[valid]
+
+    for iy, ix in np.argwhere(pending):
+        iy = int(iy)
+        ix = int(ix)
+        if finite_wet_neighbors(iy, ix).size:
+            q.append((iy, ix, 1))
+            queued[iy, ix] = True
+
+    total_added = 0
+    max_wave = 0
+    while q:
+        iy, ix, wave = q.popleft()
+        if not pending[iy, ix]:
+            continue
+
+        donors = finite_wet_neighbors(iy, ix)
+        if donors.size == 0:
+            continue
+
+        filled[iy, ix] = float(np.mean(donors))
+        pending[iy, ix] = False
+        total_added += 1
+        max_wave = max(max_wave, int(wave))
+
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dy == 0 and dx == 0:
+                    continue
+                yy = iy + dy
+                xx = ix + dx
+                if (
+                    0 <= yy < ny
+                    and 0 <= xx < nx
+                    and pending[yy, xx]
+                    and not queued[yy, xx]
+                ):
+                    q.append((yy, xx, wave + 1))
+                    queued[yy, xx] = True
+
+    remaining = int(pending.sum())
+    return filled, total_added, remaining, max_wave
+
 ds_base = xr.open_dataset(infile)
 ds_mask = xr.open_dataset(mask_file)
 try:
@@ -372,6 +455,9 @@ try:
     geometry = build_fill_geometry(max_steps, weight_power)
 
     filled_count = 0
+    force_fill_count = 0
+    force_remaining = 0
+    force_iterations = 0
     for idx in range(flat_base.shape[0]):
         wet_mask = np.isfinite(flat_mask[idx])
         if fill_method == "nearest":
@@ -382,6 +468,21 @@ try:
             )
         flat_base[idx] = filled_slice
         filled_count += added
+
+        if require_complete:
+            completed_slice, forced_added, forced_remaining, forced_waves = fill_slice_require_complete(
+                flat_base[idx], wet_mask
+            )
+            flat_base[idx] = completed_slice
+            force_fill_count += forced_added
+            force_remaining += forced_remaining
+            force_iterations = max(force_iterations, forced_waves)
+
+    if require_complete and force_remaining > 0:
+        raise ValueError(
+            "COASTAL_FILL_REQUIRE_COMPLETE=yes, but some GLORYS-wet baseline "
+            f"cells remain missing after local propagation: remaining={force_remaining}"
+        )
 
     da_filled = xr.DataArray(
         flat_base.reshape(base_arr.shape),
@@ -403,7 +504,11 @@ try:
     print(f"BASE VAR              : {base_var}")
     print(f"COASTAL MASK FILE     : {mask_file}")
     print(f"COASTAL MASK VAR      : {mask_var}")
+    print(f"REQUIRE COMPLETE FILL : {require_complete}")
     print(f"BASELINE CELLS FILLED : {filled_count}")
+    print(f"BASELINE FORCE FILLED : {force_fill_count}")
+    print(f"FORCE FILL REMAINING  : {force_remaining}")
+    print(f"FORCE FILL MAX WAVE   : {force_iterations}")
 finally:
     ds_base.close()
     ds_mask.close()
@@ -416,7 +521,8 @@ PY
 
 export IN_ROOT OUT_ROOT GRIDFILE METHOD AUTO_METHOD_DEFAULT AUTO_METHOD_CURVILINEAR
 export COASTAL_MASK_FILE COASTAL_MASK_VAR COASTAL_FILL_METHOD
-export COASTAL_FILL_MAX_STEPS COASTAL_FILL_WEIGHT_POWER COASTAL_FILL_MIN_DONORS OVERWRITE
+export COASTAL_FILL_MAX_STEPS COASTAL_FILL_WEIGHT_POWER COASTAL_FILL_MIN_DONORS
+export COASTAL_FILL_REQUIRE_COMPLETE OVERWRITE
 export -f detect_gridtype resolve_method process_file
 
 echo "============================================================"
@@ -435,6 +541,7 @@ echo "FILL METHOD      : ${COASTAL_FILL_METHOD}"
 echo "FILL STEPS       : ${COASTAL_FILL_MAX_STEPS}"
 echo "FILL POWER       : ${COASTAL_FILL_WEIGHT_POWER}"
 echo "FILL DONORS      : ${COASTAL_FILL_MIN_DONORS}"
+echo "REQUIRE COMPLETE : ${COASTAL_FILL_REQUIRE_COMPLETE}"
 echo "OVERWRITE        : ${OVERWRITE}"
 echo "PARALLEL FILES   : ${NPROC}"
 echo "============================================================"

@@ -1176,11 +1176,15 @@ Expected output root:
 
 Notes:
 
-- derives a complete all-variable `0.05 x 0.05` hindcast biogeochemistry
-  baseline from the existing `0.25 x 0.25` hindcast climatology tree
+- derives an all-variable `0.05 x 0.05` hindcast biogeochemistry baseline from
+  the existing `0.25 x 0.25` hindcast climatology tree
 - first remaps each variable to the GLORYS `0.05` grid with `cdo`
 - then fills missing coastal cells inside the GLORYS wet mask, currently using:
   `/home/SB5/glorys12v1_monthly_0p05/thetao/clim_windows/glorys12v1_thetao_clim_2006-2014.nc`
+- `COASTAL_FILL_REQUIRE_COMPLETE=yes` is now the default for this GLORYS-coast
+  baseline builder. After the bounded nearest or distance-weighted fill, any
+  remaining GLORYS-wet baseline gaps are locally propagated from neighboring
+  finite baseline values. This is intentionally not a zero fallback.
 - keeps the same variable-folder and `clim_windows/` structure:
   `chl`, `fe`, `no3`, `nppv`, `o2`, `ph`, `phyc`, `po4`, and `si` are
   expected when all current hindcast biogeochemistry variables are present
@@ -1660,6 +1664,11 @@ assumptions that should be kept in mind when interpreting the outputs.
   baseline product. Future anomaly fields are then remapped and repaired
   against the same GLORYS wet mask plus any cells already valid in that fixed
   baseline before being added to it.
+- Baseline completion and anomaly completion use different fallback meanings.
+  Remaining GLORYS-wet baseline gaps are completed by local propagation from
+  finite biogeochemistry baseline values. Remaining anomaly gaps can use a zero
+  anomaly fallback only after local propagation fails, which means carrying the
+  fixed baseline forward unchanged.
 
 - The current default coastal-fill method is distance-weighted interpolation.
   During a fill pass, donor values come from the original finite source field;
@@ -1685,7 +1694,7 @@ assumptions that should be kept in mind when interpreting the outputs.
   to make the hindcast baseline and future anomaly fields share the same
   GLORYS-coast ocean domain before final addition.
 
-- The force-complete anomaly fallback is not conservative remapping. It is a
+- The force-complete baseline/anomaly fallback is not conservative remapping. It is a
   pragmatic choice for coastal biological delivery products where consistent
   wet-mask coverage is more important than preserving tiny unresolved anomaly
   holes from coarse IPCC/ESGF source fields. The zero-anomaly fallback should be

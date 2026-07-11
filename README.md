@@ -1401,16 +1401,20 @@ Expected output root:
 ├── pelagic/
 │   ├── baseline/<var>/0p05/*.tif
 │   └── future/<scenario>/<var>/<window>/0p05/*.tif
+├── depths/
+│   ├── baseline/<var>/0p05/*.tif
+│   └── future/<scenario>/<var>/<window>/0p05/*.tif
 └── manifests/
     ├── layers_geotiff_manifest.csv
     ├── pelagic_geotiff_manifest.csv
+    ├── depths_geotiff_manifest.csv
     └── geotiff_manifest.csv
 ```
 
 Notes:
 
 - this is a copy-only staging step for viewer deployment tests
-- it reads from the layer and pelagic GeoTIFF trees
+- it reads from the layer, pelagic, and individual-depth GeoTIFF trees
 - it only stages `0p05` products
 - future outputs are staged by `scenario/variable/window/resolution` for the
   Shiny app, while the manifests retain `model`, `realization`, `scenario`,
@@ -1421,6 +1425,7 @@ Notes:
 - it stages filtered manifests for the copied GeoTIFFs:
   - `layers_geotiff_manifest.csv`
   - `pelagic_geotiff_manifest.csv`
+  - `depths_geotiff_manifest.csv`
   - `geotiff_manifest.csv`
 - manifests preserve GeoTIFF scale/decode metadata so the Shiny app can recover
   physical values from integer rasters
@@ -1431,6 +1436,13 @@ Typical commands:
 ```bash
 ./scripts/runners/products/run_stage_ocean_downscaling_sample_products.sh
 DRY_RUN=no ./scripts/runners/products/run_stage_ocean_downscaling_sample_products.sh
+```
+
+The individual-depth source can be disabled with `STAGE_DEPTHS=no`, but the
+default is now to stage it from:
+
+```text
+/home/SB5/ocean_downscaling_products_depths_geotiff
 ```
 
 ### Curated by-depth NetCDF and GeoTIFF trees

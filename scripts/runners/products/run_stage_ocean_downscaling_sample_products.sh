@@ -21,6 +21,7 @@ WALLTIME="${WALLTIME:-04:00:00}"
 
 LAYERS_SOURCE_ROOT="${LAYERS_SOURCE_ROOT:-/home/SB5/ocean_downscaling_products_layers_geotiff}"
 PELAGIC_SOURCE_ROOT="${PELAGIC_SOURCE_ROOT:-/home/SB5/ocean_downscaling_products_pelagic_geotiff}"
+DEPTHS_SOURCE_ROOT="${DEPTHS_SOURCE_ROOT:-/home/SB5/ocean_downscaling_products_depths_geotiff}"
 STAGE_ROOT="${STAGE_ROOT:-/home/SB5/ocean_downscaling_sample_products_geotiff}"
 RESOLUTION="${RESOLUTION:-0p05}"
 MEMBER="${MEMBER:-001}"
@@ -29,6 +30,7 @@ EXTENSIONS="${EXTENSIONS:-tif tiff}"
 DRY_RUN="${DRY_RUN:-yes}"
 OVERWRITE="${OVERWRITE:-yes}"
 STAGE_MANIFESTS="${STAGE_MANIFESTS:-yes}"
+STAGE_DEPTHS="${STAGE_DEPTHS:-yes}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -47,14 +49,21 @@ if [[ ! -d "${PELAGIC_SOURCE_ROOT}" ]]; then
   exit 1
 fi
 
+if [[ "${STAGE_DEPTHS}" == "yes" && ! -d "${DEPTHS_SOURCE_ROOT}" ]]; then
+  echo "ERROR: DEPTHS_SOURCE_ROOT does not exist: ${DEPTHS_SOURCE_ROOT}"
+  exit 1
+fi
+
 echo "Submitting Shiny-viewer sample product staging job:"
 echo "LAYERS SOURCE  : ${LAYERS_SOURCE_ROOT}"
 echo "PELAGIC SOURCE : ${PELAGIC_SOURCE_ROOT}"
+echo "DEPTHS SOURCE  : ${DEPTHS_SOURCE_ROOT}"
 echo "STAGE ROOT     : ${STAGE_ROOT}"
 echo "RESOLUTION     : ${RESOLUTION}"
 echo "REALIZATION    : first sorted per model/scenario/variable/window"
 echo "DRY RUN        : ${DRY_RUN}"
 echo "STAGE MANIFESTS: ${STAGE_MANIFESTS}"
+echo "STAGE DEPTHS   : ${STAGE_DEPTHS}"
 
 jid=$(
   sbatch --parsable \
@@ -67,7 +76,7 @@ jid=$(
     --time="${WALLTIME}" \
     --output="${LOG_DIR}/stage_sample_products_%j.out" \
     --error="${LOG_DIR}/stage_sample_products_%j.err" \
-    --export=ALL,LAYERS_SOURCE_ROOT="${LAYERS_SOURCE_ROOT}",PELAGIC_SOURCE_ROOT="${PELAGIC_SOURCE_ROOT}",STAGE_ROOT="${STAGE_ROOT}",RESOLUTION="${RESOLUTION}",MEMBER="${MEMBER}",PHYSICAL_VARS="${PHYSICAL_VARS}",EXTENSIONS="${EXTENSIONS}",DRY_RUN="${DRY_RUN}",OVERWRITE="${OVERWRITE}",STAGE_MANIFESTS="${STAGE_MANIFESTS}" \
+    --export=ALL,LAYERS_SOURCE_ROOT="${LAYERS_SOURCE_ROOT}",PELAGIC_SOURCE_ROOT="${PELAGIC_SOURCE_ROOT}",DEPTHS_SOURCE_ROOT="${DEPTHS_SOURCE_ROOT}",STAGE_ROOT="${STAGE_ROOT}",RESOLUTION="${RESOLUTION}",MEMBER="${MEMBER}",PHYSICAL_VARS="${PHYSICAL_VARS}",EXTENSIONS="${EXTENSIONS}",DRY_RUN="${DRY_RUN}",OVERWRITE="${OVERWRITE}",STAGE_MANIFESTS="${STAGE_MANIFESTS}",STAGE_DEPTHS="${STAGE_DEPTHS}" \
     "${TOOL_SCRIPT}"
 )
 

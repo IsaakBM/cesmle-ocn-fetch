@@ -11,12 +11,14 @@
 #
 #  Purpose:
 #    - Copy a small Shiny-viewer-ready sample product tree from curated
-#      layer and pelagic product outputs
+#      layer, pelagic, and individual-depth product outputs
 #    - Preserve the viewer product layout:
 #        layers/baseline/<variable>/<resolution>/*
 #        layers/future/<scenario>/<variable>/<window>/<resolution>/*
 #        pelagic/baseline/<variable>/<resolution>/*
 #        pelagic/future/<scenario>/<variable>/<window>/<resolution>/*
+#        depths/baseline/<variable>/<resolution>/*
+#        depths/future/<scenario>/<variable>/<window>/<resolution>/*
 #    - Restrict sample staging to one resolution, usually 0p05
 #    - For future products with multiple realizations/members, keep one
 #      deterministic realization per model/scenario/variable/window/resolution
@@ -34,7 +36,9 @@ shopt -s nullglob
 #                         (default: /home/SB5/ocean_downscaling_products_layers_geotiff)
 #   PELAGIC_SOURCE_ROOT : pelagic product source root
 #                         (default: /home/SB5/ocean_downscaling_products_pelagic_geotiff)
-#   STAGE_ROOT          : output root that will contain layers/ and pelagic/
+#   DEPTHS_SOURCE_ROOT  : individual-depth product source root
+#                         (default: /home/SB5/ocean_downscaling_products_depths_geotiff)
+#   STAGE_ROOT          : output root that will contain layers/, pelagic/, and depths/
 #                         (default: /home/SB5/ocean_downscaling_sample_products_geotiff)
 #   RESOLUTION          : resolution directory to copy
 #                         (default: 0p05)
@@ -56,10 +60,15 @@ shopt -s nullglob
 #                         yes -> create filtered staged manifest CSVs
 #                         no  -> skip manifest staging
 #                         (default: yes)
+#   STAGE_DEPTHS        : yes | no
+#                         yes -> include individual-depth GeoTIFF products
+#                         no  -> stage only layers and pelagic products
+#                         (default: yes)
 # ==============================================================================
 
 LAYERS_SOURCE_ROOT="${LAYERS_SOURCE_ROOT:-/home/SB5/ocean_downscaling_products_layers_geotiff}"
 PELAGIC_SOURCE_ROOT="${PELAGIC_SOURCE_ROOT:-/home/SB5/ocean_downscaling_products_pelagic_geotiff}"
+DEPTHS_SOURCE_ROOT="${DEPTHS_SOURCE_ROOT:-/home/SB5/ocean_downscaling_products_depths_geotiff}"
 STAGE_ROOT="${STAGE_ROOT:-/home/SB5/ocean_downscaling_sample_products_geotiff}"
 RESOLUTION="${RESOLUTION:-0p05}"
 MEMBER="${MEMBER:-001}"
@@ -68,6 +77,7 @@ EXTENSIONS="${EXTENSIONS:-tif tiff}"
 DRY_RUN="${DRY_RUN:-no}"
 OVERWRITE="${OVERWRITE:-yes}"
 STAGE_MANIFESTS="${STAGE_MANIFESTS:-yes}"
+STAGE_DEPTHS="${STAGE_DEPTHS:-yes}"
 
 case "${DRY_RUN}" in
   yes|no) ;;
@@ -89,6 +99,14 @@ case "${STAGE_MANIFESTS}" in
   yes|no) ;;
   *)
     echo "ERROR: STAGE_MANIFESTS must be yes or no"
+    exit 1
+    ;;
+esac
+
+case "${STAGE_DEPTHS}" in
+  yes|no) ;;
+  *)
+    echo "ERROR: STAGE_DEPTHS must be yes or no"
     exit 1
     ;;
 esac
@@ -249,11 +267,13 @@ stage_manifests() {
   python3 - \
     "${LAYERS_SOURCE_ROOT}" \
     "${PELAGIC_SOURCE_ROOT}" \
+    "${DEPTHS_SOURCE_ROOT}" \
     "${STAGE_ROOT}" \
     "${RESOLUTION}" \
     "${MEMBER}" \
     "${PHYSICAL_VARS}" \
-    "${DRY_RUN}" <<'PY'
+    "${DRY_RUN}" \
+    "${STAGE_DEPTHS}" <<'PY'
 import csv
 import os
 import sys
@@ -261,12 +281,14 @@ import sys
 (
     layers_source_root,
     pelagic_source_root,
+    depths_source_root,
     stage_root,
     resolution,
     _member,
     _physical_vars_text,
     dry_run,
-) = sys.argv[1:8]
+    stage_depths,
+) = sys.argv[1:10]
 
 selected_realizations = {}
 
@@ -410,10 +432,14 @@ def write_manifest(name, rows):
 
 all_rows = []
 by_product = {}
-for product_type, source_root in [
+product_roots = [
     ("layers", layers_source_root),
     ("pelagic", pelagic_source_root),
-]:
+]
+if stage_depths == "yes":
+    product_roots.append(("depths", depths_source_root))
+
+for product_type, source_root in product_roots:
     rows = []
     for row in sorted(iter_manifest_rows(product_type, source_root) or [], key=lambda item: item.get("geotiff_file", "")):
         staged_info = staged_info_for_row(row, source_root)
@@ -431,6 +457,8 @@ for product_type, source_root in [
 
 write_manifest("layers_geotiff_manifest.csv", by_product.get("layers", []))
 write_manifest("pelagic_geotiff_manifest.csv", by_product.get("pelagic", []))
+if stage_depths == "yes":
+    write_manifest("depths_geotiff_manifest.csv", by_product.get("depths", []))
 write_manifest("geotiff_manifest.csv", all_rows)
 PY
 }
@@ -439,6 +467,7 @@ echo "============================================================"
 echo "Staging ocean downscaling sample products"
 echo "LAYERS SOURCE  : ${LAYERS_SOURCE_ROOT}"
 echo "PELAGIC SOURCE : ${PELAGIC_SOURCE_ROOT}"
+echo "DEPTHS SOURCE  : ${DEPTHS_SOURCE_ROOT}"
 echo "STAGE ROOT     : ${STAGE_ROOT}"
 echo "RESOLUTION     : ${RESOLUTION}"
 echo "REALIZATION    : first sorted per model/scenario/variable/window"
@@ -446,16 +475,23 @@ echo "EXTENSIONS     : ${EXTENSIONS}"
 echo "DRY RUN        : ${DRY_RUN}"
 echo "OVERWRITE      : ${OVERWRITE}"
 echo "STAGE MANIFESTS: ${STAGE_MANIFESTS}"
+echo "STAGE DEPTHS   : ${STAGE_DEPTHS}"
 echo "============================================================"
 
 if [[ "${DRY_RUN}" == "no" ]]; then
   mkdir -p "${STAGE_ROOT}/layers" "${STAGE_ROOT}/pelagic"
+  if [[ "${STAGE_DEPTHS}" == "yes" ]]; then
+    mkdir -p "${STAGE_ROOT}/depths"
+  fi
 fi
 
 COPIED_COUNT=0
 SKIPPED_COUNT=0
 stage_product_type "layers" "${LAYERS_SOURCE_ROOT}"
 stage_product_type "pelagic" "${PELAGIC_SOURCE_ROOT}"
+if [[ "${STAGE_DEPTHS}" == "yes" ]]; then
+  stage_product_type "depths" "${DEPTHS_SOURCE_ROOT}"
+fi
 stage_manifests
 
 echo

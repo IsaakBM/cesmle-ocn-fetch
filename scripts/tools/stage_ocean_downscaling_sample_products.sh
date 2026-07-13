@@ -297,17 +297,17 @@ def iter_manifest_rows(product_type, source_root):
     if not os.path.isdir(source_root):
         return
 
-    for dirpath, _, file_names in os.walk(source_root):
-        if "geotiff_manifest.csv" not in file_names:
-            continue
+    manifest = os.path.join(source_root, "geotiff_manifest.csv")
+    if not os.path.isfile(manifest):
+        print(f"[WARN] Missing root GeoTIFF manifest for {product_type}: {manifest}", file=sys.stderr)
+        return
 
-        manifest = os.path.join(dirpath, "geotiff_manifest.csv")
-        with open(manifest, newline="") as handle:
-            reader = csv.DictReader(handle)
-            for row in reader:
-                row["_manifest_file"] = manifest
-                row["_product_type"] = product_type
-                yield row
+    with open(manifest, newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            row["_manifest_file"] = manifest
+            row["_product_type"] = product_type
+            yield row
 
 
 def staged_info_for_row(row, source_root):

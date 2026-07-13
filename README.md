@@ -103,6 +103,8 @@ Optional individual-depth products can also be derived from the same curated
 3D tree with [run_split_ocean_downscaling_products_by_depth.sh](scripts/runners/products/run_split_ocean_downscaling_products_by_depth.sh).
 Set `MAX_DEPTH_M=600` and `GEOTIFF=yes` to create shallow individual-depth
 NetCDF and GeoTIFF products for species workflows.
+The resulting depth NetCDF tree can be exported to Parquet with
+[run_export_ocean_downscaling_products_depths_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_depths_to_parquet.sh).
 
 ## Purpose
 
@@ -200,6 +202,7 @@ cesmle-ocn-fetch/
 │   │   │   ├── run_export_ocean_downscaling_products_bydepth_to_csv.sh
 │   │   │   ├── run_export_ocean_downscaling_products_layers_to_parquet.sh
 │   │   │   ├── run_export_ocean_downscaling_products_pelagic_to_parquet.sh
+│   │   │   ├── run_export_ocean_downscaling_products_depths_to_parquet.sh
 │   │   │   ├── run_export_ocean_downscaling_products_layers_to_geotiff.sh
 │   │   │   └── run_export_ocean_downscaling_products_pelagic_to_geotiff.sh
 │   │   ├── glorys/
@@ -1322,24 +1325,27 @@ Method note:
 - pelagic-zone means therefore depend on either explicit vertical bounds or
   reconstructed bounds from the shared depth-center coordinate
 
-### Curated layer and pelagic Parquet trees
+### Curated Parquet trees
 
 Built with:
 
 - [export_ocean_downscaling_products_to_parquet.sh](scripts/tools/export_ocean_downscaling_products_to_parquet.sh)
 - [run_export_ocean_downscaling_products_layers_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_layers_to_parquet.sh)
 - [run_export_ocean_downscaling_products_pelagic_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_parquet.sh)
+- [run_export_ocean_downscaling_products_depths_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_depths_to_parquet.sh)
 
 Expected output roots:
 
 ```text
 /home/SB5/ocean_downscaling_products_layers_parquet/
 /home/SB5/ocean_downscaling_products_pelagic_parquet/
+/home/SB5/ocean_downscaling_products_bydepth_parquet/
+/home/SB5/ocean_downscaling_products_depths_parquet/
 ```
 
 Notes:
 
-- mirrors the fine-layer or pelagic NetCDF tree
+- mirrors the fine-layer, pelagic, or individual-depth NetCDF tree
 - exports each 2D NetCDF file to one Parquet table
 - the runners submit one job per main subtree:
   - `baseline/<var>`
@@ -1348,11 +1354,18 @@ Notes:
   configured to use `5` CPUs per Slurm task
 - `OVERWRITE=no` by default skips existing Parquet products; set
   `OVERWRITE=yes` to refresh them
+- the individual-depth Parquet runner mirrors the split-depth root selection:
+  empty or `all` `MAX_DEPTH_M` reads `/home/SB5/ocean_downscaling_products_bydepth`
+  and writes `/home/SB5/ocean_downscaling_products_bydepth_parquet`; a bounded
+  value such as `MAX_DEPTH_M=600` reads `/home/SB5/ocean_downscaling_products_depths`
+  and writes `/home/SB5/ocean_downscaling_products_depths_parquet`
 - Parquet columns are:
   - `x`
   - `y`
   - `depth`
   - `<variable>_<units>`
+- for fine-layer and pelagic exports, `depth` is a layer or zone label; for
+  individual-depth exports, `depth` is the numeric depth in meters
 - this remains the current tabular final delivery export
 
 ### Curated layer and pelagic GeoTIFF trees
@@ -1507,6 +1520,10 @@ bash scripts/runners/products/run_split_ocean_downscaling_products_by_depth.sh
 MAX_DEPTH_M=600 \
 GEOTIFF=yes \
 bash scripts/runners/products/run_split_ocean_downscaling_products_by_depth.sh
+
+# Export the matching shallow individual-depth NetCDF tree to Parquet
+MAX_DEPTH_M=600 \
+bash scripts/runners/products/run_export_ocean_downscaling_products_depths_to_parquet.sh
 ```
 
 ### Curated by-depth CSV tree

@@ -10,7 +10,8 @@
 #  Use at your own risk. Caveat emptor.
 #
 #  Purpose:
-#    - Read curated aggregated NetCDF products from a mirrored product tree
+#    - Read curated aggregated or individual-depth NetCDF products from a
+#      mirrored product tree
 #    - Mirror the same structure into a Parquet tree
 #    - Export each 2D NetCDF file to a columnar Parquet table
 #    - Write Parquet columns in the same style as the older CSV workflow:
@@ -161,6 +162,24 @@ def sanitize_units(units: str) -> str:
     text = re.sub(r"[^A-Za-z0-9+-]", "", text)
     return text or "unitless"
 
+def scalar_depth_from_dataset(ds):
+    for depth_name in ["depth", "depth_below_sea", "lev", "z_t"]:
+        if depth_name in ds.coords:
+            depth_da = ds[depth_name].squeeze(drop=True)
+            if depth_da.ndim == 0:
+                return float(depth_da.values)
+        elif depth_name in ds:
+            depth_da = ds[depth_name].squeeze(drop=True)
+            if depth_da.ndim == 0:
+                return float(depth_da.values)
+    return None
+
+def depth_from_filename(path: str):
+    match = re.search(r"_depth_(\d+)p(\d+)m\.nc$", path)
+    if not match:
+        return None
+    return float(f"{int(match.group(1))}.{match.group(2)}")
+
 with xr.open_dataset(infile) as ds:
     data_vars = [v for v in ds.data_vars if v not in ignored_vars]
     if not data_vars:
@@ -223,6 +242,10 @@ with xr.open_dataset(infile) as ds:
             if attr_name in ds.attrs:
                 depth_value = str(ds.attrs[attr_name])
                 break
+    if depth_value is None:
+        depth_value = scalar_depth_from_dataset(ds)
+    if depth_value is None:
+        depth_value = depth_from_filename(base)
     if depth_value is None:
         raise SystemExit(f"Could not derive depth label from filename or metadata in {infile}")
 

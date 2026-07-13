@@ -65,6 +65,14 @@ shopt -s nullglob
 #                    yes -> replace existing outputs
 #                    no  -> keep existing outputs
 #                    (default: no)
+#   FUTURE_UO_UVEL_CM_S_TO_M_S
+#                  : yes | no
+#                    yes -> convert CESM future rcp85 uo products derived from
+#                           POP UVEL from cm/s to m/s before GeoTIFF encoding
+#                    (default: yes)
+#   FILE_INCLUDE_REGEX
+#                  : optional extended regex matched against paths relative to
+#                    IN_ROOT, useful for refreshing a subset of products
 # ==============================================================================
 IN_ROOT="${IN_ROOT:-/home/SB5/ocean_downscaling_products_layers}"
 OUT_ROOT="${OUT_ROOT:-/home/SB5/ocean_downscaling_products_layers_geotiff}"
@@ -77,6 +85,8 @@ ENCODE_DTYPE="${ENCODE_DTYPE:-auto}"
 COMPRESS="${COMPRESS:-DEFLATE}"
 NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-5}}"
 OVERWRITE="${OVERWRITE:-no}"
+FUTURE_UO_UVEL_CM_S_TO_M_S="${FUTURE_UO_UVEL_CM_S_TO_M_S:-yes}"
+FILE_INCLUDE_REGEX="${FILE_INCLUDE_REGEX:-}"
 
 if [[ ! -d "${IN_ROOT}" ]]; then
   echo "ERROR: IN_ROOT does not exist: ${IN_ROOT}"
@@ -100,6 +110,14 @@ case "${OVERWRITE}" in
   yes|no) ;;
   *)
     echo "ERROR: OVERWRITE must be yes or no"
+    exit 1
+    ;;
+esac
+
+case "${FUTURE_UO_UVEL_CM_S_TO_M_S}" in
+  yes|no) ;;
+  *)
+    echo "ERROR: FUTURE_UO_UVEL_CM_S_TO_M_S must be yes or no"
     exit 1
     ;;
 esac
@@ -184,6 +202,7 @@ process_one_file() {
     "${COMPRESS}" \
     "${manifest_part}" \
     "${OVERWRITE}" \
+    "${FUTURE_UO_UVEL_CM_S_TO_M_S}" \
     "${TMP_DIR}/$(basename "${manifest_part}" .csv).encoded.tmp.nc" <<'PY'
 import csv
 import os
@@ -217,8 +236,9 @@ except Exception:
     compress,
     manifest_part,
     overwrite,
+    future_uo_uvel_cm_s_to_m_s,
     tmp_encoded_nc,
-) = sys.argv[1:11]
+) = sys.argv[1:12]
 
 preferred_xy = [
     ("lon", "lat"),
@@ -287,6 +307,24 @@ def detect_variable_key(path, main_var):
             return token
     return main_var
 
+def should_convert_future_uo_uvel_to_m_s(path, main_var, variable_key):
+    if future_uo_uvel_cm_s_to_m_s != "yes":
+        return False
+
+    parts = path.split("/")
+    lower_parts = [part.lower() for part in parts]
+    lower_path = path.lower()
+    variable_key_lower = variable_key.lower()
+    main_var_lower = main_var.lower()
+
+    if variable_key_lower != "uo" and main_var_lower != "uo":
+        return False
+    if "future" not in lower_parts or "rcp85" not in lower_parts:
+        return False
+    if "cesm_f09_g16" not in lower_parts:
+        return False
+    return "uvel" in lower_path
+
 scale_factors = parse_scale_factors(scale_factors_text)
 default_scale = float(default_scale_text)
 
@@ -339,6 +377,13 @@ with xr.open_dataset(infile) as ds:
     if not np.isfinite(scale_factor) or scale_factor <= 0:
         raise SystemExit(f"Scale factor must be positive for {infile}: {scale_factor}")
 
+    units = str(da.attrs.get("units", ""))
+    unit_conversion = ""
+    if should_convert_future_uo_uvel_to_m_s(rel_path, main_var, variable_key):
+        values = values / 100.0
+        units = "m s-1"
+        unit_conversion = "UVEL cm s-1 converted to uo m s-1 by dividing by 100 before GeoTIFF encoding"
+
     encoded = np.rint(values * scale_factor)
     valid = np.isfinite(encoded)
 
@@ -371,7 +416,6 @@ with xr.open_dataset(infile) as ds:
     if x_name.lower() in {"lon", "longitude"} and y_name.lower() in {"lat", "latitude"}:
         crs = "EPSG:4326"
 
-    units = str(da.attrs.get("units", ""))
     os.makedirs(os.path.dirname(outfile), exist_ok=True)
     skip_existing = os.path.exists(outfile) and overwrite == "no"
     if skip_existing:
@@ -537,6 +581,7 @@ with xr.open_dataset(infile) as ds:
         "max_encoded": encoded_max,
         "compress": compress,
         "crs": crs or "",
+        "unit_conversion": unit_conversion,
     }
 
     with open(manifest_part, "w", newline="") as handle:
@@ -565,11 +610,25 @@ echo "ENCODE DTYPE   : ${ENCODE_DTYPE}"
 echo "COMPRESS       : ${COMPRESS}"
 echo "PARALLEL FILES : ${NPROC}"
 echo "OVERWRITE      : ${OVERWRITE}"
+echo "FILE FILTER    : ${FILE_INCLUDE_REGEX:-<none>}"
 echo "============================================================"
 
 mapfile -t files < <(find "${IN_ROOT}" -type f -name "*.nc" | sort)
+if [[ -n "${FILE_INCLUDE_REGEX}" ]]; then
+  filtered_files=()
+  for file in "${files[@]}"; do
+    rel_file="${file#${IN_ROOT}/}"
+    if [[ "${rel_file}" =~ ${FILE_INCLUDE_REGEX} ]]; then
+      filtered_files+=("${file}")
+    fi
+  done
+  files=("${filtered_files[@]}")
+fi
 if (( ${#files[@]} == 0 )); then
   echo "ERROR: No NetCDF files found under: ${IN_ROOT}"
+  if [[ -n "${FILE_INCLUDE_REGEX}" ]]; then
+    echo "ERROR: FILE_INCLUDE_REGEX matched no files: ${FILE_INCLUDE_REGEX}"
+  fi
   exit 1
 fi
 

@@ -669,16 +669,82 @@ if (( xargs_status != 0 )); then
 fi
 
 manifest="${OUT_ROOT}/geotiff_manifest.csv"
+new_manifest="${TMP_DIR}/geotiff_manifest.new.$$.csv"
 first_part="${manifest_parts[0]:-}"
 if [[ -z "${first_part}" ]]; then
   echo "ERROR: No manifest parts were created"
   exit 1
 fi
 
-head -n 1 "${first_part}" > "${manifest}"
+head -n 1 "${first_part}" > "${new_manifest}"
 for part in "${manifest_parts[@]}"; do
-  tail -n +2 "${part}" >> "${manifest}"
+  tail -n +2 "${part}" >> "${new_manifest}"
 done
+
+if [[ -n "${FILE_INCLUDE_REGEX}" && -f "${manifest}" ]]; then
+  echo "Merging filtered manifest refresh into existing manifest: ${manifest}"
+  "${GEOTIFF_PYTHON}" - "${manifest}" "${new_manifest}" "${manifest}" <<'PY'
+import csv
+import os
+import sys
+import tempfile
+
+old_manifest, refreshed_manifest, out_manifest = sys.argv[1:4]
+key_field = "relative_path"
+
+def read_rows(path):
+    with open(path, newline="") as handle:
+        reader = csv.DictReader(handle)
+        return list(reader), list(reader.fieldnames or [])
+
+old_rows, old_fields = read_rows(old_manifest)
+new_rows, new_fields = read_rows(refreshed_manifest)
+
+fields = []
+for field_list in (old_fields, new_fields):
+    for field in field_list:
+        if field not in fields:
+            fields.append(field)
+
+merged = {}
+order = []
+for row in old_rows:
+    key = row.get(key_field)
+    if not key:
+        key = row.get("geotiff_file", "")
+    if key not in merged:
+        order.append(key)
+    merged[key] = row
+
+for row in new_rows:
+    key = row.get(key_field)
+    if not key:
+        key = row.get("geotiff_file", "")
+    if key not in merged:
+        order.append(key)
+    merged[key] = row
+
+out_dir = os.path.dirname(out_manifest)
+fd, tmp_path = tempfile.mkstemp(prefix=".geotiff_manifest.", suffix=".csv", dir=out_dir)
+os.close(fd)
+try:
+    with open(tmp_path, "w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for key in order:
+            writer.writerow(merged[key])
+    os.replace(tmp_path, out_manifest)
+finally:
+    try:
+        os.remove(tmp_path)
+    except FileNotFoundError:
+        pass
+
+print(f"old_rows={len(old_rows)} refreshed_rows={len(new_rows)} merged_rows={len(order)}")
+PY
+else
+  mv -f "${new_manifest}" "${manifest}"
+fi
 
 echo
 echo "Manifest written: ${manifest}"

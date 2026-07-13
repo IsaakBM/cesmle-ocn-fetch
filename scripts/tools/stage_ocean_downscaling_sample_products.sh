@@ -401,7 +401,12 @@ def write_manifest(name, rows):
         print(f"[WARN] No manifest rows staged for: {name}", file=sys.stderr)
         return
 
-    base_fields = [field for field in rows[0].keys() if not field.startswith("_")]
+    base_fields = []
+    for row in rows:
+        for field in row.keys():
+            if field.startswith("_") or field in base_fields:
+                continue
+            base_fields.append(field)
     extra_fields = [
         "product_type",
         "manifest_file",

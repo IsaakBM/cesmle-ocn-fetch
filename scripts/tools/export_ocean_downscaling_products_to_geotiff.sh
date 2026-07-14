@@ -314,14 +314,12 @@ def should_convert_future_uo_uvel_to_m_s(path, main_var, variable_key):
     parts = path.split("/")
     lower_parts = [part.lower() for part in parts]
     lower_path = path.lower()
-    variable_key_lower = variable_key.lower()
-    main_var_lower = main_var.lower()
 
-    if variable_key_lower != "uo" and main_var_lower != "uo":
-        return False
     if "future" not in lower_parts or "rcp85" not in lower_parts:
         return False
     if "cesm_f09_g16" not in lower_parts:
+        return False
+    if "uo" not in lower_parts:
         return False
     return "uvel" in lower_path
 

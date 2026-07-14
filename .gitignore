@@ -67,6 +67,7 @@ config/*.env
 # never commit large data files
 **/*.nc
 **/*.part
+data/manifests/ipcc_esgf_nci_cmip6_files.csv
 
 # slurm/app logs
 logs/

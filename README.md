@@ -711,11 +711,9 @@ Expected input organization:
 ```text
 /home/SB5/ipcc_esgf_downloads/
 ├── historical/
-│   ├── chl/
-│   └── o2/
-└── ssp585/
-    ├── chl/
-    └── o2/
+│   └── <var>/
+└── <ssp-scenario>/
+    └── <var>/
 ```
 
 Regridded monthly products are organized as:
@@ -759,6 +757,29 @@ and carries `model`, `scenario`, and `member` into later filenames. The default
 member behavior is `MEMBER=auto`: one member is used automatically, zero members
 are skipped with a warning, and multiple members stop the run until
 `MEMBER=<member>` is set explicitly.
+
+Before downloading large NetCDF files, use
+[discover_ipcc_esgf_nci_cmip6.R](scripts/R/discover_ipcc_esgf_nci_cmip6.R)
+to query the ESGF NCI search API and write reviewable manifests:
+
+```bash
+Rscript scripts/R/discover_ipcc_esgf_nci_cmip6.R
+```
+
+The default discovery scan targets `Omon`, `gn`, variables `thetao`, `so`,
+`ph`, `o2`, `chl`, `uo`, `vo`, `zooc`, `zos`, and `mlotst`, experiments
+`historical`, `ssp126`, `ssp245`, and `ssp585`, and windows `2006-2014`,
+`2030-2060`, `2050-2060`, and `2090-2100`. To test or restrict the scan to
+candidate models:
+
+```bash
+SOURCE_IDS="CESM2 CNRM-ESM2-1" \
+VARS="thetao so o2 chl" \
+Rscript scripts/R/discover_ipcc_esgf_nci_cmip6.R
+```
+
+Outputs are written under `data/manifests/`, including selected first-member
+file URLs and model-level coverage summaries.
 
 Operational sequence for the current IPCC branch:
 

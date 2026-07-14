@@ -152,42 +152,6 @@ file_overlaps_window <- function(file_start, file_end, window_start, window_end)
   !is.na(file_start) && !is.na(file_end) && file_start <= window_end && file_end >= window_start
 }
 
-fetch_docs <- function(variable_id, experiment_id, source_id = NULL) {
-  all_docs <- list()
-  start <- 0L
-
-  for (page in seq_len(max_pages)) {
-    params <- list(
-      format = "application/solr+json",
-      project = project,
-      type = "File",
-      latest = latest,
-      table_id = table_id,
-      variable_id = variable_id,
-      experiment_id = experiment_id,
-      grid_label = grid_label,
-      limit = rows,
-      offset = start
-    )
-    if (nzchar(replica)) params$replica <- replica
-    if (!is.null(source_id)) params$source_id <- source_id
-
-    url <- query_url(params)
-    message("Query ", variable_id, " ", experiment_id, if (!is.null(source_id)) paste0(" ", source_id) else "", " offset=", start)
-
-    response <- jsonlite::fromJSON(url, simplifyVector = FALSE)
-    docs <- response$response$docs
-    if (length(docs) == 0) break
-
-    all_docs <- c(all_docs, docs)
-    num_found <- response$response$numFound
-    start <- start + length(docs)
-    if (start >= num_found) break
-  }
-
-  all_docs
-}
-
 doc_to_row <- function(doc) {
   title <- first_value(doc$title)
   time_range <- parse_time_range(title)
@@ -215,27 +179,76 @@ doc_to_row <- function(doc) {
   )
 }
 
-docs <- list()
+fetch_file_rows <- function(variable_id, experiment_id, source_id = NULL) {
+  row_parts <- list()
+  row_part_i <- 1L
+  start <- 0L
+
+  for (page in seq_len(max_pages)) {
+    params <- list(
+      format = "application/solr+json",
+      project = project,
+      type = "File",
+      latest = latest,
+      table_id = table_id,
+      variable_id = variable_id,
+      experiment_id = experiment_id,
+      grid_label = grid_label,
+      limit = rows,
+      offset = start
+    )
+    if (nzchar(replica)) params$replica <- replica
+    if (!is.null(source_id)) params$source_id <- source_id
+
+    url <- query_url(params)
+    message("Query ", variable_id, " ", experiment_id, if (!is.null(source_id)) paste0(" ", source_id) else "", " offset=", start)
+
+    response <- jsonlite::fromJSON(url, simplifyVector = FALSE)
+    docs <- response$response$docs
+    if (length(docs) == 0) break
+
+    row_parts[[row_part_i]] <- do.call(rbind, lapply(docs, doc_to_row))
+    row_part_i <- row_part_i + 1L
+
+    num_found <- response$response$numFound
+    start <- start + length(docs)
+    if (start >= num_found) break
+  }
+
+  if (length(row_parts) == 0) {
+    return(data.frame())
+  }
+  do.call(rbind, row_parts)
+}
+
+file_parts <- list()
+file_part_i <- 1L
 for (variable_id in variables) {
   for (experiment_id in experiments) {
     if (length(source_ids) > 0) {
       for (source_id in source_ids) {
-        docs <- c(docs, fetch_docs(variable_id, experiment_id, source_id))
+        file_parts[[file_part_i]] <- fetch_file_rows(variable_id, experiment_id, source_id)
+        file_part_i <- file_part_i + 1L
       }
     } else {
-      docs <- c(docs, fetch_docs(variable_id, experiment_id))
+      file_parts[[file_part_i]] <- fetch_file_rows(variable_id, experiment_id)
+      file_part_i <- file_part_i + 1L
     }
   }
 }
 
-if (length(docs) == 0) {
+file_parts <- file_parts[vapply(file_parts, nrow, integer(1)) > 0]
+if (length(file_parts) == 0) {
   stop("No ESGF files returned for the configured query.")
 }
 
-files <- do.call(rbind, lapply(docs, doc_to_row))
-files <- unique(files)
+message("Combining ESGF file rows")
+files <- do.call(rbind, file_parts)
+file_key <- paste(files$id, files$http_url, files$checksum, sep = "|")
+files <- files[!duplicated(file_key), , drop = FALSE]
 files <- files[!is.na(files$http_url) & nzchar(files$http_url), , drop = FALSE]
 
+message("Selecting first available members")
 files$member_sort_key <- vapply(files$member_id, member_key, character(1))
 files <- files[order(
   files$source_id,
@@ -290,6 +303,7 @@ selected_file_key <- paste(
 )
 selected_files <- selected_files[!duplicated(selected_file_key), , drop = FALSE]
 
+message("Building coverage tables")
 coverage_parts <- list()
 part_i <- 1L
 for (source_id in sort(unique(selected_files$source_id))) {
@@ -353,6 +367,7 @@ coverage_path <- file.path(out_dir, paste0(out_prefix, "_coverage.csv"))
 summary_path <- file.path(out_dir, paste0(out_prefix, "_model_summary.csv"))
 wget_manifest_path <- file.path(out_dir, paste0(out_prefix, "_wget_manifest.csv"))
 
+message("Writing CSV manifests")
 utils::write.csv(files, file_manifest_path, row.names = FALSE, na = "")
 utils::write.csv(selected_files, selected_manifest_path, row.names = FALSE, na = "")
 utils::write.csv(coverage, coverage_path, row.names = FALSE, na = "")

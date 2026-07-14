@@ -57,6 +57,14 @@ shopt -s nullglob
 #                      yes -> replace existing outputs
 #                      no  -> keep existing outputs
 #                      (default: no)
+#   FUTURE_UO_UVEL_CM_S_TO_M_S
+#                    : yes | no
+#                      yes -> convert CESM future rcp85 uo products derived
+#                             from POP UVEL from cm/s to m/s before writing
+#                      (default: yes)
+#   FILE_INCLUDE_REGEX
+#                    : optional extended regex matched against paths relative
+#                      to IN_ROOT, useful for refreshing a subset of products
 # ==============================================================================
 IN_ROOT="${IN_ROOT:-/home/SB5/ocean_downscaling_products_layers}"
 OUT_ROOT="${OUT_ROOT:-/home/SB5/ocean_downscaling_products_layers_parquet}"
@@ -66,6 +74,8 @@ PARQUET_PYTHON="${PARQUET_PYTHON:-/home/ibrito/venvs/parquet_export/bin/python}"
 PARQUET_ENGINE="${PARQUET_ENGINE:-pyarrow}"
 NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-5}}"
 OVERWRITE="${OVERWRITE:-no}"
+FUTURE_UO_UVEL_CM_S_TO_M_S="${FUTURE_UO_UVEL_CM_S_TO_M_S:-yes}"
+FILE_INCLUDE_REGEX="${FILE_INCLUDE_REGEX:-}"
 
 if [[ ! -d "${IN_ROOT}" ]]; then
   echo "ERROR: IN_ROOT does not exist: ${IN_ROOT}"
@@ -79,6 +89,11 @@ fi
 
 if [[ "${OVERWRITE}" != "yes" && "${OVERWRITE}" != "no" ]]; then
   echo "ERROR: OVERWRITE must be yes or no"
+  exit 1
+fi
+
+if [[ "${FUTURE_UO_UVEL_CM_S_TO_M_S}" != "yes" && "${FUTURE_UO_UVEL_CM_S_TO_M_S}" != "no" ]]; then
+  echo "ERROR: FUTURE_UO_UVEL_CM_S_TO_M_S must be yes or no"
   exit 1
 fi
 
@@ -134,7 +149,7 @@ process_one_file() {
   echo
   echo "[START] ${rel_path}"
 
-  "${PARQUET_PYTHON}" - "${infile}" "${outfile}" "${DROP_MISSING}" "${PARQUET_ENGINE}" <<'PY'
+  "${PARQUET_PYTHON}" - "${infile}" "${outfile}" "${DROP_MISSING}" "${PARQUET_ENGINE}" "${rel_path}" "${FUTURE_UO_UVEL_CM_S_TO_M_S}" <<'PY'
 import os
 import re
 import sys
@@ -142,7 +157,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-infile, outfile, drop_missing_flag, parquet_engine = sys.argv[1:5]
+infile, outfile, drop_missing_flag, parquet_engine, rel_path, future_uo_uvel_cm_s_to_m_s = sys.argv[1:7]
 drop_missing = drop_missing_flag == "yes"
 
 preferred_xy = [
@@ -179,6 +194,22 @@ def depth_from_filename(path: str):
     if not match:
         return None
     return float(f"{int(match.group(1))}.{match.group(2)}")
+
+def should_convert_future_uo_uvel_to_m_s(path: str):
+    if future_uo_uvel_cm_s_to_m_s != "yes":
+        return False
+
+    parts = path.split("/")
+    lower_parts = [part.lower() for part in parts]
+    lower_path = path.lower()
+
+    if "future" not in lower_parts or "rcp85" not in lower_parts:
+        return False
+    if "cesm_f09_g16" not in lower_parts:
+        return False
+    if "uo" not in lower_parts:
+        return False
+    return "uvel" in lower_path
 
 with xr.open_dataset(infile) as ds:
     data_vars = [v for v in ds.data_vars if v not in ignored_vars]
@@ -229,7 +260,12 @@ with xr.open_dataset(infile) as ds:
             f"Shape mismatch in {infile}: data={values.shape}, x={xx.shape}, y={yy.shape}"
         )
 
-    units = sanitize_units(str(da.attrs.get("units", "")))
+    raw_units = str(da.attrs.get("units", ""))
+    if should_convert_future_uo_uvel_to_m_s(rel_path):
+        values = values / 100.0
+        raw_units = "m s-1"
+
+    units = sanitize_units(raw_units)
     value_column = f"{main_var}_{units}"
 
     base = os.path.basename(infile)
@@ -277,11 +313,25 @@ echo "PARQUET PYTHON  : ${PARQUET_PYTHON}"
 echo "PARQUET ENGINE  : ${PARQUET_ENGINE}"
 echo "PARALLEL FILES  : ${NPROC}"
 echo "OVERWRITE       : ${OVERWRITE}"
+echo "FILE FILTER     : ${FILE_INCLUDE_REGEX:-<none>}"
 echo "============================================================"
 
 mapfile -t files < <(find "${IN_ROOT}" -type f -name "*.nc" | sort)
+if [[ -n "${FILE_INCLUDE_REGEX}" ]]; then
+  filtered_files=()
+  for file in "${files[@]}"; do
+    rel_file="${file#${IN_ROOT}/}"
+    if [[ "${rel_file}" =~ ${FILE_INCLUDE_REGEX} ]]; then
+      filtered_files+=("${file}")
+    fi
+  done
+  files=("${filtered_files[@]}")
+fi
 if (( ${#files[@]} == 0 )); then
   echo "ERROR: No NetCDF files found under: ${IN_ROOT}"
+  if [[ -n "${FILE_INCLUDE_REGEX}" ]]; then
+    echo "ERROR: FILE_INCLUDE_REGEX matched no files: ${FILE_INCLUDE_REGEX}"
+  fi
   exit 1
 fi
 
@@ -301,7 +351,7 @@ except Exception as exc:
     )
 PY
 
-export IN_ROOT OUT_ROOT TMP_DIR DROP_MISSING PARQUET_PYTHON PARQUET_ENGINE OVERWRITE
+export IN_ROOT OUT_ROOT TMP_DIR DROP_MISSING PARQUET_PYTHON PARQUET_ENGINE OVERWRITE FUTURE_UO_UVEL_CM_S_TO_M_S
 export -f process_one_file
 
 printf '%s\0' "${files[@]}" \

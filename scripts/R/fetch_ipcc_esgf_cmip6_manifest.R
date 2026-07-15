@@ -19,6 +19,8 @@
 #      windows used by this project:
 #        historical: 2006-2014
 #        future: 2030-2060, 2050-2060, 2090-2100
+#    - If a selected ESGF endpoint fails, the fetcher can try alternate replica
+#      URLs from the full discovered files manifest when available.
 # ==============================================================================
 
 options(stringsAsFactors = FALSE)
@@ -46,6 +48,14 @@ force <- tolower(env_value("FORCE", "no")) %in% c("yes", "true", "1")
 limit <- as.integer(env_value("LIMIT", "0"))
 write_plan <- env_value("WRITE_PLAN", "")
 time_filter <- tolower(env_value("TIME_FILTER", "yes")) %in% c("yes", "true", "1")
+replica_manifest <- env_value(
+  "REPLICA_MANIFEST",
+  file.path(repo_root, "data", "manifests", "ipcc_esgf_nci_cmip6_files.csv")
+)
+replica_fallback <- tolower(env_value("REPLICA_FALLBACK", "yes")) %in% c("yes", "true", "1")
+wget_tries <- env_value("WGET_TRIES", "3")
+wget_connect_timeout <- env_value("WGET_CONNECT_TIMEOUT", "60")
+wget_read_timeout <- env_value("WGET_READ_TIMEOUT", "900")
 
 models <- split_env("MODELS")
 members <- split_env("MEMBERS")
@@ -106,6 +116,7 @@ if (download) {
 }
 
 manifest_rows <- read.csv(manifest, stringsAsFactors = FALSE, check.names = FALSE)
+replica_rows <- NULL
 
 keep <- rep(TRUE, nrow(manifest_rows))
 if (length(models) > 0) keep <- keep & manifest_rows$source_id %in% models
@@ -173,6 +184,53 @@ write_fetch_plan <- function(rows, path) {
   write.csv(plan, path, row.names = FALSE, na = "")
 }
 
+load_replica_rows <- function() {
+  if (!replica_fallback || !file.exists(replica_manifest)) {
+    return(NULL)
+  }
+
+  if (is.null(replica_rows)) {
+    message("Loading replica manifest: ", replica_manifest)
+    replica_rows <<- read.csv(replica_manifest, stringsAsFactors = FALSE, check.names = FALSE)
+  }
+
+  replica_rows
+}
+
+candidate_urls <- function(row) {
+  urls <- row[["url"]]
+  replicas <- load_replica_rows()
+
+  if (!is.null(replicas)) {
+    same_file <- replicas$filename == row[["filename"]] &
+      replicas$source_id == row[["source_id"]] &
+      replicas$experiment_id == row[["experiment_id"]] &
+      replicas$member_id == row[["member_id"]] &
+      replicas$variable_id == row[["variable_id"]] &
+      tolower(replicas$checksum) == tolower(row[["checksum"]])
+
+    if ("http_url" %in% names(replicas)) {
+      urls <- c(urls, replicas$http_url[same_file])
+    }
+  }
+
+  unique(urls[nzchar(urls)])
+}
+
+download_url <- function(url, tmp) {
+  system2(
+    "wget",
+    c(
+      "--tries", wget_tries,
+      "--connect-timeout", wget_connect_timeout,
+      "--read-timeout", wget_read_timeout,
+      "--retry-connrefused",
+      "-O", tmp,
+      url
+    )
+  )
+}
+
 download_one <- function(row) {
   target <- target_path(row)
   expected <- tolower(row[["checksum"]])
@@ -193,25 +251,42 @@ download_one <- function(row) {
 
   dir.create(dirname(target), recursive = TRUE, showWarnings = FALSE)
   tmp <- paste0(target, ".part")
+  urls <- candidate_urls(row)
+  errors <- character()
+
+  for (url in urls) {
+    if (file.exists(tmp)) unlink(tmp)
+    message("  URL: ", url)
+
+    status <- download_url(url, tmp)
+    if (!identical(status, 0L)) {
+      errors <- c(errors, paste0("wget failed: ", url))
+      next
+    }
+
+    actual <- tolower(checksum_file(tmp, checksum_type))
+    if (!identical(actual, expected)) {
+      unlink(tmp)
+      errors <- c(
+        errors,
+        paste0(
+          "checksum mismatch: ", url,
+          "\nExpected: ", expected,
+          "\nActual  : ", actual
+        )
+      )
+      next
+    }
+
+    file.rename(tmp, target)
+    return("downloaded")
+  }
+
   if (file.exists(tmp)) unlink(tmp)
-
-  status <- system2("wget", c("-O", tmp, row[["url"]]))
-  if (!identical(status, 0L)) {
-    stop("wget failed for: ", row[["url"]])
-  }
-
-  actual <- tolower(checksum_file(tmp, checksum_type))
-  if (!identical(actual, expected)) {
-    unlink(tmp)
-    stop(
-      "Downloaded file checksum mismatch: ", target,
-      "\nExpected: ", expected,
-      "\nActual  : ", actual
-    )
-  }
-
-  file.rename(tmp, target)
-  "downloaded"
+  stop(
+    "All download attempts failed for: ", target,
+    "\n", paste(errors, collapse = "\n")
+  )
 }
 
 if (nrow(selected) == 0) {
@@ -227,6 +302,7 @@ message("Manifest: ", manifest)
 message("Output root: ", out_root)
 message("Selected files: ", nrow(selected))
 message("Time filter: ", if (time_filter) "on" else "off")
+message("Replica fallback: ", if (replica_fallback && file.exists(replica_manifest)) "on" else "off")
 message("Mode: ", if (download) "download" else "dry-run")
 
 if (!download) {

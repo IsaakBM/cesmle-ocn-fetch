@@ -53,7 +53,12 @@ if (!file.exists(manifest)) {
 
 required_commands <- c("wget")
 if (download) {
-  missing_commands <- required_commands[!vapply(required_commands, nzchar(Sys.which(required_commands)), logical(1))]
+  command_available <- vapply(
+    required_commands,
+    function(command) nzchar(Sys.which(command)),
+    logical(1)
+  )
+  missing_commands <- required_commands[!command_available]
   if (length(missing_commands) > 0) {
     stop("Missing required command(s): ", paste(missing_commands, collapse = ", "))
   }

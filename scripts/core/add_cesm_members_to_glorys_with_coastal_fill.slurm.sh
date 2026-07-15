@@ -42,7 +42,7 @@ shopt -s nullglob
 #
 # Optional env vars
 #   DATASET_LABEL             : default cesm_to_glorys
-#   RCP85_ROOT                : default /home/SB5/rcp85
+#   RCP85_ROOT                : default /home/SB5/ipcc_esgf/cmip5_rcp85
 #   GLORYS_ROOT               : default /home/SB5/glorys12v1_monthly_0p05
 #   OUTROOT                   : default /home/SB5/downscaled
 #   MODEL_LABEL               : default cesm_f09_g16
@@ -65,7 +65,7 @@ REPO_DIR="${SLURM_SUBMIT_DIR:-${PWD}}"
 CORE_SCRIPT="${REPO_DIR}/scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh"
 
 DATASET_LABEL="${DATASET_LABEL:-cesm_to_glorys}"
-RCP85_ROOT="${RCP85_ROOT:-/home/SB5/rcp85}"
+RCP85_ROOT="${RCP85_ROOT:-/home/SB5/ipcc_esgf/cmip5_rcp85}"
 GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/glorys12v1_monthly_0p05}"
 OUTROOT="${OUTROOT:-/home/SB5/downscaled}"
 MODEL_LABEL="${MODEL_LABEL:-cesm_f09_g16}"
@@ -83,8 +83,8 @@ COASTAL_FILL_MIN_DONORS="${COASTAL_FILL_MIN_DONORS:-4}"
 WRITE_FILLED_ANOM="${WRITE_FILLED_ANOM:-no}"
 
 CESM_VAR="${VAR:-}"
-FUT1_TAG="2050-2060"
-FUT2_TAG="2090-2100"
+FUT1_TAG="${FUT1_TAG:-2050-2060}"
+FUT2_TAG="${FUT2_TAG:-2090-2100}"
 
 glorys_var_for_cesm_var() {
   case "$1" in

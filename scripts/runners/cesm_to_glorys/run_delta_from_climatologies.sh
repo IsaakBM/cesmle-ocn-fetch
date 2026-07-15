@@ -29,9 +29,9 @@ VARS=(
   UVEL
 )
 
-DATASET_LABEL="cesm_rcp85"
-ROOT="/home/SB5/rcp85"
-GRIDFILE="/home/SB5/glorys12v1_monthly_0p05/grid_0p05_global.txt"
+DATASET_LABEL="${DATASET_LABEL:-cesm_rcp85}"
+ROOT="${ROOT:-/home/SB5/ipcc_esgf/cmip5_rcp85}"
+GRIDFILE="${GRIDFILE:-/home/SB5/glorys12v1_monthly_0p05/grid_0p05_global.txt}"
 METHOD="remapbil"
 BASELINE_TAG="2006-2014"
 FUT2050_TAG="2050-2060"

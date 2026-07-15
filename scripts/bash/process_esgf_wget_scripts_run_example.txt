@@ -1,6 +1,6 @@
 sbatch scripts/bash/process_esgf_wget_scripts.sh \
   --download \
   --jobs 2 \
-  --manifest /home/SB5/ipcc_esgf_downloads/ipcc_esgf_manifest.csv \
-  --outdir /home/SB5/ipcc_esgf_downloads \
+  --manifest /home/SB5/ipcc_esgf/downloads/ipcc_esgf_manifest.csv \
+  --outdir /home/SB5/ipcc_esgf/downloads \
   /home/sandbox-sparc/cesmle-ocn-fetch/data/ipcc_esgf_wget

@@ -39,14 +39,14 @@ WINDOWS=(
   2090-2100
 )
 
-DATASET_LABEL="cesm_to_glorys"
-RCP85_ROOT="/home/SB5/rcp85"
-GLORYS_ROOT="/home/SB5/glorys12v1_monthly_0p05"
+DATASET_LABEL="${DATASET_LABEL:-cesm_to_glorys}"
+RCP85_ROOT="${RCP85_ROOT:-/home/SB5/ipcc_esgf/cmip5_rcp85}"
+GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/glorys12v1_monthly_0p05}"
 OUTROOT="${OUTROOT:-/home/SB5/downscaled}"
 MODEL_LABEL="${MODEL_LABEL:-cesm_f09_g16}"
 FORCING_LABEL="${FORCING_LABEL:-rcp85}"
-BASELINE_TAG="2006-2014"
-OUT_SUFFIX="downscaled"
+BASELINE_TAG="${BASELINE_TAG:-2006-2014}"
+OUT_SUFFIX="${OUT_SUFFIX:-downscaled}"
 
 REMAP_ANOMALY_TO_BASELINE="no"
 COASTAL_FILL="yes"

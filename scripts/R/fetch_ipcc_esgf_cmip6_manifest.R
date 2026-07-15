@@ -50,7 +50,7 @@ write_plan <- env_value("WRITE_PLAN", "")
 time_filter <- tolower(env_value("TIME_FILTER", "yes")) %in% c("yes", "true", "1")
 replica_manifest <- env_value(
   "REPLICA_MANIFEST",
-  file.path(repo_root, "data", "manifests", "ipcc_esgf_nci_cmip6_files.csv")
+  file.path(repo_root, "data", "manifests", "ipcc_esgf_nci_cmip6_target_replica_urls.csv")
 )
 replica_fallback <- tolower(env_value("REPLICA_FALLBACK", "yes")) %in% c("yes", "true", "1")
 wget_tries <- env_value("WGET_TRIES", "3")

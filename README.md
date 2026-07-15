@@ -76,6 +76,15 @@ The current scientific branches are:
 - `cesm_to_glorys/`
   - adds CESM member change fields to the GLORYS baseline
 
+The current CMIP6/IPCC expansion targets five first-member model branches:
+`CNRM-ESM2-1`, `IPSL-CM6A-LR`, `MPI-ESM1-2-HR`, `MPI-ESM1-2-LR`, and
+`UKESM1-0-LL`. It covers `historical`, `ssp126`, `ssp245`, and `ssp585`,
+with a `2006-2014` historical baseline and future windows `2030-2060`,
+`2050-2060`, and `2090-2100`. The 3D stack is `thetao`, `so`, `ph`, `o2`,
+`chl`, `uo`, `vo`, and `zooc`; 2D diagnostic or sea-ice layers are `zos`,
+`mlotst`, and `siconc`. In the current product workflow, `zooc` and `siconc`
+are future-side variables, not default present-day baseline products.
+
 The future products use an additive change-field, or delta-change, approach:
 a model-specific change field is first calculated from the difference between
 that model's future-period climatology and its historical/current reference
@@ -483,7 +492,7 @@ Examples:
 - Hindcast monthly outputs:
   `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/<var>/parts/*.nc`
 - IPCC/ESGF regridded monthly time-series:
-  `/home/SB5/ipcc_esgf_monthly_1deg/<model>/<scenario>/<var>/parts/*.nc`
+  `/home/SB5/ipcc_esgf/monthly_1deg/<model>/<member>/<scenario>/<var>/parts/*.nc`
 
 Important note:
 
@@ -509,8 +518,12 @@ Examples:
 
 - Hindcast:
   `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/<var>/on_glorys/*.nc`
-- IPCC/ESGF:
-  `/home/SB5/ipcc_esgf_monthly_1deg/<model>/<scenario>/<var>/on_glorys/*.nc`
+- IPCC/ESGF 3D variables:
+  `/home/SB5/ipcc_esgf/monthly_1deg/<model>/<member>/<scenario>/<var>/on_glorys/*.nc`
+
+2D IPCC/ESGF variables such as `zos`, `mlotst`, and `siconc` skip this stage
+and use the horizontally harmonized `parts/` files directly for climatology
+windows.
 
 This stage is the generalized version of the old CESM vertical-matching idea
 implemented in
@@ -696,12 +709,14 @@ Important note:
 
 Current logic:
 
-1. download ESGF/IPCC files
-2. reorganize by scenario and variable
-3. discover model, scenario, member, and variable from CMIP-style filenames
-4. regrid monthly time-series to `1 x 1`
-5. vertically interpolate to GLORYS levels
-6. compute climatology windows from the vertically matched products
+1. discover ESGF/IPCC files and write reviewable manifests
+2. fetch/download selected first-member files
+3. discover model, scenario, member, variable, table, and grid from CMIP-style
+   filenames
+4. regrid monthly time-series on native `gn` grids to `1 x 1`
+5. vertically interpolate only 3D variables to GLORYS levels
+6. compute climatology windows from vertically matched 3D products or from
+   horizontally harmonized 2D products
 7. compute IPCC/ESGF change fields from future and historical
    climatologies
 8. optionally regrid those change fields to `0.25 x 0.25`
@@ -709,41 +724,43 @@ Current logic:
 Expected input organization:
 
 ```text
-/home/SB5/ipcc_esgf_downloads/
-├── historical/
-│   └── <var>/
-└── <ssp-scenario>/
-    └── <var>/
+/home/SB5/ipcc_esgf/downloads/
+└── <model>/
+    └── <member>/
+        └── <scenario>/
+            └── <var>/
+                └── *.nc
 ```
 
 Regridded monthly products are organized as:
 
 ```text
-/home/SB5/ipcc_esgf_monthly_1deg/
+/home/SB5/ipcc_esgf/monthly_1deg/
 └── <model>/
-    ├── historical/
-    │   └── <var>/
-    │       ├── parts/
-    │       ├── on_glorys/
-    │       ├── clim_windows/
-    │       ├── tmp_clim/
-    │       └── tmp_vinterp/
-    └── <ssp-scenario>/
-        └── <var>/
-            ├── parts/
-            ├── on_glorys/
-            ├── clim_windows/
-            ├── delta_windows/
-            ├── delta_windows_0p25/
-            ├── tmp_clim/
-            ├── tmp_delta/
-            └── tmp_vinterp/
+    └── <member>/
+        ├── historical/
+        │   └── <var>/
+        │       ├── parts/
+        │       ├── on_glorys/        # 3D variables only
+        │       ├── clim_windows/
+        │       ├── tmp_clim/
+        │       └── tmp_vinterp/      # 3D variables only
+        └── <ssp-scenario>/
+            └── <var>/
+                ├── parts/
+                ├── on_glorys/        # 3D variables only
+                ├── clim_windows/
+                ├── delta_windows/
+                ├── delta_windows_0p25/
+                ├── tmp_clim/
+                ├── tmp_delta/
+                └── tmp_vinterp/      # 3D variables only
 ```
 
 Example:
 
 ```text
-/home/SB5/ipcc_esgf_monthly_1deg/CNRM-ESM2-1/ssp585/chl/delta_windows_0p25/
+/home/SB5/ipcc_esgf/monthly_1deg/CNRM-ESM2-1/r1i1p1f2/ssp585/chl/delta_windows_0p25/
 ```
 
 The helper [ipcc_esgf_discovery.sh](scripts/lib/ipcc_esgf_discovery.sh)
@@ -766,26 +783,62 @@ to query the ESGF NCI search API and write reviewable manifests:
 Rscript scripts/R/discover_ipcc_esgf_nci_cmip6.R
 ```
 
-The default discovery scan targets `Omon`, `gn`, variables `thetao`, `so`,
-`ph`, `o2`, `chl`, `uo`, `vo`, `zooc`, `zos`, and `mlotst`, experiments
-`historical`, `ssp126`, `ssp245`, and `ssp585`, and windows `2006-2014`,
-`2030-2060`, `2050-2060`, and `2090-2100`. To test or restrict the scan to
-candidate models:
+The current CMIP6/IPCC search target is:
+
+- models:
+  `CNRM-ESM2-1`, `IPSL-CM6A-LR`, `MPI-ESM1-2-HR`, `MPI-ESM1-2-LR`,
+  and `UKESM1-0-LL`
+- experiments:
+  `historical`, `ssp126`, `ssp245`, and `ssp585`
+- member:
+  first available realization/member for each model, variable, and experiment
+- ocean table/grid:
+  `Omon` / `gn`
+- sea-ice table/grid:
+  `SImon` / `gn` for `siconc`
+- historical window:
+  `2006-2014`
+- future windows:
+  `2030-2060`, `2050-2060`, and `2090-2100`
+
+Variables are split by processing dimension:
+
+- 3D ocean stack:
+  `thetao`, `so`, `ph`, `o2`, `chl`, `uo`, `vo`, and `zooc`
+- 2D diagnostic or sea-ice layers:
+  `zos`, `mlotst`, and `siconc`
+
+`zooc` and `siconc` are future/product variables for now. They are not treated
+as present-day baseline products unless a trusted current-condition baseline is
+defined later.
+
+To test or restrict the scan to candidate models:
 
 ```bash
-SOURCE_IDS="CESM2 CNRM-ESM2-1" \
-VARS="thetao so o2 chl" \
+SOURCE_IDS="CNRM-ESM2-1 IPSL-CM6A-LR" \
+VARS="thetao so o2 chl siconc" \
 Rscript scripts/R/discover_ipcc_esgf_nci_cmip6.R
 ```
 
 Outputs are written under `data/manifests/`, including selected first-member
 file URLs and model-level coverage summaries.
 
+The R fetch helper is dry-run by default:
+
+```bash
+MANIFEST=data/manifests/ipcc_esgf_nci_cmip6_ocean_plus_siconc_wget_manifest.csv \
+MODELS="CNRM-ESM2-1 IPSL-CM6A-LR MPI-ESM1-2-HR MPI-ESM1-2-LR UKESM1-0-LL" \
+Rscript scripts/R/fetch_ipcc_esgf_cmip6_manifest.R
+```
+
+To perform real downloads, add `DOWNLOAD=yes`. The target root remains
+`/home/SB5/ipcc_esgf/downloads`.
+
 Operational sequence for the current IPCC branch:
 
 1. run [run_temporal_aggregate_regrid.sh](scripts/runners/ipcc_esgf/run_temporal_aggregate_regrid.sh)
-   - reads `/home/SB5/ipcc_esgf_downloads/<scenario>/<var>/`
-   - writes `/home/SB5/ipcc_esgf_monthly_1deg/<model>/<scenario>/<var>/parts/`
+   - reads `/home/SB5/ipcc_esgf/downloads/<model>/<member>/<scenario>/<var>/`
+   - writes `/home/SB5/ipcc_esgf/monthly_1deg/<model>/<member>/<scenario>/<var>/parts/`
    - uses `METHOD=auto`
    - auto-selects `remapdis` for curvilinear/unstructured sources and
      `remapbil` for regular lon/lat sources
@@ -793,12 +846,16 @@ Operational sequence for the current IPCC branch:
 2. run [run_vertical_interpolate_to_reference.sh](scripts/runners/ipcc_esgf/run_vertical_interpolate_to_reference.sh)
    - reads `/parts/`
    - writes `/on_glorys/`
+   - processes only 3D variables:
+     `thetao`, `so`, `ph`, `o2`, `chl`, `uo`, `vo`, and `zooc`
+   - 2D variables skip this stage
 
 3. run [run_climatology_window.sh](scripts/runners/ipcc_esgf/run_climatology_window.sh)
-   - reads `/on_glorys/`
+   - reads `/on_glorys/` for 3D variables
+   - reads `/parts/` for 2D variables
    - writes `/clim_windows/`
    - historical baseline window: `2006-2014`
-   - future windows: `2050-2060`, `2090-2100`
+   - future windows: `2030-2060`, `2050-2060`, and `2090-2100`
 
 4. run [run_delta_from_climatologies.sh](scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh)
    - computes an additive change field from each discovered future climatology
@@ -840,7 +897,7 @@ Expected inputs:
 - GLORYS-coast-filled hindcast baseline climatologies:
   `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast/<var>/clim_windows/*.nc`
 - IPCC/ESGF change-field files already regridded to `0.25 x 0.25`:
-  `/home/SB5/ipcc_esgf_monthly_1deg/<model>/<scenario>/<var>/delta_windows_0p25/*.nc`
+  `/home/SB5/ipcc_esgf/monthly_1deg/<model>/<member>/<scenario>/<var>/delta_windows_0p25/*.nc`
 
 Downscaled outputs are organized as:
 
@@ -851,9 +908,11 @@ Downscaled outputs are organized as:
         └── <scenario>/
             └── <var>/
                 ├── 0p25/
+                │   ├── 2030-2060/
                 │   ├── 2050-2060/
                 │   └── 2090-2100/
                 └── 0p05/
+                    ├── 2030-2060/
                     ├── 2050-2060/
                     └── 2090-2100/
 ```
@@ -869,7 +928,8 @@ Operational sequence for this final stage:
 1. run [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh)
    - reads GLORYS-coast hindcast baseline climatology files from
      `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast`
-   - reads IPCC/ESGF delta files from `delta_windows_0p25/`
+   - reads IPCC/ESGF delta files from the member-aware `delta_windows_0p25/`
+     tree under `/home/SB5/ipcc_esgf/monthly_1deg`
    - writes to `/home/SB5/downscaled/<model>/<realization>/<scenario>/<var>/`
    - remaps the anomaly to the GLORYS `0.05` grid
    - fills anomaly coastal gaps inside the GLORYS wet mask plus any
@@ -1063,14 +1123,15 @@ MODEL=CNRM-ESM2-1 REALIZATION=r1i1p1f2 SCENARIO=ssp585 ./scripts/runners/product
 ```
 
 The Slurm runner can also be scoped to a subset of variables, scopes, and
-future windows. For example, to refresh only `chl` and `o2` baseline/current
-products plus the two CNRM future windows after rebuilding the GLORYS-coast
-biogeochemistry products:
+future windows. For example, to refresh only `chl`, `o2`, and `ph`
+baseline/current products plus the three CNRM future windows after rebuilding
+the GLORYS-coast biogeochemistry products:
 
 ```bash
 ORGANIZE_SCOPES="baseline future" \
-VARS="chl o2" \
-WINDOWS="2050-2060 2090-2100" \
+BASELINE_VARS="chl o2 ph" \
+VARS="chl o2 ph" \
+WINDOWS="2030-2060 2050-2060 2090-2100" \
 MODEL=CNRM-ESM2-1 \
 REALIZATION=r1i1p1f2 \
 SCENARIO=ssp585 \
@@ -1106,11 +1167,20 @@ Expected output root:
 │   ├── o2/
 │   │   ├── 0p25/
 │   │   └── 0p05/
+│   ├── ph/
+│   │   ├── 0p25/
+│   │   └── 0p05/
+│   ├── mlotst/
+│   │   └── 0p05/
 │   ├── so/
 │   │   └── 0p05/
 │   ├── thetao/
 │   │   └── 0p05/
-│   └── uo/
+│   ├── uo/
+│   │   └── 0p05/
+│   ├── vo/
+│   │   └── 0p05/
+│   └── zos/
 │       └── 0p05/
 └── future/
     └── <model>/
@@ -1129,8 +1199,15 @@ Notes:
 - biogeochemistry variables can include both `0p25` and derived `0p05`
   hindcast baseline products; the current preferred `0p05` baseline source is
   the GLORYS-coast-filled hindcast root
-- `thetao`, `so`, and `uo` currently contribute `0p05` baseline products from
-  the GLORYS reference branch
+- `thetao`, `so`, `uo`, `vo`, and `mlotst` contribute `0p05` baseline
+  products from the GLORYS reference branch when those climatologies exist
+- default baseline variables are:
+  `chl`, `o2`, `ph`, `zos`, `thetao`, `so`, `uo`, `vo`, and `mlotst`
+- default future variables are:
+  `thetao`, `so`, `ph`, `o2`, `chl`, `uo`, `vo`, `zooc`, `zos`, `mlotst`,
+  and `siconc`
+- `zooc` and `siconc` are future-only in the current product workflow; they are
+  not included in the default baseline set
 - `future/` stores curated future/downscaled products
 - future products preserve model, realization/member-or-statistic, scenario,
   variable, window, and resolution
@@ -1622,6 +1699,7 @@ Examples:
   `global_ocean_biogeochemistry_hindcast_chl_clim_2006-2014.nc`
 - time-series climatology:
   `ipcc_esgf_CNRM-ESM2-1_historical_r1i1p1f2_chl_clim_2006-2014.nc`
+  `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_chl_clim_2030-2060.nc`
   `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_chl_clim_2050-2060.nc`
   `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_chl_clim_2090-2100.nc`
 
@@ -1644,6 +1722,9 @@ Examples:
   `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_to_hindcast_chl_downscaled_2050-2060_grid_0p25_global.nc`
 - current final downscaled path:
   `/home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2/ssp585/chl/0p05/2050-2060/`
+- additional current future windows include:
+  `/home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2/ssp585/chl/0p05/2030-2060/`
+  and `/home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2/ssp585/chl/0p05/2090-2100/`
 - current CESM final downscaled path:
   `/home/SB5/downscaled/cesm_f09_g16/001/rcp85/thetao/0p05/2050-2060/`
 
@@ -1657,11 +1738,15 @@ Common paths used in the current workflows include:
 - `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25`
 - `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05`
 - `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast`
-- `/home/SB5/ipcc_esgf_downloads`
-- `/home/SB5/ipcc_esgf_monthly_1deg`
-- `/home/SB5/rcp85`
+- `/home/SB5/ipcc_esgf/downloads`
+- `/home/SB5/ipcc_esgf/monthly_1deg`
+- `/home/SB5/ipcc_esgf/cmip5_rcp85`
 - `/home/SB5/downscaled`
 - `/home/SB5/downscaled_rcp85` (legacy CESM physical downscaled root)
+- `/home/SB5/ocean_downscaling_products`
+- `/home/SB5/ocean_downscaling_products_layers`
+- `/home/SB5/ocean_downscaling_products_pelagic`
+- `/home/SB5/ocean_downscaling_products_depths`
 - `/home/SB5/tmp`
 
 Because these are embedded in scripts and runners, moving the workflow to a new
@@ -1838,12 +1923,23 @@ To avoid confusion:
 
 - Final downscaled future products now use
   `/home/SB5/downscaled/<model>/<realization>/<scenario>/<var>/...`.
-  For the current workflows this means
-  `/home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2/ssp585/...` for `chl` and `o2`,
-  and `/home/SB5/downscaled/cesm_f09_g16/001/rcp85/...` for CESM physical
-  `thetao`, `so`, and `uo`. The older `/home/SB5/downscaled_rcp85` root
-  remains a legacy fallback for physical products during transition.
+  For the current CMIP6/IPCC workflow this can include the five selected
+  models, first available members, `ssp126`, `ssp245`, and `ssp585`, and the
+  expanded future variables. For example:
+  `/home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2/ssp585/chl/...`.
+  CESM physical products use the same final provenance order, for example:
+  `/home/SB5/downscaled/cesm_f09_g16/001/rcp85/thetao/...`. The older
+  `/home/SB5/downscaled_rcp85` root remains a legacy fallback for physical
+  products during transition.
 
 - IPCC/ESGF filenames still carry model, scenario, and member provenance, and
   the final downscaled tree also exposes the realization/member as a directory
   level so multiple models, members, and scenarios can coexist cleanly.
+
+- 3D CMIP6/IPCC variables go through `parts/`, `on_glorys/`,
+  `clim_windows/`, and `delta_windows/`. 2D variables such as `zos`, `mlotst`,
+  and `siconc` skip `on_glorys/` and compute climatologies directly from
+  `parts/`.
+
+- `zooc` and `siconc` are included in the future/product side of the workflow,
+  but they are not present-day baseline products by default.

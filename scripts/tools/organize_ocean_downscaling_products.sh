@@ -20,6 +20,9 @@ SCENARIO="${SCENARIO:-auto}"
 ORGANIZE_SCOPE="${ORGANIZE_SCOPE:-all}"
 VAR="${VAR:-}"
 WINDOW="${WINDOW:-}"
+BASELINE_VARS="${BASELINE_VARS:-chl o2 ph zos thetao so uo vo mlotst}"
+FUTURE_VARS="${FUTURE_VARS:-thetao so ph o2 chl uo vo zooc zos mlotst siconc}"
+WINDOWS="${WINDOWS:-2030-2060 2050-2060 2090-2100}"
 NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-4}}"
 OVERWRITE="${OVERWRITE:-no}"
 USE_COASTAL_FILLED_BASELINE="${USE_COASTAL_FILLED_BASELINE:-no}"
@@ -204,6 +207,16 @@ organize_one_baseline_var() {
         "o2" \
         "0p05"
       ;;
+    ph)
+      copy_baseline_product \
+        "${HINDCAST_0P25_ROOT}/ph/clim_windows/global_ocean_biogeochemistry_hindcast_ph_clim_2006-2014.nc" \
+        "ph" \
+        "0p25"
+      copy_baseline_product \
+        "$(hindcast_0p05_baseline_file ph global_ocean_biogeochemistry_hindcast_ph_clim_2006-2014_grid_0p05_global.nc)" \
+        "ph" \
+        "0p05"
+      ;;
     zos)
       copy_baseline_product \
         "$(hindcast_0p05_baseline_file zos global_ocean_biogeochemistry_hindcast_zos_clim_2006-2014_grid_0p05_global.nc)" \
@@ -228,6 +241,18 @@ organize_one_baseline_var() {
         "uo" \
         "0p05"
       ;;
+    vo)
+      copy_baseline_product \
+        "${GLORYS_ROOT}/vo/clim_windows/glorys12v1_vo_clim_2006-2014.nc" \
+        "vo" \
+        "0p05"
+      ;;
+    mlotst)
+      copy_baseline_product \
+        "${GLORYS_ROOT}/mlotst/clim_windows/glorys12v1_mlotst_clim_2006-2014.nc" \
+        "mlotst" \
+        "0p05"
+      ;;
     *)
       echo "[WARN] Unsupported baseline variable: ${var}" >&2
       ;;
@@ -235,7 +260,7 @@ organize_one_baseline_var() {
 }
 
 organize_all_baselines() {
-  for var in chl o2 zos thetao so uo; do
+  for var in ${BASELINE_VARS}; do
     organize_one_baseline_var "${var}"
   done
 }
@@ -248,8 +273,8 @@ organize_one_future_var_window() {
 
 organize_all_futures() {
   local var window
-  for var in chl o2 zos so thetao uo; do
-    for window in 2050-2060 2090-2100; do
+  for var in ${FUTURE_VARS}; do
+    for window in ${WINDOWS}; do
       organize_one_future_var_window "${var}" "${window}"
     done
   done
@@ -272,6 +297,9 @@ echo "SCENARIO      : ${SCENARIO}"
 echo "SCOPE         : ${ORGANIZE_SCOPE}"
 echo "VAR           : ${VAR:-<all>}"
 echo "WINDOW        : ${WINDOW:-<all>}"
+echo "BASELINE VARS : ${BASELINE_VARS}"
+echo "FUTURE VARS   : ${FUTURE_VARS}"
+echo "WINDOWS       : ${WINDOWS}"
 echo "PARALLEL COPY : ${NPROC}"
 echo "OVERWRITE     : ${OVERWRITE}"
 echo "USE FILL BASE : ${USE_COASTAL_FILLED_BASELINE}"

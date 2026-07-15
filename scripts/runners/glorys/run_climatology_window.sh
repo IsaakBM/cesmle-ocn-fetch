@@ -16,7 +16,7 @@ set -euo pipefail
 #   - This runner is intended for monthly GLORYS12v1 files already harmonized to
 #     a 0.05 x 0.05 degree grid.
 #   - Expected input layout:
-#       /home/SB5/glorys12v1_monthly_0p05/<var>/parts/*.nc
+#       /home/SB5/reanalysis/glorys12v1/monthly_0p05/<var>/parts/*.nc
 #   - This runner computes one climatology per variable over the 2006-2014
 #     monthly baseline window.
 # ==============================================================================
@@ -27,7 +27,7 @@ CORE_SCRIPT="${SCRIPT_DIR}/../../core/climatology_window_from_monthly_files.slur
 # ------------------------------------------------------------------------------
 # Control variables here, one at a time if preferred
 # ------------------------------------------------------------------------------
-VARS=(
+VARS_DEFAULT=(
   bottomT
   mlotst
   so
@@ -35,13 +35,22 @@ VARS=(
   uo
   vo
   zos
+  siconc
 )
+read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
+EXCLUDE_NODES="${EXCLUDE_NODES:-}"
+
+make_sbatch_extra_args() {
+  if [[ -n "$EXCLUDE_NODES" ]]; then
+    printf '%s\n' "--exclude=${EXCLUDE_NODES}"
+  fi
+}
 
 # ------------------------------------------------------------------------------
 # Dataset-specific settings
 # ------------------------------------------------------------------------------
 DATASET_LABEL="glorys12v1"
-INROOT_BASE="/home/SB5/glorys12v1_monthly_0p05"
+INROOT_BASE="/home/SB5/reanalysis/glorys12v1/monthly_0p05"
 WINDOW_START="200601"
 WINDOW_END="201412"
 EXPECTED_N=108
@@ -59,6 +68,7 @@ for v in "${VARS[@]}"; do
     continue
   fi
 
+  mapfile -t sbatch_extra_args < <(make_sbatch_extra_args)
   jid=$(DATASET_LABEL="$DATASET_LABEL" \
     VAR="$v" \
     IN_DIR="$IN_DIR" \
@@ -70,6 +80,7 @@ for v in "${VARS[@]}"; do
     EXPECTED_N="$EXPECTED_N" \
     OUT_PREFIX="${DATASET_LABEL}_${v}" \
     sbatch --parsable \
+    "${sbatch_extra_args[@]}" \
     --job-name="gclim_${v}" \
     "$CORE_SCRIPT")
   echo "  submitted VAR=${v} as jobid=${jid}"

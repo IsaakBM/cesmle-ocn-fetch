@@ -27,7 +27,7 @@ CORE_SCRIPT="${SCRIPT_DIR}/../../core/temporal_aggregate_regrid.slurm.sh"
 # ------------------------------------------------------------------------------
 # Control variables here, one at a time if preferred
 # ------------------------------------------------------------------------------
-VARS=(
+VARS_DEFAULT=(
   thetao
   so
   mlotst
@@ -35,9 +35,11 @@ VARS=(
   vo
   zos
   bottomT
+  siconc
 )
+read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
 
-YEARS=(
+YEARS_DEFAULT=(
   2006
   2007
   2008
@@ -48,13 +50,21 @@ YEARS=(
   2013
   2014
 )
+read -r -a YEARS <<< "${YEARS:-${YEARS_DEFAULT[*]}}"
+EXCLUDE_NODES="${EXCLUDE_NODES:-}"
+
+make_sbatch_extra_args() {
+  if [[ -n "$EXCLUDE_NODES" ]]; then
+    printf '%s\n' "--exclude=${EXCLUDE_NODES}"
+  fi
+}
 
 # ------------------------------------------------------------------------------
 # Dataset-specific settings
 # ------------------------------------------------------------------------------
 DATASET_LABEL="glorys12v1"
 INROOT="/home/sandbox-sparc/cesmle-ocn-fetch/glorys12v1"
-OUTROOT="/home/SB5/glorys12v1_monthly_0p05"
+OUTROOT="/home/SB5/reanalysis/glorys12v1/monthly_0p05"
 GRIDFILE="${OUTROOT}/grid_0p05_global.txt"
 METHOD="remapbil"
 FILE_GLOB="*.nc*"
@@ -84,6 +94,7 @@ echo "Dataset: $DATASET_LABEL"
 for v in "${VARS[@]}"; do
   echo "Variable: $v"
   for y in "${YEARS[@]}"; do
+    mapfile -t sbatch_extra_args < <(make_sbatch_extra_args)
     jid=$(DATASET_LABEL="$DATASET_LABEL" \
       VAR="$v" \
       YEAR="$y" \
@@ -98,6 +109,7 @@ for v in "${VARS[@]}"; do
       INPUT_TIMESTEP="$INPUT_TIMESTEP" \
       INPUT_LAYOUT="$INPUT_LAYOUT" \
       sbatch --parsable \
+      "${sbatch_extra_args[@]}" \
       --job-name="glorys_${v}_${y}" \
       "$CORE_SCRIPT")
     echo "  submitted VAR=${v} YEAR=${y} as jobid=${jid}"

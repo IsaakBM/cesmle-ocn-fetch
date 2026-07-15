@@ -15,8 +15,10 @@ set -euo pipefail
 # Notes:
 #   - This runner computes:
 #       * each discovered SSP future window minus historical 2006-2014
-#   - The delta core can optionally regrid, and this runner enables regridding
-#     to a common 0.25 x 0.25 degree lon/lat grid.
+#   - The delta core can optionally regrid. This runner enables regridding
+#     to a common 0.25 x 0.25 degree lon/lat grid for ocean variables.
+#   - Diagnostic variables listed in NO_REGRID_DELTA_VARS, currently siconc,
+#     stop at delta_windows/ because they do not use the hindcast target grid.
 #   - Expected climatology layout:
 #       /home/SB5/ipcc_esgf/monthly_1deg/<model>/<member>/historical/<var>/clim_windows/*.nc
 #       /home/SB5/ipcc_esgf/monthly_1deg/<model>/<member>/<ssp-scenario>/<var>/clim_windows/*.nc
@@ -46,6 +48,7 @@ VARS_DEFAULT=(
   siconc
 )
 read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
+read -r -a NO_REGRID_DELTA_VARS <<< "${NO_REGRID_DELTA_VARS:-siconc}"
 
 # ------------------------------------------------------------------------------
 # Dataset-specific settings
@@ -67,10 +70,18 @@ MEMBER="${MEMBER:-auto}"
 
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs
 
-if [[ ! -f "$GRIDFILE" ]]; then
-  echo "ERROR: Grid file not found: $GRIDFILE"
-  exit 1
-fi
+should_regrid_delta() {
+  local var="$1"
+  local excluded
+
+  for excluded in "${NO_REGRID_DELTA_VARS[@]}"; do
+    if [[ "$var" == "$excluded" ]]; then
+      return 1
+    fi
+  done
+
+  return 0
+}
 
 echo "Submitting IPCC/ESGF delta jobs with generic worker:"
 mapfile -t FUTURE_GROUPS < <(ipcc_esgf_discover_monthly_groups_any_layout "${ROOT}" "clim_windows" | awk -F '\t' '$3 ~ /^ssp[0-9][0-9][0-9]$/' | sort -u)
@@ -101,6 +112,14 @@ for group in "${FUTURE_GROUPS[@]}"; do
   OUT_DIR="${VAR_DIR}/delta_windows"
   TMP_DIR="${VAR_DIR}/tmp_delta"
   REGRID_OUT_DIR="${VAR_DIR}/delta_windows_0p25"
+  regrid_delta="yes"
+  if ! should_regrid_delta "$v"; then
+    regrid_delta="no"
+    REGRID_OUT_DIR=""
+  elif [[ ! -f "$GRIDFILE" ]]; then
+    echo "ERROR: Grid file not found: $GRIDFILE"
+    exit 1
+  fi
 
   hist_member="$(ipcc_esgf_resolve_product_member "$HIST_DIR" "$model" "$HISTORICAL_SCENARIO" "$v" "*.nc")" || {
     status=$?
@@ -139,7 +158,7 @@ for group in "${FUTURE_GROUPS[@]}"; do
         FUTURE_TAG="$future_tag" \
         BASELINE_TAG="$BASELINE_TAG" \
         OUT_PREFIX="${DELTA_PREFIX}" \
-        REGRID_DELTA="yes" \
+        REGRID_DELTA="$regrid_delta" \
         GRIDFILE="$GRIDFILE" \
         METHOD="$METHOD" \
         REGRID_OUT_DIR="$REGRID_OUT_DIR" \
@@ -147,7 +166,7 @@ for group in "${FUTURE_GROUPS[@]}"; do
         sbatch --parsable \
         --job-name="delta_${future_tag}_${v}" \
         "$CORE_SCRIPT")
-      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=${future_tag} as jobid=${jid}"
+      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=${future_tag} REGRID_DELTA=${regrid_delta} as jobid=${jid}"
     else
       echo "WARN: Missing ${future_tag} climatology for VAR=${v}: ${future_file}"
     fi

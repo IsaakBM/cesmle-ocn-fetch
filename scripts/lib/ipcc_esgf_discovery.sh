@@ -67,6 +67,117 @@ ipcc_esgf_discover_monthly_groups() {
   done < <(find "$root" -mindepth 1 -maxdepth 1 -type d | sort)
 }
 
+ipcc_esgf_discover_monthly_groups_with_members() {
+  local root="$1"
+  local subdir="${2:-parts}"
+  local model member scenario var
+
+  [[ -d "$root" ]] || return 0
+
+  while IFS= read -r model_dir; do
+    model="$(basename "$model_dir")"
+    while IFS= read -r member_dir; do
+      member="$(basename "$member_dir")"
+      [[ "$member" =~ ^r[0-9]+i[0-9]+p[0-9]+f[0-9]+$ ]] || continue
+      while IFS= read -r scenario_dir; do
+        scenario="$(basename "$scenario_dir")"
+        [[ "$scenario" == historical || "$scenario" == ssp[0-9][0-9][0-9] ]] || continue
+        while IFS= read -r var_dir; do
+          var="$(basename "$var_dir")"
+          [[ -d "${var_dir}/${subdir}" ]] || continue
+          printf '%s\t%s\t%s\t%s\n' "$model" "$member" "$scenario" "$var"
+        done < <(find "$scenario_dir" -mindepth 1 -maxdepth 1 -type d | sort)
+      done < <(find "$member_dir" -mindepth 1 -maxdepth 1 -type d | sort)
+    done < <(find "$model_dir" -mindepth 1 -maxdepth 1 -type d | sort)
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d | sort)
+}
+
+ipcc_esgf_discover_monthly_groups_any_layout() {
+  local root="$1"
+  local subdir="${2:-parts}"
+  local model scenario var member parts_dir
+
+  [[ -d "$root" ]] || return 0
+
+  ipcc_esgf_discover_monthly_groups_with_members "$root" "$subdir"
+
+  while IFS= read -r model_dir; do
+    model="$(basename "$model_dir")"
+    while IFS= read -r scenario_dir; do
+      scenario="$(basename "$scenario_dir")"
+      [[ "$scenario" == historical || "$scenario" == ssp[0-9][0-9][0-9] ]] || continue
+      while IFS= read -r var_dir; do
+        var="$(basename "$var_dir")"
+        parts_dir="${var_dir}/${subdir}"
+        [[ -d "$parts_dir" ]] || continue
+        while IFS= read -r member; do
+          [[ -n "$member" ]] || continue
+          printf '%s\t%s\t%s\t%s\n' "$model" "$member" "$scenario" "$var"
+        done < <(ipcc_esgf_members_from_files "$parts_dir" "*.nc" | sort -u)
+      done < <(find "$scenario_dir" -mindepth 1 -maxdepth 1 -type d | sort)
+    done < <(find "$model_dir" -mindepth 1 -maxdepth 1 -type d | sort)
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d | sort)
+}
+
+ipcc_esgf_monthly_stage_dir_for_group() {
+  local root="$1"
+  local model="$2"
+  local member="$3"
+  local scenario="$4"
+  local var="$5"
+  local subdir="$6"
+  local dir
+
+  for dir in \
+    "${root}/${model}/${member}/${scenario}/${var}/${subdir}" \
+    "${root}/${model}/${scenario}/${var}/${subdir}"; do
+    if [[ -d "$dir" ]]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+ipcc_esgf_monthly_var_dir_for_group() {
+  local root="$1"
+  local model="$2"
+  local member="$3"
+  local scenario="$4"
+  local var="$5"
+
+  printf '%s\n' "${root}/${model}/${member}/${scenario}/${var}"
+}
+
+ipcc_esgf_download_dir_for_group() {
+  local root="$1"
+  local model="$2"
+  local member="$3"
+  local scenario="$4"
+  local var="$5"
+  local file_glob="$6"
+  local dir first_file
+
+  for dir in \
+    "${root}/${model}/${member}/${scenario}/${var}" \
+    "${root}/${model}/${scenario}/${var}" \
+    "${root}/${scenario}/${var}"; do
+    if [[ -d "$dir" ]] && find "$dir" -maxdepth 1 -type f -name "$file_glob" | grep -q .; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+  done
+
+  first_file="$(find "$root" -type f -name "$file_glob" -print -quit 2>/dev/null)"
+  if [[ -n "$first_file" ]]; then
+    dirname "$first_file"
+    return 0
+  fi
+
+  return 1
+}
+
 ipcc_esgf_members_from_files() {
   local dir="$1"
   local glob="${2:-*.nc}"

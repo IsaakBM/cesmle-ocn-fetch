@@ -25,9 +25,11 @@ set -euo pipefail
 #     This keeps the runner safe for institutions that do not show the seam
 #     artifact while still fixing the problematic curvilinear cases.
 #   - Expected input layout:
+#       /home/SB5/ipcc_esgf/downloads/<model>/<member>/<scenario>/<variable>/*.nc
+#     Legacy input layout is still tolerated when present:
 #       /home/SB5/ipcc_esgf_downloads/<scenario>/<variable>/*.nc
 #     Output layout:
-#       /home/SB5/ipcc_esgf_monthly_1deg/<model>/<scenario>/<variable>/parts/*.nc
+#       /home/SB5/ipcc_esgf/monthly_1deg/<model>/<member>/<scenario>/<variable>/parts/*.nc
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,17 +39,28 @@ DISCOVERY_LIB="${SCRIPT_DIR}/../../lib/ipcc_esgf_discovery.sh"
 # shellcheck source=../../lib/ipcc_esgf_discovery.sh
 source "${DISCOVERY_LIB}"
 
-VARS=(
-  chl
+VARS_DEFAULT=(
+  thetao
+  so
+  ph
   o2
+  chl
+  uo
+  vo
+  zooc
+  zos
+  mlotst
+  siconc
 )
+read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
 
 # ------------------------------------------------------------------------------
 # Dataset-specific settings
 # ------------------------------------------------------------------------------
 DATASET_LABEL="ipcc_esgf"
-INROOT_BASE="/home/SB5/ipcc_esgf_downloads"
-OUTROOT_BASE="/home/SB5/ipcc_esgf_monthly_1deg"
+IPCC_ESGF_ROOT="${IPCC_ESGF_ROOT:-/home/SB5/ipcc_esgf}"
+INROOT_BASE="${INROOT_BASE:-${IPCC_ESGF_ROOT}/downloads}"
+OUTROOT_BASE="${OUTROOT_BASE:-${IPCC_ESGF_ROOT}/monthly_1deg}"
 METHOD="auto"
 AUTO_METHOD_DEFAULT="remapbil"
 AUTO_METHOD_CURVILINEAR="remapdis"
@@ -101,15 +114,10 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
     continue
   fi
 
-  INROOT="${INROOT_BASE}/${scen}/${v}"
   file_glob="${v}_*_${model}_${scen}_${member}_*.nc"
-  if [[ ! -d "$INROOT" ]]; then
-    first_file="$(find "${INROOT_BASE}" -type f -name "$file_glob" | sort | head -n 1)"
-    if [[ -z "$first_file" ]]; then
-      echo "  WARN: No input files found for MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v}"
-      continue
-    fi
-    INROOT="$(dirname "$first_file")"
+  if ! INROOT="$(ipcc_esgf_download_dir_for_group "${INROOT_BASE}" "$model" "$member" "$scen" "$v" "$file_glob")"; then
+    echo "  WARN: No input files found for MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v}"
+    continue
   fi
 
   resolved_member="$(ipcc_esgf_resolve_member "$INROOT" "${v}_*_${model}_${scen}_*_*.nc")" || {
@@ -121,7 +129,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
     continue
   fi
 
-  OUTROOT="${OUTROOT_BASE}/${model}/${scen}"
+  OUTROOT="${OUTROOT_BASE}/${model}/${member}/${scen}"
   job_label="${DATASET_LABEL}_${model}_${scen}_${member}"
 
   jid=$(DATASET_LABEL="${job_label}" \

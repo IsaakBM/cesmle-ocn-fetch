@@ -14,13 +14,12 @@ set -euo pipefail
 #
 # Notes:
 #   - This runner computes:
-#       * ssp585 2050-2060 minus historical 2006-2014
-#       * ssp585 2090-2100 minus historical 2006-2014
+#       * each discovered SSP future window minus historical 2006-2014
 #   - The delta core can optionally regrid, and this runner enables regridding
 #     to a common 0.25 x 0.25 degree lon/lat grid.
 #   - Expected climatology layout:
-#       /home/SB5/ipcc_esgf_monthly_1deg/<model>/historical/<var>/clim_windows/*.nc
-#       /home/SB5/ipcc_esgf_monthly_1deg/<model>/<ssp-scenario>/<var>/clim_windows/*.nc
+#       /home/SB5/ipcc_esgf/monthly_1deg/<model>/<member>/historical/<var>/clim_windows/*.nc
+#       /home/SB5/ipcc_esgf/monthly_1deg/<model>/<member>/<ssp-scenario>/<var>/clim_windows/*.nc
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,21 +32,35 @@ source "${DISCOVERY_LIB}"
 # ------------------------------------------------------------------------------
 # Control variables here, one at a time if preferred
 # ------------------------------------------------------------------------------
-VARS=(
-  chl
+VARS_DEFAULT=(
+  thetao
+  so
+  ph
   o2
+  chl
+  uo
+  vo
+  zooc
+  zos
+  mlotst
+  siconc
 )
+read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
 
 # ------------------------------------------------------------------------------
 # Dataset-specific settings
 # ------------------------------------------------------------------------------
 DATASET_LABEL="ipcc_esgf"
-ROOT="/home/SB5/ipcc_esgf_monthly_1deg"
+IPCC_ESGF_ROOT="${IPCC_ESGF_ROOT:-/home/SB5/ipcc_esgf}"
+ROOT="${ROOT:-${IPCC_ESGF_ROOT}/monthly_1deg}"
 GRIDFILE="/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/grid_0p25_global.txt"
 METHOD="remapdis"
 BASELINE_TAG="2006-2014"
-FUT2050_TAG="2050-2060"
-FUT2090_TAG="2090-2100"
+FUTURE_TAGS=(
+  2030-2060
+  2050-2060
+  2090-2100
+)
 REGRID_SUFFIX="grid_0p25_global"
 HISTORICAL_SCENARIO="${HISTORICAL_SCENARIO:-historical}"
 MEMBER="${MEMBER:-auto}"
@@ -60,7 +73,7 @@ if [[ ! -f "$GRIDFILE" ]]; then
 fi
 
 echo "Submitting IPCC/ESGF delta jobs with generic worker:"
-mapfile -t FUTURE_GROUPS < <(ipcc_esgf_discover_monthly_groups "${ROOT}" "clim_windows" | awk -F '\t' '$2 ~ /^ssp[0-9][0-9][0-9]$/' | sort -u)
+mapfile -t FUTURE_GROUPS < <(ipcc_esgf_discover_monthly_groups_any_layout "${ROOT}" "clim_windows" | awk -F '\t' '$3 ~ /^ssp[0-9][0-9][0-9]$/' | sort -u)
 
 if (( ${#FUTURE_GROUPS[@]} == 0 )); then
   echo "ERROR: No future scenario climatology groups discovered under: ${ROOT}"
@@ -68,27 +81,26 @@ if (( ${#FUTURE_GROUPS[@]} == 0 )); then
 fi
 
 for group in "${FUTURE_GROUPS[@]}"; do
-  IFS=$'\t' read -r model scen v <<< "$group"
+  IFS=$'\t' read -r model member scen v <<< "$group"
 
   if [[ ! " ${VARS[*]} " == *" ${v} "* ]]; then
     continue
   fi
 
-  HIST_DIR="${ROOT}/${model}/${HISTORICAL_SCENARIO}/${v}/clim_windows"
-  SSP_DIR="${ROOT}/${model}/${scen}/${v}/clim_windows"
-  OUT_DIR="${ROOT}/${model}/${scen}/${v}/delta_windows"
-  TMP_DIR="${ROOT}/${model}/${scen}/${v}/tmp_delta"
-  REGRID_OUT_DIR="${ROOT}/${model}/${scen}/${v}/delta_windows_0p25"
-
-  if [[ ! -d "$HIST_DIR" ]]; then
-    echo "WARN: Historical climatology directory not found, skipping: $HIST_DIR"
+  if ! HIST_DIR="$(ipcc_esgf_monthly_stage_dir_for_group "$ROOT" "$model" "$member" "$HISTORICAL_SCENARIO" "$v" "clim_windows")"; then
+    echo "WARN: Historical climatology directory not found, skipping MODEL=${model} MEMBER=${member} VAR=${v}"
     continue
   fi
 
-  if [[ ! -d "$SSP_DIR" ]]; then
-    echo "WARN: SSP585 climatology directory not found, skipping: $SSP_DIR"
+  if ! SSP_DIR="$(ipcc_esgf_monthly_stage_dir_for_group "$ROOT" "$model" "$member" "$scen" "$v" "clim_windows")"; then
+    echo "WARN: SSP climatology directory not found, skipping MODEL=${model} MEMBER=${member} SCENARIO=${scen} VAR=${v}"
     continue
   fi
+
+  VAR_DIR="$(ipcc_esgf_monthly_var_dir_for_group "$ROOT" "$model" "$member" "$scen" "$v")"
+  OUT_DIR="${VAR_DIR}/delta_windows"
+  TMP_DIR="${VAR_DIR}/tmp_delta"
+  REGRID_OUT_DIR="${VAR_DIR}/delta_windows_0p25"
 
   hist_member="$(ipcc_esgf_resolve_product_member "$HIST_DIR" "$model" "$HISTORICAL_SCENARIO" "$v" "*.nc")" || {
     status=$?
@@ -108,8 +120,6 @@ for group in "${FUTURE_GROUPS[@]}"; do
 
   member="$hist_member"
   BASELINE_FILE="${HIST_DIR}/${DATASET_LABEL}_${model}_${HISTORICAL_SCENARIO}_${member}_${v}_clim_${BASELINE_TAG}.nc"
-  FUT2050_FILE="${SSP_DIR}/${DATASET_LABEL}_${model}_${scen}_${member}_${v}_clim_${FUT2050_TAG}.nc"
-  FUT2090_FILE="${SSP_DIR}/${DATASET_LABEL}_${model}_${scen}_${member}_${v}_clim_${FUT2090_TAG}.nc"
   DELTA_PREFIX="${DATASET_LABEL}_${model}_${scen}_${member}_${v}"
 
   if [[ ! -f "$BASELINE_FILE" ]]; then
@@ -117,51 +127,31 @@ for group in "${FUTURE_GROUPS[@]}"; do
     continue
   fi
 
-  if [[ -f "$FUT2050_FILE" ]]; then
-    jid2050=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
-      VAR="$v" \
-      BASELINE_FILE="$BASELINE_FILE" \
-      FUTURE_FILE="$FUT2050_FILE" \
-      OUT_DIR="$OUT_DIR" \
-      TMP_DIR="$TMP_DIR" \
-      FUTURE_TAG="$FUT2050_TAG" \
-      BASELINE_TAG="$BASELINE_TAG" \
-      OUT_PREFIX="${DELTA_PREFIX}" \
-      REGRID_DELTA="yes" \
-      GRIDFILE="$GRIDFILE" \
-      METHOD="$METHOD" \
-      REGRID_OUT_DIR="$REGRID_OUT_DIR" \
-      REGRID_SUFFIX="$REGRID_SUFFIX" \
-      sbatch --parsable \
-      --job-name="delta2050_${v}" \
-      "$CORE_SCRIPT")
-    echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=${FUT2050_TAG} as jobid=${jid2050}"
-  else
-    echo "WARN: Missing 2050 climatology for VAR=${v}: ${FUT2050_FILE}"
-  fi
-
-  if [[ -f "$FUT2090_FILE" ]]; then
-    jid2090=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
-      VAR="$v" \
-      BASELINE_FILE="$BASELINE_FILE" \
-      FUTURE_FILE="$FUT2090_FILE" \
-      OUT_DIR="$OUT_DIR" \
-      TMP_DIR="$TMP_DIR" \
-      FUTURE_TAG="$FUT2090_TAG" \
-      BASELINE_TAG="$BASELINE_TAG" \
-      OUT_PREFIX="${DELTA_PREFIX}" \
-      REGRID_DELTA="yes" \
-      GRIDFILE="$GRIDFILE" \
-      METHOD="$METHOD" \
-      REGRID_OUT_DIR="$REGRID_OUT_DIR" \
-      REGRID_SUFFIX="$REGRID_SUFFIX" \
-      sbatch --parsable \
-      --job-name="delta2090_${v}" \
-      "$CORE_SCRIPT")
-    echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=${FUT2090_TAG} as jobid=${jid2090}"
-  else
-    echo "WARN: Missing 2090 climatology for VAR=${v}: ${FUT2090_FILE}"
-  fi
+  for future_tag in "${FUTURE_TAGS[@]}"; do
+    future_file="${SSP_DIR}/${DATASET_LABEL}_${model}_${scen}_${member}_${v}_clim_${future_tag}.nc"
+    if [[ -f "$future_file" ]]; then
+      jid=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
+        VAR="$v" \
+        BASELINE_FILE="$BASELINE_FILE" \
+        FUTURE_FILE="$future_file" \
+        OUT_DIR="$OUT_DIR" \
+        TMP_DIR="$TMP_DIR" \
+        FUTURE_TAG="$future_tag" \
+        BASELINE_TAG="$BASELINE_TAG" \
+        OUT_PREFIX="${DELTA_PREFIX}" \
+        REGRID_DELTA="yes" \
+        GRIDFILE="$GRIDFILE" \
+        METHOD="$METHOD" \
+        REGRID_OUT_DIR="$REGRID_OUT_DIR" \
+        REGRID_SUFFIX="$REGRID_SUFFIX" \
+        sbatch --parsable \
+        --job-name="delta_${future_tag}_${v}" \
+        "$CORE_SCRIPT")
+      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=${future_tag} as jobid=${jid}"
+    else
+      echo "WARN: Missing ${future_tag} climatology for VAR=${v}: ${future_file}"
+    fi
+  done
 done
 
 echo "Done."

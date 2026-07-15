@@ -15,7 +15,8 @@ DISCOVERY_LIB="${SCRIPT_DIR}/../../lib/ipcc_esgf_discovery.sh"
 # shellcheck source=../../lib/ipcc_esgf_discovery.sh
 source "${DISCOVERY_LIB}"
 
-IPCC_ROOT="${IPCC_ROOT:-/home/SB5/ipcc_esgf_monthly_1deg}"
+IPCC_ESGF_ROOT="${IPCC_ESGF_ROOT:-/home/SB5/ipcc_esgf}"
+IPCC_ROOT="${IPCC_ROOT:-${IPCC_ESGF_ROOT}/monthly_1deg}"
 MEMBER="${MEMBER:-auto}"
 BASELINE_TAG="${BASELINE_TAG:-2006-2014}"
 GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/glorys12v1_monthly_0p05}"
@@ -43,7 +44,7 @@ uses_coastal_mask() {
   return 1
 }
 
-mapfile -t DISCOVERED_GROUPS < <(ipcc_esgf_discover_monthly_groups "${IPCC_ROOT}" "delta_windows_0p25" | awk -F '\t' '$2 ~ /^ssp[0-9][0-9][0-9]$/' | sort -u)
+mapfile -t DISCOVERED_GROUPS < <(ipcc_esgf_discover_monthly_groups_any_layout "${IPCC_ROOT}" "delta_windows_0p25" | awk -F '\t' '$3 ~ /^ssp[0-9][0-9][0-9]$/' | sort -u)
 
 if (( ${#DISCOVERED_GROUPS[@]} == 0 )); then
   echo "ERROR: No IPCC/ESGF future delta groups discovered under: ${IPCC_ROOT}"
@@ -52,8 +53,13 @@ fi
 
 echo "Submitting IPCC/ESGF-to-hindcast coastal-fill downscaling jobs:"
 for group in "${DISCOVERED_GROUPS[@]}"; do
-  IFS=$'\t' read -r model scenario var <<< "$group"
-  delta_dir="${IPCC_ROOT}/${model}/${scenario}/${var}/delta_windows_0p25"
+  IFS=$'\t' read -r model member scenario var <<< "$group"
+  if ! delta_dir="$(ipcc_esgf_monthly_stage_dir_for_group "$IPCC_ROOT" "$model" "$member" "$scenario" "$var" "delta_windows_0p25")"; then
+    echo "WARN: Delta directory not found, skipping MODEL=${model} MEMBER=${member} SCENARIO=${scenario} VAR=${var}"
+    continue
+  fi
+  var_dir="$(dirname "$delta_dir")"
+  anomaly_root="$(dirname "$var_dir")"
 
   member="$(ipcc_esgf_resolve_product_member "$delta_dir" "$model" "$scenario" "$var" "*.nc")" || {
     status=$?
@@ -79,7 +85,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
   BASELINE_ROOT="${BASELINE_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast}" \
   BASELINE_TAG="${BASELINE_TAG}" \
   BASELINE_FILE_TEMPLATE="${BASELINE_FILE_TEMPLATE:-__BASELINE_ROOT__/__TGT_VAR__/clim_windows/global_ocean_biogeochemistry_hindcast___TGT_VAR___clim___BASELINE_TAG___grid_0p05_global.nc}" \
-  ANOMALY_ROOT="${IPCC_ROOT}/${model}/${scenario}" \
+  ANOMALY_ROOT="${anomaly_root}" \
   ANOMALY_FILE_TEMPLATE="${ANOMALY_FILE_TEMPLATE:-__ANOMALY_ROOT__/__SRC_VAR__/delta_windows_0p25/ipcc_esgf_${model}_${scenario}_${member}___SRC_VAR___delta___WINDOW___minus___BASELINE_TAG___grid_0p25_global.nc}" \
   OUTROOT="${OUTROOT:-/home/SB5/downscaled}" \
   ANOMALY_GRIDFILE="${ANOMALY_GRIDFILE:-/home/SB5/glorys12v1_monthly_0p05/grid_0p05_global.txt}" \

@@ -37,13 +37,14 @@ VAR_MAP_SPEC="${VAR_MAP_SPEC:-chl:chl o2:o2}"
 read -r -a VAR_MAP <<< "${VAR_MAP_SPEC}"
 
 WINDOWS=(
+  2030-2060
   2050-2060
   2090-2100
 )
 
 DATASET_LABEL="${DATASET_LABEL:-anomaly_to_trusted_baseline}"
 BASELINE_ROOT="${BASELINE_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast}"
-ANOMALY_ROOT="${ANOMALY_ROOT:-/home/SB5/ipcc_esgf_monthly_1deg/ssp585}"
+ANOMALY_ROOT="${ANOMALY_ROOT:-/home/SB5/ipcc_esgf/monthly_1deg}"
 OUTROOT="${OUTROOT:-/home/SB5/downscaled}"
 BASELINE_TAG="${BASELINE_TAG:-2006-2014}"
 OUT_SUFFIX="${OUT_SUFFIX:-downscaled}"
@@ -60,8 +61,11 @@ FORCING_LABEL="${FORCING_LABEL:-${SCENARIO_LABEL:-}}"
 #   __WINDOW__
 #   __BASELINE_TAG__
 #   __COASTAL_MASK_ROOT__
+#   __MODEL_LABEL__
+#   __REALIZATION_LABEL__
+#   __FORCING_LABEL__
 BASELINE_FILE_TEMPLATE="${BASELINE_FILE_TEMPLATE:-__BASELINE_ROOT__/__TGT_VAR__/clim_windows/global_ocean_biogeochemistry_hindcast___TGT_VAR___clim___BASELINE_TAG___grid_0p05_global.nc}"
-ANOMALY_FILE_TEMPLATE="${ANOMALY_FILE_TEMPLATE:-__ANOMALY_ROOT__/__SRC_VAR__/delta_windows_0p25/ipcc_esgf_ssp585___SRC_VAR___delta___WINDOW___minus___BASELINE_TAG___grid_0p25_global.nc}"
+ANOMALY_FILE_TEMPLATE="${ANOMALY_FILE_TEMPLATE:-__ANOMALY_ROOT__/__MODEL_LABEL__/__REALIZATION_LABEL__/__FORCING_LABEL__/__SRC_VAR__/delta_windows_0p25/ipcc_esgf___MODEL_LABEL_____FORCING_LABEL_____REALIZATION_LABEL_____SRC_VAR___delta___WINDOW___minus___BASELINE_TAG___grid_0p25_global.nc}"
 COASTAL_MASK_ROOT="${COASTAL_MASK_ROOT:-}"
 COASTAL_MASK_FILE="${COASTAL_MASK_FILE:-}"
 COASTAL_MASK_FILE_TEMPLATE="${COASTAL_MASK_FILE_TEMPLATE:-}"
@@ -103,6 +107,9 @@ render_template() {
   template="${template//__WINDOW__/${window}}"
   template="${template//__BASELINE_TAG__/${BASELINE_TAG}}"
   template="${template//__COASTAL_MASK_ROOT__/${COASTAL_MASK_ROOT}}"
+  template="${template//__MODEL_LABEL__/${MODEL_LABEL}}"
+  template="${template//__REALIZATION_LABEL__/${REALIZATION_LABEL}}"
+  template="${template//__FORCING_LABEL__/${FORCING_LABEL}}"
   printf '%s\n' "$template"
 }
 

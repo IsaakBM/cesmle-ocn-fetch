@@ -43,6 +43,33 @@ VARS_DEFAULT=(
   zooc
 )
 read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
+read -r -a MODELS <<< "${MODELS:-}"
+read -r -a SCENARIOS <<< "${SCENARIOS:-}"
+EXCLUDE_NODES="${EXCLUDE_NODES:-}"
+
+contains_filter_value() {
+  local value="$1"
+  shift
+
+  if (( $# == 0 )); then
+    return 0
+  fi
+
+  local allowed
+  for allowed in "$@"; do
+    if [[ "$value" == "$allowed" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+make_sbatch_extra_args() {
+  if [[ -n "$EXCLUDE_NODES" ]]; then
+    printf '%s\n' "--exclude=${EXCLUDE_NODES}"
+  fi
+}
 
 # ------------------------------------------------------------------------------
 # Dataset-specific settings
@@ -78,6 +105,18 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
     continue
   fi
 
+  if ! contains_filter_value "$model" "${MODELS[@]}"; then
+    continue
+  fi
+
+  if ! contains_filter_value "$scen" "${SCENARIOS[@]}"; then
+    continue
+  fi
+
+  if [[ "${MEMBER}" != "auto" && "${member}" != "${MEMBER}" ]]; then
+    continue
+  fi
+
   if ! IN_DIR="$(ipcc_esgf_monthly_stage_dir_for_group "$INROOT_BASE" "$model" "$member" "$scen" "$v" "parts")"; then
     echo "  WARN: Input directory not found, skipping MODEL=${model} MEMBER=${member} SCENARIO=${scen} VAR=${v}"
     continue
@@ -96,6 +135,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
 
   file_glob="${v}_*_${model}_${scen}_${member}_*.nc"
   job_label="${DATASET_LABEL}_${model}_${scen}_${member}_${v}"
+  mapfile -t sbatch_extra_args < <(make_sbatch_extra_args)
 
   jid=$(DATASET_LABEL="${job_label}" \
       IN_DIR="$IN_DIR" \
@@ -111,6 +151,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
       OUT_SUFFIX="$OUT_SUFFIX" \
       MAX_JOBS="$MAX_JOBS" \
       sbatch --parsable \
+      "${sbatch_extra_args[@]}" \
       --job-name="vint_${scen}_${v}" \
       "$CORE_SCRIPT")
   echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} as jobid=${jid}"

@@ -53,6 +53,33 @@ VARS_DEFAULT=(
   siconc
 )
 read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
+read -r -a MODELS <<< "${MODELS:-}"
+read -r -a SCENARIOS <<< "${SCENARIOS:-}"
+EXCLUDE_NODES="${EXCLUDE_NODES:-}"
+
+contains_filter_value() {
+  local value="$1"
+  shift
+
+  if (( $# == 0 )); then
+    return 0
+  fi
+
+  local allowed
+  for allowed in "$@"; do
+    if [[ "$value" == "$allowed" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+make_sbatch_extra_args() {
+  if [[ -n "$EXCLUDE_NODES" ]]; then
+    printf '%s\n' "--exclude=${EXCLUDE_NODES}"
+  fi
+}
 
 # ------------------------------------------------------------------------------
 # Dataset-specific settings
@@ -110,6 +137,14 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
     continue
   fi
 
+  if ! contains_filter_value "$model" "${MODELS[@]}"; then
+    continue
+  fi
+
+  if ! contains_filter_value "$scen" "${SCENARIOS[@]}"; then
+    continue
+  fi
+
   if [[ "${MEMBER}" != "auto" && "${member}" != "${MEMBER}" ]]; then
     continue
   fi
@@ -131,6 +166,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
 
   OUTROOT="${OUTROOT_BASE}/${model}/${member}/${scen}"
   job_label="${DATASET_LABEL}_${model}_${scen}_${member}"
+  mapfile -t sbatch_extra_args < <(make_sbatch_extra_args)
 
   jid=$(DATASET_LABEL="${job_label}" \
       VAR="$v" \
@@ -147,6 +183,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
       TMP_SUBDIR="$TMP_SUBDIR" \
       MIN_FREE_GB="$MIN_FREE_GB" \
       sbatch --parsable \
+      "${sbatch_extra_args[@]}" \
       --job-name="ipcc_${scen}_${v}" \
       "$CORE_SCRIPT")
   echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} TABLE=${table_id} GRID=${source_grid} as jobid=${jid}"

@@ -49,6 +49,34 @@ VARS_DEFAULT=(
 )
 read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
 read -r -a NO_REGRID_DELTA_VARS <<< "${NO_REGRID_DELTA_VARS:-siconc}"
+read -r -a MODELS <<< "${MODELS:-}"
+read -r -a SCENARIOS <<< "${SCENARIOS:-}"
+read -r -a WINDOWS <<< "${WINDOWS:-}"
+EXCLUDE_NODES="${EXCLUDE_NODES:-}"
+
+contains_filter_value() {
+  local value="$1"
+  shift
+
+  if (( $# == 0 )); then
+    return 0
+  fi
+
+  local allowed
+  for allowed in "$@"; do
+    if [[ "$value" == "$allowed" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+make_sbatch_extra_args() {
+  if [[ -n "$EXCLUDE_NODES" ]]; then
+    printf '%s\n' "--exclude=${EXCLUDE_NODES}"
+  fi
+}
 
 # ------------------------------------------------------------------------------
 # Dataset-specific settings
@@ -98,6 +126,18 @@ for group in "${FUTURE_GROUPS[@]}"; do
     continue
   fi
 
+  if ! contains_filter_value "$model" "${MODELS[@]}"; then
+    continue
+  fi
+
+  if ! contains_filter_value "$scen" "${SCENARIOS[@]}"; then
+    continue
+  fi
+
+  if [[ "${MEMBER}" != "auto" && "${member}" != "${MEMBER}" ]]; then
+    continue
+  fi
+
   if ! HIST_DIR="$(ipcc_esgf_monthly_stage_dir_for_group "$ROOT" "$model" "$member" "$HISTORICAL_SCENARIO" "$v" "clim_windows")"; then
     echo "WARN: Historical climatology directory not found, skipping MODEL=${model} MEMBER=${member} VAR=${v}"
     continue
@@ -140,6 +180,7 @@ for group in "${FUTURE_GROUPS[@]}"; do
   member="$hist_member"
   BASELINE_FILE="${HIST_DIR}/${DATASET_LABEL}_${model}_${HISTORICAL_SCENARIO}_${member}_${v}_clim_${BASELINE_TAG}.nc"
   DELTA_PREFIX="${DATASET_LABEL}_${model}_${scen}_${member}_${v}"
+  mapfile -t sbatch_extra_args < <(make_sbatch_extra_args)
 
   if [[ ! -f "$BASELINE_FILE" ]]; then
     echo "WARN: Missing baseline climatology for VAR=${v}: ${BASELINE_FILE}"
@@ -147,6 +188,10 @@ for group in "${FUTURE_GROUPS[@]}"; do
   fi
 
   for future_tag in "${FUTURE_TAGS[@]}"; do
+    if ! contains_filter_value "$future_tag" "${WINDOWS[@]}"; then
+      continue
+    fi
+
     future_file="${SSP_DIR}/${DATASET_LABEL}_${model}_${scen}_${member}_${v}_clim_${future_tag}.nc"
     if [[ -f "$future_file" ]]; then
       jid=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
@@ -164,6 +209,7 @@ for group in "${FUTURE_GROUPS[@]}"; do
         REGRID_OUT_DIR="$REGRID_OUT_DIR" \
         REGRID_SUFFIX="$REGRID_SUFFIX" \
         sbatch --parsable \
+        "${sbatch_extra_args[@]}" \
         --job-name="delta_${future_tag}_${v}" \
         "$CORE_SCRIPT")
       echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=${future_tag} REGRID_DELTA=${regrid_delta} as jobid=${jid}"

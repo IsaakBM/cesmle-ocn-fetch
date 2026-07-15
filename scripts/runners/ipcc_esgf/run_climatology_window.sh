@@ -47,6 +47,34 @@ VARS_DEFAULT=(
   siconc
 )
 read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
+read -r -a MODELS <<< "${MODELS:-}"
+read -r -a SCENARIOS <<< "${SCENARIOS:-}"
+read -r -a WINDOWS <<< "${WINDOWS:-}"
+EXCLUDE_NODES="${EXCLUDE_NODES:-}"
+
+contains_filter_value() {
+  local value="$1"
+  shift
+
+  if (( $# == 0 )); then
+    return 0
+  fi
+
+  local allowed
+  for allowed in "$@"; do
+    if [[ "$value" == "$allowed" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+make_sbatch_extra_args() {
+  if [[ -n "$EXCLUDE_NODES" ]]; then
+    printf '%s\n' "--exclude=${EXCLUDE_NODES}"
+  fi
+}
 
 VARS_2D=(
   zos
@@ -96,6 +124,18 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
     continue
   fi
 
+  if ! contains_filter_value "$model" "${MODELS[@]}"; then
+    continue
+  fi
+
+  if ! contains_filter_value "$scen" "${SCENARIOS[@]}"; then
+    continue
+  fi
+
+  if [[ "${MEMBER}" != "auto" && "${member}" != "${MEMBER}" ]]; then
+    continue
+  fi
+
   source_subdir="on_glorys"
   if [[ " ${VARS_2D[*]} " == *" ${v} "* ]]; then
     source_subdir="parts"
@@ -119,9 +159,11 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
 
   file_glob="${v}_*_${model}_${scen}_${member}_*.nc"
   out_prefix="${DATASET_LABEL}_${model}_${scen}_${member}_${v}"
+  mapfile -t sbatch_extra_args < <(make_sbatch_extra_args)
 
   if [[ "$scen" == "historical" ]]; then
-    jid=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
+    if contains_filter_value "baseline" "${WINDOWS[@]}"; then
+      jid=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
         VAR="$v" \
         IN_DIR="$IN_DIR" \
         OUT_DIR="$OUT_DIR" \
@@ -132,11 +174,14 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         MERGE_INPUTS="auto" \
         OUT_PREFIX="$out_prefix" \
         sbatch --parsable \
+        "${sbatch_extra_args[@]}" \
         --job-name="clim_${scen}_${v}" \
         "$CORE_SCRIPT")
-    echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=baseline as jobid=${jid}"
+      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=baseline as jobid=${jid}"
+    fi
   else
-    jid2030=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
+    if contains_filter_value "2030-2060" "${WINDOWS[@]}"; then
+      jid2030=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
         VAR="$v" \
         IN_DIR="$IN_DIR" \
         OUT_DIR="$OUT_DIR" \
@@ -147,11 +192,14 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         MERGE_INPUTS="auto" \
         OUT_PREFIX="$out_prefix" \
         sbatch --parsable \
+        "${sbatch_extra_args[@]}" \
         --job-name="clim2030_${v}" \
         "$CORE_SCRIPT")
-    echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2030-2060 as jobid=${jid2030}"
+      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2030-2060 as jobid=${jid2030}"
+    fi
 
-    jid2050=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
+    if contains_filter_value "2050-2060" "${WINDOWS[@]}"; then
+      jid2050=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
         VAR="$v" \
         IN_DIR="$IN_DIR" \
         OUT_DIR="$OUT_DIR" \
@@ -162,11 +210,14 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         MERGE_INPUTS="auto" \
         OUT_PREFIX="$out_prefix" \
         sbatch --parsable \
+        "${sbatch_extra_args[@]}" \
         --job-name="clim2050_${v}" \
         "$CORE_SCRIPT")
-    echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2050-2060 as jobid=${jid2050}"
+      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2050-2060 as jobid=${jid2050}"
+    fi
 
-    jid2090=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
+    if contains_filter_value "2090-2100" "${WINDOWS[@]}"; then
+      jid2090=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
         VAR="$v" \
         IN_DIR="$IN_DIR" \
         OUT_DIR="$OUT_DIR" \
@@ -177,9 +228,11 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         MERGE_INPUTS="auto" \
         OUT_PREFIX="$out_prefix" \
         sbatch --parsable \
+        "${sbatch_extra_args[@]}" \
         --job-name="clim2090_${v}" \
         "$CORE_SCRIPT")
-    echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2090-2100 as jobid=${jid2090}"
+      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2090-2100 as jobid=${jid2090}"
+    fi
   fi
 done
 

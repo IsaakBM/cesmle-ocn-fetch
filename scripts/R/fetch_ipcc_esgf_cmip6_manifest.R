@@ -21,6 +21,8 @@
 #        future: 2030-2060, 2050-2060, 2090-2100
 #    - If a selected ESGF endpoint fails, the fetcher can try alternate replica
 #      URLs from the full discovered files manifest when available.
+#    - By default, failed files are reported and the fetch continues so one
+#      offline ESGF endpoint does not block all other downloads.
 # ==============================================================================
 
 options(stringsAsFactors = FALSE)
@@ -56,6 +58,12 @@ replica_fallback <- tolower(env_value("REPLICA_FALLBACK", "yes")) %in% c("yes", 
 wget_tries <- env_value("WGET_TRIES", "3")
 wget_connect_timeout <- env_value("WGET_CONNECT_TIMEOUT", "60")
 wget_read_timeout <- env_value("WGET_READ_TIMEOUT", "900")
+continue_on_error <- tolower(env_value("CONTINUE_ON_ERROR", "yes")) %in% c("yes", "true", "1")
+fail_on_error <- tolower(env_value("FAIL_ON_ERROR", "no")) %in% c("yes", "true", "1")
+failed_plan <- env_value(
+  "FAILED_PLAN",
+  file.path(out_root, "failed_downloads", paste0("ipcc_esgf_failed_downloads_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".csv"))
+)
 
 models <- split_env("MODELS")
 members <- split_env("MEMBERS")
@@ -303,6 +311,7 @@ message("Output root: ", out_root)
 message("Selected files: ", nrow(selected))
 message("Time filter: ", if (time_filter) "on" else "off")
 message("Replica fallback: ", if (replica_fallback && file.exists(replica_manifest)) "on" else "off")
+message("Continue on error: ", if (continue_on_error) "on" else "off")
 message("Mode: ", if (download) "download" else "dry-run")
 
 if (!download) {
@@ -318,12 +327,40 @@ if (!download) {
 
 downloaded <- 0L
 existing <- 0L
+failed <- list()
 for (i in seq_len(nrow(selected))) {
   message("[", i, "/", nrow(selected), "] ", target_path(selected[i, , drop = FALSE]))
-  status <- download_one(selected[i, , drop = FALSE])
+  status <- tryCatch(
+    download_one(selected[i, , drop = FALSE]),
+    error = function(err) {
+      if (!continue_on_error) {
+        stop(err)
+      }
+
+      row <- selected[i, , drop = FALSE]
+      row$target <- target_path(row)
+      row$error <- conditionMessage(err)
+      failed[[length(failed) + 1L]] <<- row
+      message("FAILED: ", row$target)
+      message(conditionMessage(err))
+      "failed"
+    }
+  )
   if (identical(status, "downloaded")) downloaded <- downloaded + 1L
   if (identical(status, "exists")) existing <- existing + 1L
 }
 
 message("Downloaded: ", downloaded)
 message("Already complete: ", existing)
+message("Failed: ", length(failed))
+
+if (length(failed) > 0) {
+  failed_rows <- do.call(rbind, failed)
+  dir.create(dirname(failed_plan), recursive = TRUE, showWarnings = FALSE)
+  write.csv(failed_rows, failed_plan, row.names = FALSE, na = "")
+  message("Failed download report: ", failed_plan)
+
+  if (fail_on_error) {
+    quit(status = 1)
+  }
+}

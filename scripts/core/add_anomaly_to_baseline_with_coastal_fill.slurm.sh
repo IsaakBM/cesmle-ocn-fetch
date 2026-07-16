@@ -665,6 +665,7 @@ coastal_force_fill_count = 0
 coastal_force_remaining = 0
 coastal_force_iterations = 0
 coastal_force_fallback_count = 0
+filled_top_anomaly_count = 0
 baseline_domain_extension_count = 0
 baseline_fill_count = 0
 da_base_filled = da_base
@@ -727,7 +728,45 @@ if coastal_fill:
         flat_anom[idx] = filled_slice
         coastal_fill_count += added
 
-        if coastal_fill_require_complete:
+    if fill_top_missing_anomaly:
+        zdim_anom_candidates = [d for d in trans_anom.dims if d.lower() in zdim_names]
+        if zdim_anom_candidates:
+            zdim_anom = zdim_anom_candidates[0]
+            zaxis = trans_anom.dims.index(zdim_anom)
+            moved = np.moveaxis(anom_arr, zaxis, 0)
+            moved_shape = moved.shape
+            flat_anom_top = moved.reshape(moved_shape[0], -1)
+
+            first_valid_indices = np.full(flat_anom_top.shape[1], -1, dtype=int)
+            donor_values = np.full(flat_anom_top.shape[1], np.nan, dtype=float)
+            for level_idx in range(flat_anom_top.shape[0]):
+                finite = np.isfinite(flat_anom_top[level_idx])
+                newly_valid = (first_valid_indices < 0) & finite
+                if np.any(newly_valid):
+                    first_valid_indices[newly_valid] = level_idx
+                    donor_values[newly_valid] = flat_anom_top[level_idx, newly_valid]
+
+            for level_idx in range(flat_anom_top.shape[0]):
+                fill_mask = (
+                    (first_valid_indices > level_idx)
+                    & ~np.isfinite(flat_anom_top[level_idx])
+                    & np.isfinite(donor_values)
+                )
+                if np.any(fill_mask):
+                    flat_anom_top[level_idx, fill_mask] = donor_values[fill_mask]
+                    filled_top_anomaly_count += int(fill_mask.sum())
+
+            anom_arr[...] = np.moveaxis(flat_anom_top.reshape(moved_shape), 0, zaxis)
+
+    if coastal_fill_require_complete:
+        for idx in range(flat_anom.shape[0]):
+            baseline_valid_mask = np.isfinite(flat_base[idx])
+            if flat_mask is not None:
+                external_wet_mask = np.isfinite(flat_mask[idx])
+                wet_mask = external_wet_mask | baseline_valid_mask
+            else:
+                wet_mask = baseline_valid_mask
+
             completed_slice, forced_added, forced_remaining, forced_iterations = fill_slice_require_complete(
                 flat_anom[idx],
                 wet_mask,
@@ -766,44 +805,6 @@ if coastal_fill:
     ).transpose(*da_base.dims)
 else:
     da_anom_filled = da_anom_aligned
-
-filled_top_anomaly_count = 0
-if fill_top_missing_anomaly:
-    zdim_anom_candidates = [d for d in da_anom_filled.dims if d.lower() in zdim_names]
-    if zdim_anom_candidates:
-        zdim_anom = zdim_anom_candidates[0]
-        other_dims_anom = [d for d in da_anom_filled.dims if d != zdim_anom]
-        trans_anom_top = da_anom_filled.transpose(zdim_anom, *other_dims_anom)
-        arr_anom_top = np.array(trans_anom_top.values, dtype=float, copy=True)
-        nlev_anom = arr_anom_top.shape[0]
-        flat_anom_top = arr_anom_top.reshape(nlev_anom, -1)
-
-        first_valid_indices = np.full(flat_anom_top.shape[1], -1, dtype=int)
-        donor_values = np.full(flat_anom_top.shape[1], np.nan, dtype=float)
-        for idx in range(nlev_anom):
-            finite = np.isfinite(flat_anom_top[idx])
-            newly_valid = (first_valid_indices < 0) & finite
-            if np.any(newly_valid):
-                first_valid_indices[newly_valid] = idx
-                donor_values[newly_valid] = flat_anom_top[idx, newly_valid]
-
-        for idx in range(nlev_anom):
-            fill_mask = (
-                (first_valid_indices > idx)
-                & ~np.isfinite(flat_anom_top[idx])
-                & np.isfinite(donor_values)
-            )
-            if np.any(fill_mask):
-                flat_anom_top[idx, fill_mask] = donor_values[fill_mask]
-                filled_top_anomaly_count += int(fill_mask.sum())
-
-        da_anom_filled = xr.DataArray(
-            flat_anom_top.reshape(arr_anom_top.shape),
-            coords=trans_anom_top.coords,
-            dims=trans_anom_top.dims,
-            attrs=da_anom_filled.attrs,
-            name=da_anom_filled.name,
-        ).transpose(*da_base.dims)
 
 da_out = da_base_filled + da_anom_filled
 da_out.name = base_var

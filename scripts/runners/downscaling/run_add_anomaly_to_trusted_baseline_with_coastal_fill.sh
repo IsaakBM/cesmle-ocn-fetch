@@ -84,6 +84,8 @@ COASTAL_FILL_WEIGHT_POWER="${COASTAL_FILL_WEIGHT_POWER:-2.0}"
 COASTAL_FILL_MIN_DONORS="${COASTAL_FILL_MIN_DONORS:-4}"
 COASTAL_FILL_REQUIRE_COMPLETE="${COASTAL_FILL_REQUIRE_COMPLETE:-no}"
 COASTAL_FILL_COMPLETE_FALLBACK_VALUE="${COASTAL_FILL_COMPLETE_FALLBACK_VALUE:-0}"
+ANOMALY_MODE="${ANOMALY_MODE:-additive}"
+ANOMALY_MODE_SPEC="${ANOMALY_MODE_SPEC:-}"
 
 WRITE_NATIVE_OUTPUT="${WRITE_NATIVE_OUTPUT:-yes}"
 FILL_TOP_MISSING="${FILL_TOP_MISSING:-yes}"
@@ -112,6 +114,23 @@ render_template() {
   template="${template//__REALIZATION_LABEL__/${REALIZATION_LABEL}}"
   template="${template//__FORCING_LABEL__/${FORCING_LABEL}}"
   printf '%s\n' "$template"
+}
+
+anomaly_mode_for_var() {
+  local src_var="$1"
+  local tgt_var="$2"
+  local item key value
+
+  for item in ${ANOMALY_MODE_SPEC}; do
+    key="${item%%=*}"
+    value="${item#*=}"
+    if [[ "$key" == "$src_var" || "$key" == "$tgt_var" ]]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+  done
+
+  printf '%s\n' "$ANOMALY_MODE"
 }
 
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs
@@ -147,11 +166,14 @@ echo "FILL BASELINE GAPS   : ${FILL_BASELINE_COASTAL_GAPS}"
 echo "REQUIRE COMPLETE FILL: ${COASTAL_FILL_REQUIRE_COMPLETE}"
 echo "COMPLETE FALLBACK VAL: ${COASTAL_FILL_COMPLETE_FALLBACK_VALUE}"
 echo "FILL TOP ANOMALY     : ${FILL_TOP_MISSING_ANOMALY}"
+echo "ANOMALY MODE DEFAULT : ${ANOMALY_MODE}"
+echo "ANOMALY MODE SPEC    : ${ANOMALY_MODE_SPEC:-<none>}"
 echo "REGRID OUTPUT        : ${REGRID_OUTPUT}"
 
 for spec in "${VAR_MAP[@]}"; do
   src_var="${spec%%:*}"
   tgt_var="${spec##*:}"
+  anomaly_mode_for_this_var="$(anomaly_mode_for_var "$src_var" "$tgt_var")"
 
   BASELINE_FILE="$(render_template "${BASELINE_FILE_TEMPLATE}" "${src_var}" "${tgt_var}")"
   COASTAL_MASK_FILE_FOR_VAR="${COASTAL_MASK_FILE}"
@@ -205,6 +227,7 @@ for spec in "${VAR_MAP[@]}"; do
       FUTURE_TAG="$window" \
       OUT_SUFFIX="$OUT_SUFFIX" \
       NATIVE_SUFFIX="$NATIVE_SUFFIX" \
+      ANOMALY_MODE="$anomaly_mode_for_this_var" \
       WRITE_NATIVE_OUTPUT="$WRITE_NATIVE_OUTPUT" \
       FILL_TOP_MISSING="$FILL_TOP_MISSING" \
       FILL_TOP_MISSING_ANOMALY="$FILL_TOP_MISSING_ANOMALY" \
@@ -232,7 +255,7 @@ for spec in "${VAR_MAP[@]}"; do
       sbatch --parsable \
       --job-name="addcf_${window}_${tgt_var}" \
       "$CORE_SCRIPT")
-    echo "  submitted SRC=${src_var} TGT=${tgt_var} WINDOW=${window} as jobid=${jid}"
+    echo "  submitted SRC=${src_var} TGT=${tgt_var} WINDOW=${window} ANOMALY_MODE=${anomaly_mode_for_this_var} as jobid=${jid}"
   done
 done
 

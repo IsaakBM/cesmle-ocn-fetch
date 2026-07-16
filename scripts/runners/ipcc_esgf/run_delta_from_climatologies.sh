@@ -52,6 +52,8 @@ read -r -a NO_REGRID_DELTA_VARS <<< "${NO_REGRID_DELTA_VARS:-siconc}"
 read -r -a MODELS <<< "${MODELS:-}"
 read -r -a SCENARIOS <<< "${SCENARIOS:-}"
 read -r -a WINDOWS <<< "${WINDOWS:-}"
+DELTA_MODE="${DELTA_MODE:-additive}"
+DELTA_MODE_SPEC="${DELTA_MODE_SPEC:-chl=log_ratio}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
 
 contains_filter_value() {
@@ -76,6 +78,22 @@ make_sbatch_extra_args() {
   if [[ -n "$EXCLUDE_NODES" ]]; then
     printf '%s\n' "--exclude=${EXCLUDE_NODES}"
   fi
+}
+
+delta_mode_for_var() {
+  local var="$1"
+  local item key value
+
+  for item in ${DELTA_MODE_SPEC}; do
+    key="${item%%=*}"
+    value="${item#*=}"
+    if [[ "$key" == "$var" ]]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+  done
+
+  printf '%s\n' "$DELTA_MODE"
 }
 
 # ------------------------------------------------------------------------------
@@ -180,6 +198,7 @@ for group in "${FUTURE_GROUPS[@]}"; do
   member="$hist_member"
   BASELINE_FILE="${HIST_DIR}/${DATASET_LABEL}_${model}_${HISTORICAL_SCENARIO}_${member}_${v}_clim_${BASELINE_TAG}.nc"
   DELTA_PREFIX="${DATASET_LABEL}_${model}_${scen}_${member}_${v}"
+  delta_mode="$(delta_mode_for_var "$v")"
   mapfile -t sbatch_extra_args < <(make_sbatch_extra_args)
 
   if [[ ! -f "$BASELINE_FILE" ]]; then
@@ -203,6 +222,7 @@ for group in "${FUTURE_GROUPS[@]}"; do
         FUTURE_TAG="$future_tag" \
         BASELINE_TAG="$BASELINE_TAG" \
         OUT_PREFIX="${DELTA_PREFIX}" \
+        DELTA_MODE="$delta_mode" \
         REGRID_DELTA="$regrid_delta" \
         GRIDFILE="$GRIDFILE" \
         METHOD="$METHOD" \
@@ -212,7 +232,7 @@ for group in "${FUTURE_GROUPS[@]}"; do
         "${sbatch_extra_args[@]}" \
         --job-name="delta_${future_tag}_${v}" \
         "$CORE_SCRIPT")
-      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=${future_tag} REGRID_DELTA=${regrid_delta} as jobid=${jid}"
+      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=${future_tag} DELTA_MODE=${delta_mode} REGRID_DELTA=${regrid_delta} as jobid=${jid}"
     else
       echo "WARN: Missing ${future_tag} climatology for VAR=${v}: ${future_file}"
     fi

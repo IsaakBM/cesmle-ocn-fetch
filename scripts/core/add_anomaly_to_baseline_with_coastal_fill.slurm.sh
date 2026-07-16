@@ -52,6 +52,7 @@ export OMP_NUM_THREADS=1
 #   OUT_SUFFIX                : native output suffix (default: downscaled)
 #   NATIVE_SUFFIX             : optional suffix appended to native output names,
 #                               e.g. grid_0p05_global
+#   ANOMALY_MODE              : additive | log_ratio (default: additive)
 #   WRITE_NATIVE_OUTPUT       : yes | no (default: yes)
 #   FILL_TOP_MISSING          : yes | no (default: yes)
 #   FILL_TOP_MISSING_ANOMALY  : yes | no, fill missing shallow anomaly levels
@@ -104,9 +105,10 @@ export OMP_NUM_THREADS=1
 #   COASTAL_FILL_COMPLETE_FALLBACK_VALUE
 #                             : numeric value assigned to any wet-mask anomaly
 #                               cells still missing after force-complete local
-#                               propagation. For additive anomalies, 0 means
-#                               keep the baseline unchanged where no anomaly
-#                               donor exists (default: 0)
+#                               propagation. A value of 0 means unchanged
+#                               baseline for additive anomalies and unchanged
+#                               multiplicative factor for log-ratio anomalies
+#                               (default: 0)
 # ==============================================================================
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"
@@ -119,6 +121,7 @@ OUT_PREFIX="${OUT_PREFIX:-}"
 FUTURE_TAG="${FUTURE_TAG:-future}"
 OUT_SUFFIX="${OUT_SUFFIX:-downscaled}"
 NATIVE_SUFFIX="${NATIVE_SUFFIX:-}"
+ANOMALY_MODE="${ANOMALY_MODE:-additive}"
 WRITE_NATIVE_OUTPUT="${WRITE_NATIVE_OUTPUT:-yes}"
 FILL_TOP_MISSING="${FILL_TOP_MISSING:-yes}"
 FILL_TOP_MISSING_ANOMALY="${FILL_TOP_MISSING_ANOMALY:-no}"
@@ -172,6 +175,11 @@ done
 
 if [[ "${COASTAL_FILL_METHOD}" != "nearest" && "${COASTAL_FILL_METHOD}" != "distance_weighted" ]]; then
   echo "ERROR: COASTAL_FILL_METHOD must be nearest or distance_weighted"
+  exit 1
+fi
+
+if [[ "${ANOMALY_MODE}" != "additive" && "${ANOMALY_MODE}" != "log_ratio" ]]; then
+  echo "ERROR: ANOMALY_MODE must be one of: additive, log_ratio"
   exit 1
 fi
 
@@ -282,6 +290,7 @@ echo "OUT PREFIX           : ${OUT_PREFIX}"
 echo "FUTURE TAG           : ${FUTURE_TAG}"
 echo "OUT SUFFIX           : ${OUT_SUFFIX}"
 echo "NATIVE SUFFIX        : ${NATIVE_SUFFIX:-<none>}"
+echo "ANOMALY MODE         : ${ANOMALY_MODE}"
 echo "WRITE NATIVE         : ${WRITE_NATIVE_OUTPUT}"
 echo "FILL TOP MISSING     : ${FILL_TOP_MISSING}"
 echo "FILL TOP ANOMALY     : ${FILL_TOP_MISSING_ANOMALY}"
@@ -341,6 +350,7 @@ from collections import deque
 
 baseline_file = "${BASELINE_FILE}"
 anomaly_file = "${ANOMALY_FOR_PYTHON}"
+anomaly_mode = "${ANOMALY_MODE}"
 coastal_mask_file = "${COASTAL_MASK_FILE}"
 coastal_mask_var = "${COASTAL_MASK_VAR}"
 tmp_native = "${TMP_NATIVE}"
@@ -806,8 +816,27 @@ if coastal_fill:
 else:
     da_anom_filled = da_anom_aligned
 
-da_out = da_base_filled + da_anom_filled
+if anomaly_mode == "additive":
+    da_out = da_base_filled + da_anom_filled
+elif anomaly_mode == "log_ratio":
+    valid_log_apply = (
+        np.isfinite(da_base_filled)
+        & np.isfinite(da_anom_filled)
+        & (da_base_filled > 0)
+    )
+    da_out = xr.where(valid_log_apply, da_base_filled * np.exp(da_anom_filled), np.nan)
+else:
+    raise ValueError(f"Unsupported anomaly mode: {anomaly_mode}")
 da_out.name = base_var
+da_out.attrs = da_base.attrs.copy()
+da_out.attrs.update({
+    "anomaly_mode": anomaly_mode,
+    "anomaly_apply_formula": (
+        "baseline + anomaly"
+        if anomaly_mode == "additive"
+        else "baseline * exp(anomaly)"
+    ),
+})
 
 filled_top_count = 0
 first_valid_index = None
@@ -867,6 +896,7 @@ encoding = {base_var: {"zlib": True, "complevel": 1}}
 
 print(f"BASE VAR              : {base_var}")
 print(f"ANOM VAR              : {anom_var}")
+print(f"ANOMALY MODE          : {anomaly_mode}")
 print(f"COASTAL MASK FILE     : {coastal_mask_file or '<baseline finite mask>'}")
 print(f"COASTAL MASK VAR      : {mask_var or '<none>'}")
 print(f"COASTAL FILL ENABLED  : {coastal_fill}")

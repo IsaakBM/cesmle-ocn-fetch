@@ -54,6 +54,12 @@ export OMP_NUM_THREADS=1
 #                               e.g. grid_0p05_global
 #   WRITE_NATIVE_OUTPUT       : yes | no (default: yes)
 #   FILL_TOP_MISSING          : yes | no (default: yes)
+#   FILL_TOP_MISSING_ANOMALY  : yes | no, fill missing shallow anomaly levels
+#                               from the first deeper finite anomaly before
+#                               adding to baseline. This prevents a fully
+#                               missing top anomaly layer from becoming a zero
+#                               anomaly through the complete-fill fallback
+#                               (default: no)
 #   WRITE_FILLED_ANOM         : yes | no (default: no)
 #   FILLED_ANOM_DIR           : output dir for debug filled anomalies
 #   REGRID_OUTPUT             : yes | no (default: no)
@@ -115,6 +121,7 @@ OUT_SUFFIX="${OUT_SUFFIX:-downscaled}"
 NATIVE_SUFFIX="${NATIVE_SUFFIX:-}"
 WRITE_NATIVE_OUTPUT="${WRITE_NATIVE_OUTPUT:-yes}"
 FILL_TOP_MISSING="${FILL_TOP_MISSING:-yes}"
+FILL_TOP_MISSING_ANOMALY="${FILL_TOP_MISSING_ANOMALY:-no}"
 WRITE_FILLED_ANOM="${WRITE_FILLED_ANOM:-no}"
 FILLED_ANOM_DIR="${FILLED_ANOM_DIR:-}"
 REGRID_OUTPUT="${REGRID_OUTPUT:-no}"
@@ -155,7 +162,7 @@ if [[ ! -f "$ANOMALY_FILE" ]]; then
   exit 1
 fi
 
-for flag_var in WRITE_NATIVE_OUTPUT FILL_TOP_MISSING WRITE_FILLED_ANOM REGRID_OUTPUT REMAP_ANOMALY_TO_BASELINE COASTAL_FILL FILL_BASELINE_COASTAL_GAPS COASTAL_FILL_REQUIRE_COMPLETE; do
+for flag_var in WRITE_NATIVE_OUTPUT FILL_TOP_MISSING FILL_TOP_MISSING_ANOMALY WRITE_FILLED_ANOM REGRID_OUTPUT REMAP_ANOMALY_TO_BASELINE COASTAL_FILL FILL_BASELINE_COASTAL_GAPS COASTAL_FILL_REQUIRE_COMPLETE; do
   flag_val="${!flag_var}"
   if [[ "$flag_val" != "yes" && "$flag_val" != "no" ]]; then
     echo "ERROR: ${flag_var} must be yes or no"
@@ -277,6 +284,7 @@ echo "OUT SUFFIX           : ${OUT_SUFFIX}"
 echo "NATIVE SUFFIX        : ${NATIVE_SUFFIX:-<none>}"
 echo "WRITE NATIVE         : ${WRITE_NATIVE_OUTPUT}"
 echo "FILL TOP MISSING     : ${FILL_TOP_MISSING}"
+echo "FILL TOP ANOMALY     : ${FILL_TOP_MISSING_ANOMALY}"
 echo "WRITE FILLED ANOM    : ${WRITE_FILLED_ANOM}"
 echo "REMAP ANOM TO TARGET : ${REMAP_ANOMALY_TO_BASELINE}"
 echo "COASTAL FILL         : ${COASTAL_FILL}"
@@ -338,6 +346,7 @@ coastal_mask_var = "${COASTAL_MASK_VAR}"
 tmp_native = "${TMP_NATIVE}"
 write_native = "${WRITE_NATIVE_OUTPUT}" == "yes"
 fill_top_missing = "${FILL_TOP_MISSING}" == "yes"
+fill_top_missing_anomaly = "${FILL_TOP_MISSING_ANOMALY}" == "yes"
 write_filled_anom = "${WRITE_FILLED_ANOM}" == "yes"
 filled_anom_file = "${FILLED_ANOM_FILE}"
 coastal_fill = "${COASTAL_FILL}" == "yes"
@@ -758,6 +767,44 @@ if coastal_fill:
 else:
     da_anom_filled = da_anom_aligned
 
+filled_top_anomaly_count = 0
+if fill_top_missing_anomaly:
+    zdim_anom_candidates = [d for d in da_anom_filled.dims if d.lower() in zdim_names]
+    if zdim_anom_candidates:
+        zdim_anom = zdim_anom_candidates[0]
+        other_dims_anom = [d for d in da_anom_filled.dims if d != zdim_anom]
+        trans_anom_top = da_anom_filled.transpose(zdim_anom, *other_dims_anom)
+        arr_anom_top = np.array(trans_anom_top.values, dtype=float, copy=True)
+        nlev_anom = arr_anom_top.shape[0]
+        flat_anom_top = arr_anom_top.reshape(nlev_anom, -1)
+
+        first_valid_indices = np.full(flat_anom_top.shape[1], -1, dtype=int)
+        donor_values = np.full(flat_anom_top.shape[1], np.nan, dtype=float)
+        for idx in range(nlev_anom):
+            finite = np.isfinite(flat_anom_top[idx])
+            newly_valid = (first_valid_indices < 0) & finite
+            if np.any(newly_valid):
+                first_valid_indices[newly_valid] = idx
+                donor_values[newly_valid] = flat_anom_top[idx, newly_valid]
+
+        for idx in range(nlev_anom):
+            fill_mask = (
+                (first_valid_indices > idx)
+                & ~np.isfinite(flat_anom_top[idx])
+                & np.isfinite(donor_values)
+            )
+            if np.any(fill_mask):
+                flat_anom_top[idx, fill_mask] = donor_values[fill_mask]
+                filled_top_anomaly_count += int(fill_mask.sum())
+
+        da_anom_filled = xr.DataArray(
+            flat_anom_top.reshape(arr_anom_top.shape),
+            coords=trans_anom_top.coords,
+            dims=trans_anom_top.dims,
+            attrs=da_anom_filled.attrs,
+            name=da_anom_filled.name,
+        ).transpose(*da_base.dims)
+
 da_out = da_base_filled + da_anom_filled
 da_out.name = base_var
 
@@ -830,6 +877,7 @@ print(f"ANOMALY CELLS FILLED  : {coastal_fill_count}")
 print(f"ANOMALY FORCE FILLED  : {coastal_force_fill_count}")
 print(f"ANOMALY FALLBACK ZERO : {coastal_force_fallback_count}")
 print(f"FORCE FILL MAX WAVE   : {coastal_force_iterations}")
+print(f"TOP ANOMALY FILLED    : {filled_top_anomaly_count}")
 print(f"FIRST VALID INDEX     : {first_valid_index}")
 print(f"TOP LEVELS FILLED     : {filled_top_count}")
 

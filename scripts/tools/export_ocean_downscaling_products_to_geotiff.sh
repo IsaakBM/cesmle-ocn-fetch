@@ -51,7 +51,7 @@ shopt -s nullglob
 #                    writers are unavailable
 #                    (default: gdal_translate)
 #   SCALE_FACTORS  : comma-separated scale overrides, e.g.
-#                    thetao=100,so=100,o2=10,chl=10000
+#                    thetao=100,so=100,o2=1000,chl=10000
 #   DEFAULT_SCALE  : scale factor used when no variable-specific match exists
 #                    (default: 100)
 #   ENCODE_DTYPE   : auto | int16 | int32
@@ -79,7 +79,7 @@ OUT_ROOT="${OUT_ROOT:-/home/SB5/ocean_downscaling_products_layers_geotiff}"
 TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_export_geotiff}"
 GEOTIFF_PYTHON="${GEOTIFF_PYTHON:-/home/ibrito/venvs/parquet_export/bin/python}"
 GDAL_TRANSLATE="${GDAL_TRANSLATE:-gdal_translate}"
-SCALE_FACTORS="${SCALE_FACTORS:-thetao=100,TEMP=100,so=100,SALT=100,uo=100,UVEL=100,o2=10,O2=10,chl=10000,CHL=10000}"
+SCALE_FACTORS="${SCALE_FACTORS:-thetao=100,TEMP=100,so=100,SALT=100,uo=100,UVEL=100,o2=1000,O2=1000,chl=10000,CHL=10000}"
 DEFAULT_SCALE="${DEFAULT_SCALE:-100}"
 ENCODE_DTYPE="${ENCODE_DTYPE:-auto}"
 COMPRESS="${COMPRESS:-DEFLATE}"

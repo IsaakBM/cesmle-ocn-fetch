@@ -310,20 +310,13 @@ def geotiff_tags(path):
         return {}
 
 
-def backfill_manifest_metadata(row):
-    missing_fields = [
-        field for field in ("units", "scale_factor", "offset", "decode_formula")
-        if not str(row.get(field, "")).strip()
-    ]
-    if not missing_fields:
-        return
-
+def refresh_manifest_metadata(row):
     geotiff_file = row.get("geotiff_file", "")
     tags = geotiff_tags(geotiff_file)
     if not tags:
         return
 
-    for field in missing_fields:
+    for field in ("units", "scale_factor", "offset", "decode_formula"):
         if field in tags and str(tags[field]).strip():
             row[field] = tags[field]
 
@@ -490,7 +483,7 @@ for product_type, source_root in product_roots:
         clean["manifest_file"] = row["_manifest_file"]
         clean.update(staged_info)
         clean["staged_file"] = os.path.abspath(os.path.join(stage_root, staged_info["staged_relative_path"]))
-        backfill_manifest_metadata(clean)
+        refresh_manifest_metadata(clean)
         rows.append(clean)
 
     by_product[product_type] = rows

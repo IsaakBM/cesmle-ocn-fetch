@@ -827,9 +827,9 @@ elif anomaly_mode == "log_ratio":
     da_out = xr.where(valid_log_apply, da_base_filled * np.exp(da_anom_filled), np.nan)
 else:
     raise ValueError(f"Unsupported anomaly mode: {anomaly_mode}")
-da_out.name = base_var
-da_out.attrs = da_base.attrs.copy()
-da_out.attrs.update({
+
+output_attrs = da_base.attrs.copy()
+output_attrs.update({
     "anomaly_mode": anomaly_mode,
     "anomaly_apply_formula": (
         "baseline + anomaly"
@@ -837,6 +837,15 @@ da_out.attrs.update({
         else "baseline * exp(anomaly)"
     ),
 })
+da_out = xr.DataArray(
+    np.asarray(da_out.transpose(*da_base.dims).values),
+    coords=da_base.coords,
+    dims=da_base.dims,
+    attrs=output_attrs,
+    name=base_var,
+)
+da_out.attrs.pop("coordinates", None)
+da_out.encoding.pop("coordinates", None)
 
 filled_top_count = 0
 first_valid_index = None
@@ -888,6 +897,11 @@ if fill_top_missing:
 
 ds_out = ds_base.copy()
 ds_out[base_var] = da_out
+ds_out[base_var].attrs.pop("coordinates", None)
+ds_out[base_var].encoding.pop("coordinates", None)
+for coord_name in ds_out.coords:
+    ds_out[coord_name].attrs.pop("coordinates", None)
+    ds_out[coord_name].encoding.pop("coordinates", None)
 
 # FLAG: the final native downscaled output is intentionally rewritten as
 # NetCDF4 with zlib compression. Old/new file sizes are not a reliable

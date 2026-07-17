@@ -278,6 +278,11 @@ import csv
 import os
 import sys
 
+try:
+    import rasterio
+except ImportError:
+    rasterio = None
+
 (
     layers_source_root,
     pelagic_source_root,
@@ -291,6 +296,36 @@ import sys
 ) = sys.argv[1:10]
 
 selected_realizations = {}
+
+
+def geotiff_tags(path):
+    if rasterio is None or not os.path.isfile(path):
+        return {}
+
+    try:
+        with rasterio.open(path) as src:
+            return src.tags()
+    except Exception as exc:
+        print(f"[WARN] Could not read GeoTIFF tags for {path}: {exc}", file=sys.stderr)
+        return {}
+
+
+def backfill_manifest_metadata(row):
+    missing_fields = [
+        field for field in ("units", "scale_factor", "offset", "decode_formula")
+        if not str(row.get(field, "")).strip()
+    ]
+    if not missing_fields:
+        return
+
+    geotiff_file = row.get("geotiff_file", "")
+    tags = geotiff_tags(geotiff_file)
+    if not tags:
+        return
+
+    for field in missing_fields:
+        if field in tags and str(tags[field]).strip():
+            row[field] = tags[field]
 
 
 def iter_manifest_rows(product_type, source_root):
@@ -455,6 +490,7 @@ for product_type, source_root in product_roots:
         clean["manifest_file"] = row["_manifest_file"]
         clean.update(staged_info)
         clean["staged_file"] = os.path.abspath(os.path.join(stage_root, staged_info["staged_relative_path"]))
+        backfill_manifest_metadata(clean)
         rows.append(clean)
 
     by_product[product_type] = rows

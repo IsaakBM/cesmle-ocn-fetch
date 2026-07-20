@@ -20,13 +20,13 @@ SCENARIO="${SCENARIO:-auto}"
 ORGANIZE_SCOPE="${ORGANIZE_SCOPE:-all}"
 VAR="${VAR:-}"
 WINDOW="${WINDOW:-}"
-BASELINE_VARS="${BASELINE_VARS:-chl o2 ph zos thetao so uo vo mlotst}"
+BASELINE_VARS="${BASELINE_VARS:-chl o2 ph thetao so uo vo zos mlotst siconc}"
 FUTURE_VARS="${FUTURE_VARS:-thetao so ph o2 chl uo vo zooc zos mlotst siconc}"
 WINDOWS="${WINDOWS:-2030-2060 2050-2060 2090-2100}"
 NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-4}}"
 OVERWRITE="${OVERWRITE:-no}"
 USE_COASTAL_FILLED_BASELINE="${USE_COASTAL_FILLED_BASELINE:-no}"
-COASTAL_FILLED_BASELINE_VARS="${COASTAL_FILLED_BASELINE_VARS:-chl o2 zos}"
+COASTAL_FILLED_BASELINE_VARS="${COASTAL_FILLED_BASELINE_VARS:-chl o2}"
 
 copy_one() {
   local src="$1"
@@ -217,12 +217,6 @@ organize_one_baseline_var() {
         "ph" \
         "0p05"
       ;;
-    zos)
-      copy_baseline_product \
-        "$(hindcast_0p05_baseline_file zos global_ocean_biogeochemistry_hindcast_zos_clim_2006-2014_grid_0p05_global.nc)" \
-        "zos" \
-        "0p05"
-      ;;
     thetao)
       copy_baseline_product \
         "${GLORYS_ROOT}/thetao/clim_windows/glorys12v1_thetao_clim_2006-2014.nc" \
@@ -247,10 +241,22 @@ organize_one_baseline_var() {
         "vo" \
         "0p05"
       ;;
+    zos)
+      copy_baseline_product \
+        "${GLORYS_ROOT}/zos/clim_windows/glorys12v1_zos_clim_2006-2014.nc" \
+        "zos" \
+        "0p05"
+      ;;
     mlotst)
       copy_baseline_product \
         "${GLORYS_ROOT}/mlotst/clim_windows/glorys12v1_mlotst_clim_2006-2014.nc" \
         "mlotst" \
+        "0p05"
+      ;;
+    siconc)
+      copy_baseline_product \
+        "${GLORYS_ROOT}/siconc/clim_windows/glorys12v1_siconc_clim_2006-2014.nc" \
+        "siconc" \
         "0p05"
       ;;
     *)

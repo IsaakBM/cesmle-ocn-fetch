@@ -16,9 +16,11 @@ set -euo pipefail
 #   - This runner computes:
 #       * each discovered SSP future window minus historical 2006-2014
 #   - The delta core can optionally regrid. This runner enables regridding
-#     to a common 0.25 x 0.25 degree lon/lat grid for ocean variables.
-#   - Diagnostic variables listed in NO_REGRID_DELTA_VARS, currently siconc,
-#     stop at delta_windows/ because they do not use the hindcast target grid.
+#     to a common 0.25 x 0.25 degree lon/lat grid for variables that continue
+#     into anomaly-add workflows. The add step can then remap from 0.25 degrees
+#     onto either the GLORYS or hindcast trusted baseline grid.
+#   - Variables listed in NO_REGRID_DELTA_VARS stop at delta_windows/ and are
+#     diagnostic-only until a downstream trusted-baseline target is configured.
 #   - Expected climatology layout:
 #       /home/SB5/ipcc_esgf/monthly_1deg/<model>/<member>/historical/<var>/clim_windows/*.nc
 #       /home/SB5/ipcc_esgf/monthly_1deg/<model>/<member>/<ssp-scenario>/<var>/clim_windows/*.nc
@@ -48,7 +50,7 @@ VARS_DEFAULT=(
   siconc
 )
 read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
-read -r -a NO_REGRID_DELTA_VARS <<< "${NO_REGRID_DELTA_VARS:-siconc}"
+read -r -a NO_REGRID_DELTA_VARS <<< "${NO_REGRID_DELTA_VARS:-}"
 read -r -a MODELS <<< "${MODELS:-}"
 read -r -a SCENARIOS <<< "${SCENARIOS:-}"
 read -r -a WINDOWS <<< "${WINDOWS:-}"

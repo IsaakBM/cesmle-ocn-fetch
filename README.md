@@ -72,7 +72,8 @@ The current scientific branches are:
 - `ipcc_esgf/`
   - prepares IPCC/ESGF monthly products, climatologies, and change fields
 - `ipcc_esgf_to_hindcast/`
-  - adds IPCC/ESGF change fields to the hindcast baseline
+  - adds IPCC/ESGF change fields to the configured trusted baseline
+    (`GLORYS` for physics/sea-ice and hindcast for BGC)
 - `cesm_to_glorys/`
   - adds CESM member change fields to the GLORYS baseline
 
@@ -82,8 +83,20 @@ The current CMIP6/IPCC expansion targets five first-member model branches:
 with a `2006-2014` historical baseline and future windows `2030-2060`,
 `2050-2060`, and `2090-2100`. The 3D stack is `thetao`, `so`, `ph`, `o2`,
 `chl`, `uo`, `vo`, and `zooc`; 2D diagnostic or sea-ice layers are `zos`,
-`mlotst`, and `siconc`. In the current product workflow, `zooc` and `siconc`
-are future-side variables, not default present-day baseline products.
+`mlotst`, and `siconc`. The anomaly-add target is split by trusted baseline:
+`thetao`, `so`, `uo`, `vo`, `zos`, `mlotst`, and `siconc` use GLORYS;
+`chl`, `o2`, and `ph` use the GLORYS-coast hindcast; `zooc` stops at delta
+until a trusted present-day baseline is defined.
+
+Current anomaly-add and baseline matrix:
+
+| Variable(s) | Source class | Model processing | Delta regrid | Trusted baseline for add | Native add grid | Coastal/wet-mask rule |
+| --- | --- | --- | --- | --- | --- | --- |
+| `thetao`, `so`, `uo`, `vo` | 3D ocean | vertical interpolation to GLORYS levels, climatology, delta | `0p25` common grid | GLORYS12v1 | `0p05` GLORYS | baseline finite mask |
+| `chl`, `o2`, `ph` | 3D BGC | vertical interpolation to GLORYS levels, climatology, delta | `0p25` common grid | Global Ocean Biogeochemistry Hindcast, remapped to GLORYS coast | `0p05` GLORYS coast | GLORYS `thetao` wet mask for coastal fill |
+| `zos`, `mlotst` | 2D ocean | climatology, delta | `0p25` common grid | GLORYS12v1 | `0p05` GLORYS | baseline finite mask |
+| `siconc` | 2D sea ice | climatology, delta | `0p25` common grid | GLORYS12v1 | `0p05` GLORYS | baseline finite mask |
+| `zooc` | 3D BGC CMIP6 variable | vertical interpolation to GLORYS levels, climatology, delta | `0p25` common grid | none configured | stop at delta | add later when a trusted baseline is selected |
 
 The future products use an additive change-field, or delta-change, approach:
 a model-specific change field is first calculated from the difference between
@@ -808,9 +821,9 @@ Variables are split by processing dimension:
 - 2D diagnostic or sea-ice layers:
   `zos`, `mlotst`, and `siconc`
 
-`zooc` and `siconc` are future/product variables for now. They are not treated
-as present-day baseline products unless a trusted current-condition baseline is
-defined later.
+`siconc` now has a GLORYS present-day baseline path. `zooc` is still a
+future/delta-side variable until a trusted current-condition baseline is
+defined.
 
 To test or restrict the scan to candidate models:
 
@@ -926,15 +939,20 @@ Example:
 Operational sequence for this final stage:
 
 1. run [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh)
+   - reads GLORYS baseline climatology files from
+     `/home/SB5/glorys12v1_monthly_0p05` for
+     `thetao`, `so`, `uo`, `vo`, `zos`, `mlotst`, and `siconc`
    - reads GLORYS-coast hindcast baseline climatology files from
      `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast`
+     for `chl`, `o2`, and `ph`
    - reads IPCC/ESGF delta files from the member-aware `delta_windows_0p25/`
      tree under `/home/SB5/ipcc_esgf/monthly_1deg`
+   - leaves variables without a configured trusted baseline, currently `zooc`,
+     at the delta stage
    - writes to `/home/SB5/downscaled/<model>/<realization>/<scenario>/<var>/`
    - remaps the anomaly to the GLORYS `0.05` grid
-   - fills anomaly coastal gaps inside the GLORYS wet mask plus any
-     baseline-valid cells, including the force-complete fallback for remaining
-     allowed-domain cells
+   - fills anomaly coastal gaps inside the target baseline wet mask; hindcast
+     BGC variables use the GLORYS `thetao` mask for GLORYS-coast filling
    - computes fixed baseline plus fixed anomaly
    - then fills top missing layers dynamically in the final output
    - writes the native downscaled output at `0.05`
@@ -1199,15 +1217,16 @@ Notes:
 - biogeochemistry variables can include both `0p25` and derived `0p05`
   hindcast baseline products; the current preferred `0p05` baseline source is
   the GLORYS-coast-filled hindcast root
-- `thetao`, `so`, `uo`, `vo`, and `mlotst` contribute `0p05` baseline
+- `thetao`, `so`, `uo`, `vo`, `zos`, `mlotst`, and `siconc` contribute `0p05` baseline
   products from the GLORYS reference branch when those climatologies exist
 - default baseline variables are:
-  `chl`, `o2`, `ph`, `zos`, `thetao`, `so`, `uo`, `vo`, and `mlotst`
+  `chl`, `o2`, `ph`, `thetao`, `so`, `uo`, `vo`, `zos`, `mlotst`, and
+  `siconc`
 - default future variables are:
   `thetao`, `so`, `ph`, `o2`, `chl`, `uo`, `vo`, `zooc`, `zos`, `mlotst`,
   and `siconc`
-- `zooc` and `siconc` are future-only in the current product workflow; they are
-  not included in the default baseline set
+- `zooc` is future-only in the current product workflow; it is not included in
+  the default baseline set
 - `future/` stores curated future/downscaled products
 - future products preserve model, realization/member-or-statistic, scenario,
   variable, window, and resolution
@@ -1941,5 +1960,6 @@ To avoid confusion:
   and `siconc` skip `on_glorys/` and compute climatologies directly from
   `parts/`.
 
-- `zooc` and `siconc` are included in the future/product side of the workflow,
-  but they are not present-day baseline products by default.
+- `siconc` is included in both the GLORYS baseline and future/product side of
+  the workflow. `zooc` is included in the future/product side only until a
+  trusted baseline is configured.

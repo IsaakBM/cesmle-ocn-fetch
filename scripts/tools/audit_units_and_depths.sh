@@ -392,6 +392,25 @@ status_from_notes() {
   fi
 }
 
+list_values_or_dirs() {
+  local root="$1"
+  shift
+  local filters=("$@")
+
+  if (( ${#filters[@]} > 0 )); then
+    printf '%s\n' "${filters[@]}"
+    return 0
+  fi
+
+  find "${root}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort
+}
+
+first_stage_file() {
+  local stage_dir="$1"
+
+  find "${stage_dir}" -maxdepth 1 -type f -name "${FILE_GLOB}" -print -quit 2>/dev/null
+}
+
 read -r -a MODEL_FILTER <<< "${MODELS}"
 read -r -a MEMBER_FILTER <<< "${MEMBERS}"
 read -r -a SCENARIO_FILTER <<< "${SCENARIOS}"
@@ -408,114 +427,117 @@ csv_row \
   baseline_z_units baseline_z_min baseline_z_max baseline_min baseline_max \
   suggested_z_scale suggested_var_scale status notes > "${OUT_FILE}"
 
-declare -A seen_groups=()
 processed=0
 
-while IFS= read -r source_file; do
-  rel="${source_file#${IPCC_ROOT}/}"
-  IFS='/' read -r model member scenario var stage rest <<< "${rel}"
+while IFS= read -r model; do
+  model_dir="${IPCC_ROOT}/${model}"
+  [[ -d "${model_dir}" ]] || continue
 
-  if [[ -z "${model}" || -z "${member}" || -z "${scenario}" || -z "${var}" || "${stage}" != "${FILE_STAGE}" ]]; then
-    continue
-  fi
+  while IFS= read -r member; do
+    member_dir="${model_dir}/${member}"
+    [[ -d "${member_dir}" ]] || continue
 
-  contains_word "${model}" "${MODEL_FILTER[@]}" || continue
-  contains_word "${member}" "${MEMBER_FILTER[@]}" || continue
-  contains_word "${scenario}" "${SCENARIO_FILTER[@]}" || continue
-  contains_word "${var}" "${VAR_FILTER[@]}" || continue
+    while IFS= read -r scenario; do
+      scenario_dir="${member_dir}/${scenario}"
+      [[ -d "${scenario_dir}" ]] || continue
 
-  group_key="${model}|${member}|${scenario}|${var}|${stage}"
-  if [[ -n "${seen_groups[${group_key}]:-}" ]]; then
-    continue
-  fi
-  seen_groups["${group_key}"]=1
+      while IFS= read -r var; do
+        var_dir="${scenario_dir}/${var}"
+        stage_dir="${var_dir}/${FILE_STAGE}"
+        [[ -d "${stage_dir}" ]] || continue
 
-  source_data_var="$(pick_data_var "${source_file}" "${var}")"
-  if [[ -z "${source_data_var}" ]]; then
-    echo "WARN: Could not identify data variable in ${source_file}" >&2
-    continue
-  fi
+        source_file="$(first_stage_file "${stage_dir}")"
+        [[ -n "${source_file}" ]] || continue
 
-  source_units="$(get_attr "${source_file}" "${source_data_var}" "units")"
-  source_z_dim="$(pick_zdim "${source_file}" "${source_data_var}")"
-  source_z_units=""
-  if [[ -n "${source_z_dim}" ]]; then
-    source_z_units="$(get_attr "${source_file}" "${source_z_dim}" "units")"
-  fi
-  IFS=',' read -r source_z_min source_z_max <<< "$(levels_min_max "${source_file}")"
-  IFS=',' read -r source_min source_max <<< "$(field_min_max "${source_file}" "${source_data_var}")"
+        source_data_var="$(pick_data_var "${source_file}" "${var}")"
+        if [[ -z "${source_data_var}" ]]; then
+          echo "WARN: Could not identify data variable in ${source_file}" >&2
+          continue
+        fi
 
-  baseline_target="$(baseline_target_for_var "${var}")"
-  baseline_file="$(baseline_file_for_var "${var}" "${baseline_target}")"
-  baseline_data_var=""
-  baseline_units=""
-  baseline_z_dim=""
-  baseline_z_units=""
-  baseline_z_min=""
-  baseline_z_max=""
-  baseline_min=""
-  baseline_max=""
+        source_units="$(get_attr "${source_file}" "${source_data_var}" "units")"
+        source_z_dim="$(pick_zdim "${source_file}" "${source_data_var}")"
+        source_z_units=""
+        if [[ -n "${source_z_dim}" ]]; then
+          source_z_units="$(get_attr "${source_file}" "${source_z_dim}" "units")"
+        fi
+        IFS=',' read -r source_z_min source_z_max <<< "$(levels_min_max "${source_file}")"
+        IFS=',' read -r source_min source_max <<< "$(field_min_max "${source_file}" "${source_data_var}")"
 
-  if [[ -n "${baseline_file}" && -f "${baseline_file}" ]]; then
-    baseline_data_var="$(pick_data_var "${baseline_file}" "${var}")"
-    baseline_units="$(get_attr "${baseline_file}" "${baseline_data_var}" "units")"
-    baseline_z_dim="$(pick_zdim "${baseline_file}" "${baseline_data_var}")"
-    if [[ -n "${baseline_z_dim}" ]]; then
-      baseline_z_units="$(get_attr "${baseline_file}" "${baseline_z_dim}" "units")"
-    fi
-    IFS=',' read -r baseline_z_min baseline_z_max <<< "$(levels_min_max "${baseline_file}")"
-    IFS=',' read -r baseline_min baseline_max <<< "$(field_min_max "${baseline_file}" "${baseline_data_var}")"
-  fi
+        baseline_target="$(baseline_target_for_var "${var}")"
+        baseline_file="$(baseline_file_for_var "${var}" "${baseline_target}")"
+        baseline_data_var=""
+        baseline_units=""
+        baseline_z_dim=""
+        baseline_z_units=""
+        baseline_z_min=""
+        baseline_z_max=""
+        baseline_min=""
+        baseline_max=""
 
-  IFS=',' read -r suggested_z_scale z_note <<< "$(suggest_z_scale_and_note "${source_z_units}" "${source_z_max}")"
-  IFS=',' read -r suggested_var_scale var_note <<< "$(
-    suggest_var_scale_and_note \
-      "${var}" \
-      "${source_units}" \
-      "${source_min}" \
-      "${source_max}" \
-      "${baseline_units}" \
-      "${baseline_min}" \
-      "${baseline_max}"
-  )"
-  status="$(status_from_notes "${baseline_target}" "${baseline_file}" "${suggested_z_scale}" "${suggested_var_scale}")"
-  notes="${z_note}; ${var_note}"
+        if [[ -n "${baseline_file}" && -f "${baseline_file}" ]]; then
+          baseline_data_var="$(pick_data_var "${baseline_file}" "${var}")"
+          baseline_units="$(get_attr "${baseline_file}" "${baseline_data_var}" "units")"
+          baseline_z_dim="$(pick_zdim "${baseline_file}" "${baseline_data_var}")"
+          if [[ -n "${baseline_z_dim}" ]]; then
+            baseline_z_units="$(get_attr "${baseline_file}" "${baseline_z_dim}" "units")"
+          fi
+          IFS=',' read -r baseline_z_min baseline_z_max <<< "$(levels_min_max "${baseline_file}")"
+          IFS=',' read -r baseline_min baseline_max <<< "$(field_min_max "${baseline_file}" "${baseline_data_var}")"
+        fi
 
-  csv_row \
-    "${model}" \
-    "${member}" \
-    "${scenario}" \
-    "${var}" \
-    "${stage}" \
-    "${source_file}" \
-    "${source_data_var}" \
-    "${source_units}" \
-    "${source_z_dim}" \
-    "${source_z_units}" \
-    "${source_z_min}" \
-    "${source_z_max}" \
-    "${source_min}" \
-    "${source_max}" \
-    "${baseline_target}" \
-    "${baseline_file}" \
-    "${baseline_data_var}" \
-    "${baseline_units}" \
-    "${baseline_z_dim}" \
-    "${baseline_z_units}" \
-    "${baseline_z_min}" \
-    "${baseline_z_max}" \
-    "${baseline_min}" \
-    "${baseline_max}" \
-    "${suggested_z_scale}" \
-    "${suggested_var_scale}" \
-    "${status}" \
-    "${notes}" >> "${OUT_FILE}"
+        IFS=',' read -r suggested_z_scale z_note <<< "$(suggest_z_scale_and_note "${source_z_units}" "${source_z_max}")"
+        IFS=',' read -r suggested_var_scale var_note <<< "$(
+          suggest_var_scale_and_note \
+            "${var}" \
+            "${source_units}" \
+            "${source_min}" \
+            "${source_max}" \
+            "${baseline_units}" \
+            "${baseline_min}" \
+            "${baseline_max}"
+        )"
+        status="$(status_from_notes "${baseline_target}" "${baseline_file}" "${suggested_z_scale}" "${suggested_var_scale}")"
+        notes="${z_note}; ${var_note}"
 
-  processed=$((processed + 1))
-  if [[ -n "${MAX_GROUPS}" && "${processed}" -ge "${MAX_GROUPS}" ]]; then
-    break
-  fi
-done < <(find "${IPCC_ROOT}" -type f -path "*/${FILE_STAGE}/${FILE_GLOB}" | sort)
+        csv_row \
+          "${model}" \
+          "${member}" \
+          "${scenario}" \
+          "${var}" \
+          "${FILE_STAGE}" \
+          "${source_file}" \
+          "${source_data_var}" \
+          "${source_units}" \
+          "${source_z_dim}" \
+          "${source_z_units}" \
+          "${source_z_min}" \
+          "${source_z_max}" \
+          "${source_min}" \
+          "${source_max}" \
+          "${baseline_target}" \
+          "${baseline_file}" \
+          "${baseline_data_var}" \
+          "${baseline_units}" \
+          "${baseline_z_dim}" \
+          "${baseline_z_units}" \
+          "${baseline_z_min}" \
+          "${baseline_z_max}" \
+          "${baseline_min}" \
+          "${baseline_max}" \
+          "${suggested_z_scale}" \
+          "${suggested_var_scale}" \
+          "${status}" \
+          "${notes}" >> "${OUT_FILE}"
+
+        processed=$((processed + 1))
+        if [[ -n "${MAX_GROUPS}" && "${processed}" -ge "${MAX_GROUPS}" ]]; then
+          break 4
+        fi
+      done < <(list_values_or_dirs "${scenario_dir}" "${VAR_FILTER[@]}")
+    done < <(list_values_or_dirs "${member_dir}" "${SCENARIO_FILTER[@]}")
+  done < <(list_values_or_dirs "${model_dir}" "${MEMBER_FILTER[@]}")
+done < <(list_values_or_dirs "${IPCC_ROOT}" "${MODEL_FILTER[@]}")
 
 echo "Wrote unit/depth audit: ${OUT_FILE}"
 echo "Representative groups inspected: ${processed}"

@@ -36,11 +36,12 @@ CORE_SCRIPT="${SCRIPT_DIR}/../../core/add_anomaly_to_baseline_with_coastal_fill.
 VAR_MAP_SPEC="${VAR_MAP_SPEC:-chl:chl o2:o2}"
 read -r -a VAR_MAP <<< "${VAR_MAP_SPEC}"
 
-WINDOWS=(
+WINDOWS_DEFAULT=(
   2030-2060
   2050-2060
   2090-2100
 )
+read -r -a WINDOWS <<< "${WINDOWS:-${WINDOWS_DEFAULT[*]}}"
 
 DATASET_LABEL="${DATASET_LABEL:-anomaly_to_trusted_baseline}"
 BASELINE_ROOT="${BASELINE_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast}"

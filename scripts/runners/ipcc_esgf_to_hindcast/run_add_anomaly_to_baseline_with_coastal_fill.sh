@@ -32,6 +32,9 @@ ANOMALY_MODE="${ANOMALY_MODE:-additive}"
 ANOMALY_MODE_SPEC="${ANOMALY_MODE_SPEC:-chl=log_ratio}"
 GLORYS_BASELINE_VARS="${GLORYS_BASELINE_VARS:-thetao so uo vo zos mlotst siconc}"
 HINDCAST_BASELINE_VARS="${HINDCAST_BASELINE_VARS:-chl o2 ph}"
+read -r -a MODELS <<< "${MODELS:-}"
+read -r -a SCENARIOS <<< "${SCENARIOS:-}"
+read -r -a VARS <<< "${VARS:-}"
 
 uses_coastal_mask() {
   local candidate="$1"
@@ -77,6 +80,11 @@ fi
 echo "Submitting IPCC/ESGF-to-hindcast coastal-fill downscaling jobs:"
 for group in "${DISCOVERED_GROUPS[@]}"; do
   IFS=$'\t' read -r model member scenario var <<< "$group"
+
+  contains_word "$model" "${MODELS[@]}" || continue
+  contains_word "$scenario" "${SCENARIOS[@]}" || continue
+  contains_word "$var" "${VARS[@]}" || continue
+
   if ! delta_dir="$(ipcc_esgf_monthly_stage_dir_for_group "$IPCC_ROOT" "$model" "$member" "$scenario" "$var" "delta_windows_0p25")"; then
     echo "WARN: Delta directory not found, skipping MODEL=${model} MEMBER=${member} SCENARIO=${scenario} VAR=${var}"
     continue

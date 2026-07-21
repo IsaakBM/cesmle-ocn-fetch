@@ -32,6 +32,7 @@ ANOMALY_MODE="${ANOMALY_MODE:-additive}"
 ANOMALY_MODE_SPEC="${ANOMALY_MODE_SPEC:-chl=log_ratio}"
 GLORYS_BASELINE_VARS="${GLORYS_BASELINE_VARS:-thetao so uo vo zos mlotst siconc}"
 HINDCAST_BASELINE_VARS="${HINDCAST_BASELINE_VARS:-chl o2 ph}"
+REGRID_OUTPUT_POLICY="${REGRID_OUTPUT:-auto}"
 read -r -a MODELS <<< "${MODELS:-}"
 read -r -a SCENARIOS <<< "${SCENARIOS:-}"
 read -r -a VARS <<< "${VARS:-}"
@@ -69,6 +70,11 @@ contains_word() {
 
 read -r -a GLORYS_BASELINE_VAR_LIST <<< "${GLORYS_BASELINE_VARS}"
 read -r -a HINDCAST_BASELINE_VAR_LIST <<< "${HINDCAST_BASELINE_VARS}"
+
+if [[ "$REGRID_OUTPUT_POLICY" != "auto" && "$REGRID_OUTPUT_POLICY" != "yes" && "$REGRID_OUTPUT_POLICY" != "no" ]]; then
+  echo "ERROR: REGRID_OUTPUT must be auto, yes, or no for this wrapper"
+  exit 1
+fi
 
 mapfile -t DISCOVERED_GROUPS < <(ipcc_esgf_discover_monthly_groups_any_layout "${IPCC_ROOT}" "delta_windows_0p25" | awk -F '\t' '$3 ~ /^ssp[0-9][0-9][0-9]$/' | sort -u)
 
@@ -108,6 +114,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
   coastal_mask_file_for_var=""
   coastal_mask_var_for_var=""
   fill_baseline_gaps_for_var="no"
+  regrid_output_for_var="$REGRID_OUTPUT_POLICY"
 
   if contains_word "$var" "${GLORYS_BASELINE_VAR_LIST[@]}"; then
     dataset_label="${DATASET_LABEL_PREFIX:-ipcc_esgf_${model}_${scenario}_${member}_to_glorys}"
@@ -117,6 +124,16 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
   elif ! contains_word "$var" "${HINDCAST_BASELINE_VAR_LIST[@]}"; then
     echo "WARN: No trusted target baseline configured for VAR=${var}; leaving at delta stage."
     continue
+  fi
+
+  if [[ "$REGRID_OUTPUT_POLICY" == "auto" ]]; then
+    # Hindcast BGC products keep a 0.25-degree copy matching the source
+    # reanalysis family. GLORYS-target products are final at 0.05 degrees.
+    if [[ "$target_label" == "hindcast" ]]; then
+      regrid_output_for_var="yes"
+    else
+      regrid_output_for_var="no"
+    fi
   fi
 
   if [[ "$target_label" == "hindcast" ]] && uses_coastal_mask "$var"; then
@@ -148,6 +165,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
   COASTAL_FILL_MIN_DONORS="${COASTAL_FILL_MIN_DONORS:-4}" \
   COASTAL_FILL_REQUIRE_COMPLETE="${COASTAL_FILL_REQUIRE_COMPLETE}" \
   COASTAL_FILL_COMPLETE_FALLBACK_VALUE="${COASTAL_FILL_COMPLETE_FALLBACK_VALUE}" \
+  REGRID_OUTPUT="${regrid_output_for_var}" \
   REGRID_GRIDFILE="${REGRID_GRIDFILE:-${regrid_gridfile}}" \
   REGRID_SUFFIX="${REGRID_SUFFIX:-${regrid_suffix}}" \
   "${GENERIC_RUNNER}" "$@"

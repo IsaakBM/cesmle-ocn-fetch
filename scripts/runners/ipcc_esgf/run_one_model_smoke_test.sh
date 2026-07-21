@@ -28,6 +28,8 @@ SMOKE_WINDOWS="${SMOKE_WINDOWS:-2050-2060}"
 SMOKE_MEMBER="${SMOKE_MEMBER:-auto}"
 STEP="${STEP:-plan}"
 RUN="${RUN:-no}"
+MAX_GROUPS="${MAX_GROUPS:-}"
+COMPUTE_STATS="${COMPUTE_STATS:-no}"
 
 case "${RUN}" in
   yes|no) ;;
@@ -70,6 +72,8 @@ audit_step() {
     VARS="${SMOKE_VARS}" \
     MEMBERS="${SMOKE_MEMBER}" \
     FILE_STAGE="parts" \
+    COMPUTE_STATS="${COMPUTE_STATS}" \
+    MAX_GROUPS="${MAX_GROUPS}" \
     OUT_FILE="data/manifests/unit_depth_audit_${SMOKE_MODEL}_${SMOKE_SCENARIO}_smoke.csv" \
     bash scripts/tools/audit_units_and_depths.sh
 }

@@ -41,6 +41,8 @@ shopt -s nullglob
 #                    (default: parts)
 #   FILE_GLOB      : NetCDF file glob inside each stage directory
 #                    (default: *.nc)
+#   COMPUTE_STATS  : yes | no, compute first-timestep field min/max
+#                    (default: no)
 #   MAX_GROUPS     : optional positive integer limit for quick tests
 # ==============================================================================
 
@@ -55,6 +57,7 @@ SCENARIOS="${SCENARIOS:-}"
 VARS="${VARS:-thetao so ph o2 chl uo vo zooc zos mlotst siconc}"
 FILE_STAGE="${FILE_STAGE:-parts}"
 FILE_GLOB="${FILE_GLOB:-*.nc}"
+COMPUTE_STATS="${COMPUTE_STATS:-no}"
 MAX_GROUPS="${MAX_GROUPS:-}"
 
 GLORYS_BASELINE_VARS="${GLORYS_BASELINE_VARS:-thetao so uo vo zos mlotst siconc}"
@@ -67,6 +70,11 @@ fi
 
 if [[ -n "${MAX_GROUPS}" ]] && ! [[ "${MAX_GROUPS}" =~ ^[0-9]+$ ]]; then
   echo "ERROR: MAX_GROUPS must be a positive integer when set" >&2
+  exit 1
+fi
+
+if [[ "${COMPUTE_STATS}" != "yes" && "${COMPUTE_STATS}" != "no" ]]; then
+  echo "ERROR: COMPUTE_STATS must be yes or no" >&2
   exit 1
 fi
 
@@ -462,7 +470,11 @@ while IFS= read -r model; do
           source_z_units="$(get_attr "${source_file}" "${source_z_dim}" "units")"
         fi
         IFS=',' read -r source_z_min source_z_max <<< "$(levels_min_max "${source_file}")"
-        IFS=',' read -r source_min source_max <<< "$(field_min_max "${source_file}" "${source_data_var}")"
+        source_min=""
+        source_max=""
+        if [[ "${COMPUTE_STATS}" == "yes" ]]; then
+          IFS=',' read -r source_min source_max <<< "$(field_min_max "${source_file}" "${source_data_var}")"
+        fi
 
         baseline_target="$(baseline_target_for_var "${var}")"
         baseline_file="$(baseline_file_for_var "${var}" "${baseline_target}")"
@@ -483,7 +495,9 @@ while IFS= read -r model; do
             baseline_z_units="$(get_attr "${baseline_file}" "${baseline_z_dim}" "units")"
           fi
           IFS=',' read -r baseline_z_min baseline_z_max <<< "$(levels_min_max "${baseline_file}")"
-          IFS=',' read -r baseline_min baseline_max <<< "$(field_min_max "${baseline_file}" "${baseline_data_var}")"
+          if [[ "${COMPUTE_STATS}" == "yes" ]]; then
+            IFS=',' read -r baseline_min baseline_max <<< "$(field_min_max "${baseline_file}" "${baseline_data_var}")"
+          fi
         fi
 
         IFS=',' read -r suggested_z_scale z_note <<< "$(suggest_z_scale_and_note "${source_z_units}" "${source_z_max}")"

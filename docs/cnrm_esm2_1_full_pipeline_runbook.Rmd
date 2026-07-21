@@ -1,0 +1,255 @@
+---
+title: "CNRM-ESM2-1 Full Pipeline Runbook"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    theme: readable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+```
+
+# Purpose
+
+Run one full IPCC/ESGF model through the ocean downscaling pipeline, step by step:
+
+- standardize/regrid monthly files
+- audit units and depth metadata
+- vertically interpolate 3D variables
+- build climatology windows
+- calculate future-minus-historical deltas
+- add deltas to trusted baselines
+
+This runbook is for:
+
+```text
+MODEL  : CNRM-ESM2-1
+MEMBER : auto
+SCENARIOS : historical, ssp126, ssp245, ssp585
+VARIABLES : thetao so uo vo zos mlotst siconc chl o2 ph zooc
+WINDOWS   : baseline, 2030-2060, 2050-2060, 2090-2100
+```
+
+# Product Logic
+
+```text
+thetao so uo vo zos mlotst siconc
+  -> GLORYS baseline
+  -> final downscaled output at 0p05 only
+
+chl o2 ph
+  -> hindcast BGC baseline
+  -> final downscaled output at 0p05 and 0p25
+
+zooc
+  -> run through monthly, climatology, and delta
+  -> stop after delta because no trusted target baseline is configured
+```
+
+Important distinction:
+
+```text
+delta_windows_0p25 is an internal anomaly product used by the add step.
+It is not the same thing as final /downscaled/<var>/0p25 output.
+```
+
+# Shared Setup
+
+Run this once in the cluster shell before starting the steps.
+
+```{bash}
+cd /home/sandbox-sparc/cesmle-ocn-fetch
+
+export MODELS="CNRM-ESM2-1"
+export MEMBER="auto"
+
+export SCENARIOS_ALL="historical ssp126 ssp245 ssp585"
+export SCENARIOS_FUTURE="ssp126 ssp245 ssp585"
+
+export VARS="thetao so uo vo zos mlotst siconc chl o2 ph zooc"
+export VARS_3D="thetao so uo vo chl o2 ph zooc"
+
+export WINDOWS_ALL="baseline 2030-2060 2050-2060 2090-2100"
+export WINDOWS_FUTURE="2030-2060 2050-2060 2090-2100"
+
+export GLORYS_ROOT="/home/SB5/reanalysis/glorys12v1/monthly_0p05"
+export HINDCAST_ROOT="/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast"
+export HINDCAST_0P25_ROOT="/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25"
+```
+
+# Step 1: Monthly Standardize/Regrid
+
+```{bash}
+SCENARIOS="$SCENARIOS_ALL" \
+bash scripts/runners/ipcc_esgf/run_temporal_aggregate_regrid.sh
+```
+
+After submission, check jobs with `sacct` using the job IDs printed by the runner.
+
+# Step 2: Unit/Depth Audit
+
+```{bash}
+SCENARIOS="$SCENARIOS_ALL" \
+MEMBERS="auto" \
+FILE_STAGE="parts" \
+COMPUTE_STATS="no" \
+GLORYS_ROOT="$GLORYS_ROOT" \
+HINDCAST_ROOT="$HINDCAST_ROOT" \
+OUT_FILE="data/manifests/unit_depth_audit_CNRM-ESM2-1_full.csv" \
+bash scripts/tools/audit_units_and_depths.sh
+```
+
+Inspect the key columns:
+
+```{bash}
+cut -d, -f1,2,3,4,15,25,26,27,28 \
+  data/manifests/unit_depth_audit_CNRM-ESM2-1_full.csv
+```
+
+Expected high-level interpretation:
+
+```text
+thetao so uo vo zos mlotst siconc -> target baseline should be glorys
+chl o2 ph                         -> target baseline should be hindcast
+zooc                              -> no trusted add baseline
+```
+
+# Step 3: Vertical Interpolation
+
+Only run 3D variables through vertical interpolation.
+
+```{bash}
+SCENARIOS="$SCENARIOS_ALL" \
+VARS="$VARS_3D" \
+TARGET_REF_FILE="$GLORYS_ROOT/thetao/parts/glorys12v1_thetao_200601.monmean.0p05.nc" \
+bash scripts/runners/ipcc_esgf/run_vertical_interpolate_to_reference.sh
+```
+
+2D variables are not vertically interpolated:
+
+```text
+zos mlotst siconc
+```
+
+# Step 4: Climatology Windows
+
+```{bash}
+SCENARIOS="$SCENARIOS_ALL" \
+WINDOWS="$WINDOWS_ALL" \
+bash scripts/runners/ipcc_esgf/run_climatology_window.sh
+```
+
+Expected window logic:
+
+```text
+historical -> baseline, meaning 2006-2014
+ssp126     -> 2030-2060, 2050-2060, 2090-2100
+ssp245     -> 2030-2060, 2050-2060, 2090-2100
+ssp585     -> 2030-2060, 2050-2060, 2090-2100
+```
+
+# Step 5: Future-Minus-Historical Deltas
+
+```{bash}
+SCENARIOS="$SCENARIOS_FUTURE" \
+WINDOWS="$WINDOWS_FUTURE" \
+bash scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh
+```
+
+Expected delta modes:
+
+```text
+chl    -> log_ratio
+others -> additive
+```
+
+Expected delta products:
+
+```text
+delta_windows/
+delta_windows_0p25/
+```
+
+# Step 6: Add Deltas To Trusted Baselines
+
+Dry-run first:
+
+```{bash}
+SCENARIOS="$SCENARIOS_FUTURE" \
+WINDOWS="$WINDOWS_FUTURE" \
+GLORYS_ROOT="$GLORYS_ROOT" \
+HINDCAST_ROOT="$HINDCAST_ROOT" \
+REGRID_GRIDFILE="$HINDCAST_0P25_ROOT/grid_0p25_global.txt" \
+RUN=no \
+bash scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh
+```
+
+Confirm the printed policy:
+
+```text
+chl o2 ph                         -> REGRID OUTPUT : yes
+thetao so uo vo zos mlotst siconc -> REGRID OUTPUT : no
+zooc                              -> warning/skip, no trusted baseline
+```
+
+Then submit:
+
+```{bash}
+SCENARIOS="$SCENARIOS_FUTURE" \
+WINDOWS="$WINDOWS_FUTURE" \
+GLORYS_ROOT="$GLORYS_ROOT" \
+HINDCAST_ROOT="$HINDCAST_ROOT" \
+REGRID_GRIDFILE="$HINDCAST_0P25_ROOT/grid_0p25_global.txt" \
+RUN=yes \
+bash scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh
+```
+
+# Slurm Monitoring
+
+Use `sacct` after every submitted stage.
+
+```{bash}
+sacct -j JOBID1,JOBID2,JOBID3 \
+  --format=JobID,JobName%24,State,ExitCode,Elapsed,AllocCPUS,MaxRSS,NodeList%24
+```
+
+Check logs:
+
+```{bash}
+grep -i "error\|fail\|traceback\|warn" \
+  logs/*JOBID1* logs/*JOBID2* logs/*JOBID3*
+```
+
+If a job fails immediately with no log file and exit code similar to `0:53`, it may be a transient cluster node/startup issue. Re-submit that specific job or narrow variable/window rather than restarting the whole stage.
+
+# Final Sanity Checks
+
+GLORYS-target variables should not have final `0p25` folders:
+
+```{bash}
+find /home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2 \
+  -type d \( -path "*/thetao/0p25" -o -path "*/so/0p25" -o -path "*/uo/0p25" -o -path "*/vo/0p25" -o -path "*/zos/0p25" -o -path "*/mlotst/0p25" -o -path "*/siconc/0p25" \) \
+  -print
+```
+
+Expected: no output.
+
+Hindcast-target variables may have final `0p25` folders:
+
+```{bash}
+find /home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2 \
+  -type d \( -path "*/chl/0p25" -o -path "*/o2/0p25" -o -path "*/ph/0p25" \) \
+  -print
+```
+
+Expected: `chl`, `o2`, and `ph` products for each completed future scenario/window.
+
+List final NetCDF products:
+
+```{bash}
+find /home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2 \
+  -type f -name "*.nc" | sort
+```
+

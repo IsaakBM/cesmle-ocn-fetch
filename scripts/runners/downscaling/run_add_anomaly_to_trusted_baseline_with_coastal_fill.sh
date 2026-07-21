@@ -33,6 +33,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CORE_SCRIPT="${SCRIPT_DIR}/../../core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh"
 
+RUN="${RUN:-yes}"
 VAR_MAP_SPEC="${VAR_MAP_SPEC:-chl:chl o2:o2}"
 read -r -a VAR_MAP <<< "${VAR_MAP_SPEC}"
 
@@ -146,6 +147,11 @@ if [[ "$REGRID_OUTPUT" == "yes" && ! -f "$REGRID_GRIDFILE" ]]; then
   exit 1
 fi
 
+if [[ "$RUN" != "yes" && "$RUN" != "no" ]]; then
+  echo "ERROR: RUN must be yes or no"
+  exit 1
+fi
+
 if [[ -n "$COASTAL_MASK_FILE" && ! -f "$COASTAL_MASK_FILE" ]]; then
   echo "ERROR: coastal mask file not found: $COASTAL_MASK_FILE"
   exit 1
@@ -170,6 +176,7 @@ echo "FILL TOP ANOMALY     : ${FILL_TOP_MISSING_ANOMALY}"
 echo "ANOMALY MODE DEFAULT : ${ANOMALY_MODE}"
 echo "ANOMALY MODE SPEC    : ${ANOMALY_MODE_SPEC:-<none>}"
 echo "REGRID OUTPUT        : ${REGRID_OUTPUT}"
+echo "RUN                  : ${RUN}"
 
 for spec in "${VAR_MAP[@]}"; do
   src_var="${spec%%:*}"
@@ -218,45 +225,53 @@ for spec in "${VAR_MAP[@]}"; do
       OUT_REGRID_DIR="${OUTROOT}/${tgt_var}/0p25/${window}"
     fi
 
-    jid=$(DATASET_LABEL="${DATASET_LABEL}" \
-      VAR="$tgt_var" \
-      BASELINE_FILE="$BASELINE_FILE" \
-      ANOMALY_FILE="$ANOMALY_FILE" \
-      OUT_DIR="$OUT_NATIVE_DIR" \
-      TMP_DIR="$TMP_DIR" \
-      OUT_PREFIX="${DATASET_LABEL}_${tgt_var}" \
-      FUTURE_TAG="$window" \
-      OUT_SUFFIX="$OUT_SUFFIX" \
-      NATIVE_SUFFIX="$NATIVE_SUFFIX" \
-      ANOMALY_MODE="$anomaly_mode_for_this_var" \
-      WRITE_NATIVE_OUTPUT="$WRITE_NATIVE_OUTPUT" \
-      FILL_TOP_MISSING="$FILL_TOP_MISSING" \
-      FILL_TOP_MISSING_ANOMALY="$FILL_TOP_MISSING_ANOMALY" \
-      WRITE_FILLED_ANOM="$WRITE_FILLED_ANOM" \
-      REMAP_ANOMALY_TO_BASELINE="$REMAP_ANOMALY_TO_BASELINE" \
-      ANOMALY_GRIDFILE="$ANOMALY_GRIDFILE" \
-      ANOMALY_REGRID_METHOD="$ANOMALY_REGRID_METHOD" \
-      ANOMALY_AUTO_METHOD_DEFAULT="$ANOMALY_AUTO_METHOD_DEFAULT" \
-      ANOMALY_AUTO_METHOD_CURVILINEAR="$ANOMALY_AUTO_METHOD_CURVILINEAR" \
-      COASTAL_FILL="$COASTAL_FILL" \
-      COASTAL_FILL_METHOD="$COASTAL_FILL_METHOD" \
-      COASTAL_MASK_FILE="$COASTAL_MASK_FILE_FOR_VAR" \
-      COASTAL_MASK_VAR="$COASTAL_MASK_VAR" \
-      FILL_BASELINE_COASTAL_GAPS="$FILL_BASELINE_COASTAL_GAPS" \
-      COASTAL_FILL_MAX_STEPS="$COASTAL_FILL_MAX_STEPS" \
-      COASTAL_FILL_WEIGHT_POWER="$COASTAL_FILL_WEIGHT_POWER" \
-      COASTAL_FILL_MIN_DONORS="$COASTAL_FILL_MIN_DONORS" \
-      COASTAL_FILL_REQUIRE_COMPLETE="$COASTAL_FILL_REQUIRE_COMPLETE" \
-      COASTAL_FILL_COMPLETE_FALLBACK_VALUE="$COASTAL_FILL_COMPLETE_FALLBACK_VALUE" \
-      REGRID_OUTPUT="$REGRID_OUTPUT" \
-      REGRID_METHOD="$REGRID_METHOD" \
-      REGRID_GRIDFILE="$REGRID_GRIDFILE" \
-      REGRID_OUT_DIR="$OUT_REGRID_DIR" \
-      REGRID_SUFFIX="$REGRID_SUFFIX" \
-      sbatch --parsable \
-      --job-name="addcf_${window}_${tgt_var}" \
-      "$CORE_SCRIPT")
-    echo "  submitted SRC=${src_var} TGT=${tgt_var} WINDOW=${window} ANOMALY_MODE=${anomaly_mode_for_this_var} as jobid=${jid}"
+    if [[ "$RUN" == "yes" ]]; then
+      jid=$(DATASET_LABEL="${DATASET_LABEL}" \
+        VAR="$tgt_var" \
+        BASELINE_FILE="$BASELINE_FILE" \
+        ANOMALY_FILE="$ANOMALY_FILE" \
+        OUT_DIR="$OUT_NATIVE_DIR" \
+        TMP_DIR="$TMP_DIR" \
+        OUT_PREFIX="${DATASET_LABEL}_${tgt_var}" \
+        FUTURE_TAG="$window" \
+        OUT_SUFFIX="$OUT_SUFFIX" \
+        NATIVE_SUFFIX="$NATIVE_SUFFIX" \
+        ANOMALY_MODE="$anomaly_mode_for_this_var" \
+        WRITE_NATIVE_OUTPUT="$WRITE_NATIVE_OUTPUT" \
+        FILL_TOP_MISSING="$FILL_TOP_MISSING" \
+        FILL_TOP_MISSING_ANOMALY="$FILL_TOP_MISSING_ANOMALY" \
+        WRITE_FILLED_ANOM="$WRITE_FILLED_ANOM" \
+        REMAP_ANOMALY_TO_BASELINE="$REMAP_ANOMALY_TO_BASELINE" \
+        ANOMALY_GRIDFILE="$ANOMALY_GRIDFILE" \
+        ANOMALY_REGRID_METHOD="$ANOMALY_REGRID_METHOD" \
+        ANOMALY_AUTO_METHOD_DEFAULT="$ANOMALY_AUTO_METHOD_DEFAULT" \
+        ANOMALY_AUTO_METHOD_CURVILINEAR="$ANOMALY_AUTO_METHOD_CURVILINEAR" \
+        COASTAL_FILL="$COASTAL_FILL" \
+        COASTAL_FILL_METHOD="$COASTAL_FILL_METHOD" \
+        COASTAL_MASK_FILE="$COASTAL_MASK_FILE_FOR_VAR" \
+        COASTAL_MASK_VAR="$COASTAL_MASK_VAR" \
+        FILL_BASELINE_COASTAL_GAPS="$FILL_BASELINE_COASTAL_GAPS" \
+        COASTAL_FILL_MAX_STEPS="$COASTAL_FILL_MAX_STEPS" \
+        COASTAL_FILL_WEIGHT_POWER="$COASTAL_FILL_WEIGHT_POWER" \
+        COASTAL_FILL_MIN_DONORS="$COASTAL_FILL_MIN_DONORS" \
+        COASTAL_FILL_REQUIRE_COMPLETE="$COASTAL_FILL_REQUIRE_COMPLETE" \
+        COASTAL_FILL_COMPLETE_FALLBACK_VALUE="$COASTAL_FILL_COMPLETE_FALLBACK_VALUE" \
+        REGRID_OUTPUT="$REGRID_OUTPUT" \
+        REGRID_METHOD="$REGRID_METHOD" \
+        REGRID_GRIDFILE="$REGRID_GRIDFILE" \
+        REGRID_OUT_DIR="$OUT_REGRID_DIR" \
+        REGRID_SUFFIX="$REGRID_SUFFIX" \
+        sbatch --parsable \
+        --job-name="addcf_${window}_${tgt_var}" \
+        "$CORE_SCRIPT")
+      echo "  submitted SRC=${src_var} TGT=${tgt_var} WINDOW=${window} ANOMALY_MODE=${anomaly_mode_for_this_var} as jobid=${jid}"
+    else
+      echo "  would submit SRC=${src_var} TGT=${tgt_var} WINDOW=${window} ANOMALY_MODE=${anomaly_mode_for_this_var}"
+      echo "    native output: ${OUT_NATIVE_DIR}"
+      if [[ "$REGRID_OUTPUT" == "yes" ]]; then
+        echo "    regrid output: ${OUT_REGRID_DIR}"
+      fi
+    fi
   done
 done
 

@@ -139,7 +139,8 @@ get_attr() {
   local var="$2"
   local attr="$3"
 
-  ncdump -h "${file}" 2>/dev/null \
+  {
+    ncdump -h "${file}" 2>/dev/null \
     | awk -v v="${var}" -v a="${attr}" '
       $0 ~ "[[:space:]]" v ":" a "[[:space:]]*=" {
         line = $0
@@ -151,6 +152,7 @@ get_attr() {
         exit
       }
     '
+  } || true
 }
 
 has_var() {
@@ -175,9 +177,11 @@ pick_data_var() {
     return 0
   fi
 
-  cdo -s showname "${file}" 2>/dev/null \
+  {
+    cdo -s showname "${file}" 2>/dev/null \
     | tr ' ' '\n' \
     | awk 'NF && $1 !~ /(bnds|bounds)$/ {print; exit}'
+  } || true
 }
 
 pick_zdim() {
@@ -186,7 +190,8 @@ pick_zdim() {
   local header
 
   header="$(ncdump -h "${file}" 2>/dev/null)"
-  printf '%s\n' "${header}" \
+  {
+    printf '%s\n' "${header}" \
     | awk -v v="${var}" '
       $0 ~ "^[[:space:]]*(byte|char|short|int|int64|float|double)[[:space:]]+" v "\\(" {
         line = $0
@@ -203,13 +208,14 @@ pick_zdim() {
         }
       }
     '
+  } || true
 }
 
 levels_min_max() {
   local file="$1"
   local levels
 
-  levels="$(cdo -s showlevel "${file}" 2>/dev/null | tr ' ' '\n' | awk 'NF')"
+  levels="$({ cdo -s showlevel "${file}" 2>/dev/null | tr ' ' '\n' | awk 'NF'; } || true)"
   if [[ -z "${levels}" ]]; then
     printf ','
     return 0
@@ -230,14 +236,18 @@ field_min_max() {
   local min_value max_value
 
   min_value="$(
-    cdo -s output -fldmin -seltimestep,1 -selname,"${var}" "${file}" 2>/dev/null \
+    {
+      cdo -s output -fldmin -seltimestep,1 -selname,"${var}" "${file}" 2>/dev/null \
       | tr ' ' '\n' \
       | awk 'NF && $1 != "nan" {print; exit}'
+    } || true
   )"
   max_value="$(
-    cdo -s output -fldmax -seltimestep,1 -selname,"${var}" "${file}" 2>/dev/null \
+    {
+      cdo -s output -fldmax -seltimestep,1 -selname,"${var}" "${file}" 2>/dev/null \
       | tr ' ' '\n' \
       | awk 'NF && $1 != "nan" {print; exit}'
+    } || true
   )"
 
   printf '%s,%s' "${min_value:-}" "${max_value:-}"

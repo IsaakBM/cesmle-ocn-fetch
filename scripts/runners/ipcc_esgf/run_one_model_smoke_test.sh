@@ -30,6 +30,10 @@ STEP="${STEP:-plan}"
 RUN="${RUN:-no}"
 MAX_GROUPS="${MAX_GROUPS:-}"
 COMPUTE_STATS="${COMPUTE_STATS:-no}"
+GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/reanalysis/glorys12v1/monthly_0p05}"
+HINDCAST_ROOT="${HINDCAST_ROOT:-/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast}"
+HINDCAST_0P25_ROOT="${HINDCAST_0P25_ROOT:-/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25}"
+TARGET_REF_FILE="${TARGET_REF_FILE:-${GLORYS_ROOT}/thetao/parts/glorys12v1_thetao_200601.monmean.0p05.nc}"
 
 case "${RUN}" in
   yes|no) ;;
@@ -74,6 +78,8 @@ audit_step() {
     FILE_STAGE="parts" \
     COMPUTE_STATS="${COMPUTE_STATS}" \
     MAX_GROUPS="${MAX_GROUPS}" \
+    GLORYS_ROOT="${GLORYS_ROOT}" \
+    HINDCAST_ROOT="${HINDCAST_ROOT}" \
     OUT_FILE="data/manifests/unit_depth_audit_${SMOKE_MODEL}_${SMOKE_SCENARIO}_smoke.csv" \
     bash scripts/tools/audit_units_and_depths.sh
 }
@@ -85,6 +91,7 @@ vertical_step() {
     SCENARIOS="historical ${SMOKE_SCENARIO}" \
     VARS="${SMOKE_VARS}" \
     MEMBER="${SMOKE_MEMBER}" \
+    TARGET_REF_FILE="${TARGET_REF_FILE}" \
     bash scripts/runners/ipcc_esgf/run_vertical_interpolate_to_reference.sh
 }
 
@@ -118,6 +125,9 @@ add_step() {
     VARS="${SMOKE_VARS}" \
     MEMBER="${SMOKE_MEMBER}" \
     WINDOWS="${SMOKE_WINDOWS}" \
+    GLORYS_ROOT="${GLORYS_ROOT}" \
+    HINDCAST_ROOT="${HINDCAST_ROOT}" \
+    REGRID_GRIDFILE="${HINDCAST_0P25_ROOT}/grid_0p25_global.txt" \
     bash scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh
 }
 
@@ -130,6 +140,8 @@ Scenario : ${SMOKE_SCENARIO}
 Variables: ${SMOKE_VARS}
 Windows  : ${SMOKE_WINDOWS}
 Member   : ${SMOKE_MEMBER}
+GLORYS   : ${GLORYS_ROOT}
+Hindcast : ${HINDCAST_ROOT}
 
 Run one step at a time, waiting for Slurm jobs from each step to finish:
 

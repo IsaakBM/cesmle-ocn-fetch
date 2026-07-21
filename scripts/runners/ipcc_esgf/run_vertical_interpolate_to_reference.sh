@@ -83,7 +83,7 @@ make_sbatch_extra_args() {
 DATASET_LABEL="ipcc_esgf"
 IPCC_ESGF_ROOT="${IPCC_ESGF_ROOT:-/home/SB5/ipcc_esgf}"
 INROOT_BASE="${INROOT_BASE:-${IPCC_ESGF_ROOT}/monthly_1deg}"
-TARGET_REF_FILE="/home/SB5/glorys12v1_monthly_0p05/thetao/parts/glorys12v1_thetao_200601.monmean.0p05.nc"
+TARGET_REF_FILE="${TARGET_REF_FILE:-/home/SB5/reanalysis/glorys12v1/monthly_0p05/thetao/parts/glorys12v1_thetao_200601.monmean.0p05.nc}"
 SHARED_TMP_DIR="/home/SB5/tmp"
 SOURCE_ZDIM_NAME="lev"
 SOURCE_UNITS_IN="m"

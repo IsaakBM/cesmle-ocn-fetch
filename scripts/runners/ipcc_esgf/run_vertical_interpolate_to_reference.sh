@@ -47,6 +47,12 @@ read -r -a MODELS <<< "${MODELS:-}"
 read -r -a SCENARIOS <<< "${SCENARIOS:-}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
 
+VARS_2D=(
+  zos
+  mlotst
+  siconc
+)
+
 contains_filter_value() {
   local value="$1"
   shift
@@ -102,6 +108,11 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
   IFS=$'\t' read -r model member scen v <<< "$group"
 
   if [[ ! " ${VARS[*]} " == *" ${v} "* ]]; then
+    continue
+  fi
+
+  if [[ " ${VARS_2D[*]} " == *" ${v} "* ]]; then
+    echo "  skipping 2D variable for vertical interpolation: MODEL=${model} MEMBER=${member} SCENARIO=${scen} VAR=${v}"
     continue
   fi
 

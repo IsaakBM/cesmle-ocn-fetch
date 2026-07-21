@@ -853,47 +853,48 @@ first_valid_index = None
 if fill_top_missing:
     zdim_out_candidates = [d for d in da_out.dims if d.lower() in zdim_names]
     if not zdim_out_candidates:
-        raise ValueError(f"Could not identify vertical dimension in output dims: {da_out.dims}")
-    zdim_out = zdim_out_candidates[0]
+        print(f"TOP FILL SKIPPED      : no vertical dimension in output dims {da_out.dims}")
+    else:
+        zdim_out = zdim_out_candidates[0]
 
-    other_dims_out = [d for d in da_out.dims if d != zdim_out]
-    if not other_dims_out:
-        raise ValueError(f"Output must have dimensions beyond vertical dim {zdim_out}")
+        other_dims_out = [d for d in da_out.dims if d != zdim_out]
+        if not other_dims_out:
+            raise ValueError(f"Output must have dimensions beyond vertical dim {zdim_out}")
 
-    transposed = da_out.transpose(zdim_out, *other_dims_out)
-    arr = transposed.values
-    nlev = arr.shape[0]
-    flat = arr.reshape(nlev, -1)
+        transposed = da_out.transpose(zdim_out, *other_dims_out)
+        arr = transposed.values
+        nlev = arr.shape[0]
+        flat = arr.reshape(nlev, -1)
 
-    first_valid_indices = np.full(flat.shape[1], -1, dtype=int)
+        first_valid_indices = np.full(flat.shape[1], -1, dtype=int)
 
-    for col in range(flat.shape[1]):
-        valid = np.where(np.isfinite(flat[:, col]))[0]
-        if valid.size > 0:
-            first_valid_indices[col] = int(valid[0])
+        for col in range(flat.shape[1]):
+            valid = np.where(np.isfinite(flat[:, col]))[0]
+            if valid.size > 0:
+                first_valid_indices[col] = int(valid[0])
 
-    for col in range(flat.shape[1]):
-        donor_idx = first_valid_indices[col]
-        if donor_idx <= 0:
-            continue
-        donor_val = flat[donor_idx, col]
-        for idx in range(donor_idx):
-            if not np.isfinite(flat[idx, col]):
-                flat[idx, col] = donor_val
-                filled_top_count += 1
+        for col in range(flat.shape[1]):
+            donor_idx = first_valid_indices[col]
+            if donor_idx <= 0:
+                continue
+            donor_val = flat[donor_idx, col]
+            for idx in range(donor_idx):
+                if not np.isfinite(flat[idx, col]):
+                    flat[idx, col] = donor_val
+                    filled_top_count += 1
 
-    filled_arr = flat.reshape(arr.shape)
-    da_out = xr.DataArray(
-        filled_arr,
-        coords=transposed.coords,
-        dims=transposed.dims,
-        attrs=da_out.attrs,
-        name=da_out.name,
-    ).transpose(*da_base.dims)
+        filled_arr = flat.reshape(arr.shape)
+        da_out = xr.DataArray(
+            filled_arr,
+            coords=transposed.coords,
+            dims=transposed.dims,
+            attrs=da_out.attrs,
+            name=da_out.name,
+        ).transpose(*da_base.dims)
 
-    valid_indices = first_valid_indices[first_valid_indices >= 0]
-    if valid_indices.size > 0:
-        first_valid_index = int(valid_indices.min())
+        valid_indices = first_valid_indices[first_valid_indices >= 0]
+        if valid_indices.size > 0:
+            first_valid_index = int(valid_indices.min())
 
 ds_out = ds_base.copy()
 ds_out[base_var] = da_out

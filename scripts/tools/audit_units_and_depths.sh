@@ -387,6 +387,10 @@ read -r -a MEMBER_FILTER <<< "${MEMBERS}"
 read -r -a SCENARIO_FILTER <<< "${SCENARIOS}"
 read -r -a VAR_FILTER <<< "${VARS}"
 
+if [[ "${MEMBERS}" == "auto" ]]; then
+  MEMBER_FILTER=()
+fi
+
 csv_row \
   model member scenario var source_stage source_file source_data_var source_units \
   source_z_dim source_z_units source_z_min source_z_max source_min source_max \

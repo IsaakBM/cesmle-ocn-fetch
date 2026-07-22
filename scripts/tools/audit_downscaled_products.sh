@@ -202,6 +202,9 @@ fallback_baseline_file_for_product() {
     hindcast:0p05)
       printf '%s/%s/clim_windows/global_ocean_biogeochemistry_hindcast_%s_clim_%s_grid_0p05_global.nc\n' "${HINDCAST_ROOT}" "${var}" "${var}" "${BASELINE_TAG}"
       ;;
+    hindcast:0p25)
+      printf '%s/%s/clim_windows/global_ocean_biogeochemistry_hindcast_%s_clim_%s.nc\n' "${HINDCAST_0P25_ROOT}" "${var}" "${var}" "${BASELINE_TAG}"
+      ;;
     *)
       printf '\n'
       ;;

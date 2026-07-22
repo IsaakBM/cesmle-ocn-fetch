@@ -16,10 +16,13 @@ set -euo pipefail
 #   - This runner computes:
 #       * each discovered SSP future window minus historical 2006-2014
 #   - The delta core can optionally regrid. This runner enables regridding
-#     to a common 0.25 x 0.25 degree lon/lat grid for variables that continue
-#     into anomaly-add workflows. The add step can then remap from 0.25 degrees
-#     onto either the GLORYS or hindcast trusted baseline grid.
-#   - Variables listed in NO_REGRID_DELTA_VARS stop at delta_windows/ and are
+#     onto the target anomaly grid used by each trusted-baseline family:
+#       * GLORYS-target variables -> 0.05 degree GLORYS grid, matching the CESM
+#         to GLORYS workflow behavior.
+#       * hindcast-target variables -> 0.25 degree hindcast grid, then the add
+#         step remaps those anomalies onto the 0.05 degree coastal hindcast
+#         baseline.
+#   - Variables without a trusted-baseline target stop at delta_windows/ and are
 #     diagnostic-only until a downstream trusted-baseline target is configured.
 #   - Expected climatology layout:
 #       /home/SB5/ipcc_esgf/monthly_1deg/<model>/<member>/historical/<var>/clim_windows/*.nc
@@ -51,6 +54,8 @@ VARS_DEFAULT=(
 )
 read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
 read -r -a NO_REGRID_DELTA_VARS <<< "${NO_REGRID_DELTA_VARS:-}"
+read -r -a GLORYS_BASELINE_VAR_LIST <<< "${GLORYS_BASELINE_VARS:-thetao so uo vo zos mlotst siconc}"
+read -r -a HINDCAST_BASELINE_VAR_LIST <<< "${HINDCAST_BASELINE_VARS:-chl o2 ph}"
 read -r -a MODELS <<< "${MODELS:-}"
 read -r -a SCENARIOS <<< "${SCENARIOS:-}"
 read -r -a WINDOWS <<< "${WINDOWS:-}"
@@ -104,31 +109,47 @@ delta_mode_for_var() {
 DATASET_LABEL="ipcc_esgf"
 IPCC_ESGF_ROOT="${IPCC_ESGF_ROOT:-/home/SB5/ipcc_esgf}"
 ROOT="${ROOT:-${IPCC_ESGF_ROOT}/monthly_1deg}"
-GRIDFILE="/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/grid_0p25_global.txt"
-METHOD="remapdis"
+GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/reanalysis/glorys12v1/monthly_0p05}"
+HINDCAST_0P25_ROOT="${HINDCAST_0P25_ROOT:-/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25}"
+GLORYS_GRIDFILE="${GLORYS_GRIDFILE:-${GLORYS_ROOT}/grid_0p05_global.txt}"
+HINDCAST_GRIDFILE="${HINDCAST_GRIDFILE:-${REGRID_GRIDFILE:-${HINDCAST_0P25_ROOT}/grid_0p25_global.txt}}"
 BASELINE_TAG="2006-2014"
 FUTURE_TAGS=(
   2030-2060
   2050-2060
   2090-2100
 )
-REGRID_SUFFIX="grid_0p25_global"
 HISTORICAL_SCENARIO="${HISTORICAL_SCENARIO:-historical}"
 MEMBER="${MEMBER:-auto}"
 
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs
 
-should_regrid_delta() {
+target_family_for_var() {
   local var="$1"
-  local excluded
+  local candidate
 
-  for excluded in "${NO_REGRID_DELTA_VARS[@]}"; do
-    if [[ "$var" == "$excluded" ]]; then
-      return 1
+  for candidate in "${NO_REGRID_DELTA_VARS[@]}"; do
+    if [[ "$var" == "$candidate" ]]; then
+      printf '%s\n' "none"
+      return 0
     fi
   done
 
-  return 0
+  for candidate in "${GLORYS_BASELINE_VAR_LIST[@]}"; do
+    if [[ "$var" == "$candidate" ]]; then
+      printf '%s\n' "glorys"
+      return 0
+    fi
+  done
+
+  for candidate in "${HINDCAST_BASELINE_VAR_LIST[@]}"; do
+    if [[ "$var" == "$candidate" ]]; then
+      printf '%s\n' "hindcast"
+      return 0
+    fi
+  done
+
+  printf '%s\n' "none"
 }
 
 echo "Submitting IPCC/ESGF delta jobs with generic worker:"
@@ -171,13 +192,38 @@ for group in "${FUTURE_GROUPS[@]}"; do
   VAR_DIR="$(ipcc_esgf_monthly_var_dir_for_group "$ROOT" "$model" "$member" "$scen" "$v")"
   OUT_DIR="${VAR_DIR}/delta_windows"
   TMP_DIR="${VAR_DIR}/tmp_delta"
-  REGRID_OUT_DIR="${VAR_DIR}/delta_windows_0p25"
-  regrid_delta="yes"
-  if ! should_regrid_delta "$v"; then
-    regrid_delta="no"
-    REGRID_OUT_DIR=""
-  elif [[ ! -f "$GRIDFILE" ]]; then
-    echo "ERROR: Grid file not found: $GRIDFILE"
+  target_family="$(target_family_for_var "$v")"
+  regrid_delta="no"
+  regrid_out_dir=""
+  gridfile=""
+  method=""
+  regrid_suffix=""
+
+  case "$target_family" in
+    glorys)
+      regrid_delta="yes"
+      regrid_out_dir="${VAR_DIR}/delta_windows_0p05"
+      gridfile="$GLORYS_GRIDFILE"
+      method="remapbil"
+      regrid_suffix="grid_0p05_global"
+      ;;
+    hindcast)
+      regrid_delta="yes"
+      regrid_out_dir="${VAR_DIR}/delta_windows_0p25"
+      gridfile="$HINDCAST_GRIDFILE"
+      method="remapdis"
+      regrid_suffix="grid_0p25_global"
+      ;;
+    none)
+      ;;
+    *)
+      echo "ERROR: Unknown target family for VAR=${v}: ${target_family}" >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ "$regrid_delta" == "yes" && ! -f "$gridfile" ]]; then
+    echo "ERROR: Grid file not found for VAR=${v} TARGET=${target_family}: $gridfile"
     exit 1
   fi
 
@@ -226,15 +272,15 @@ for group in "${FUTURE_GROUPS[@]}"; do
         OUT_PREFIX="${DELTA_PREFIX}" \
         DELTA_MODE="$delta_mode" \
         REGRID_DELTA="$regrid_delta" \
-        GRIDFILE="$GRIDFILE" \
-        METHOD="$METHOD" \
-        REGRID_OUT_DIR="$REGRID_OUT_DIR" \
-        REGRID_SUFFIX="$REGRID_SUFFIX" \
+        GRIDFILE="$gridfile" \
+        METHOD="$method" \
+        REGRID_OUT_DIR="$regrid_out_dir" \
+        REGRID_SUFFIX="$regrid_suffix" \
         sbatch --parsable \
         "${sbatch_extra_args[@]}" \
         --job-name="delta_${future_tag}_${v}" \
         "$CORE_SCRIPT")
-      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=${future_tag} DELTA_MODE=${delta_mode} REGRID_DELTA=${regrid_delta} as jobid=${jid}"
+      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=${future_tag} TARGET=${target_family} DELTA_MODE=${delta_mode} REGRID_DELTA=${regrid_delta} as jobid=${jid}"
     else
       echo "WARN: Missing ${future_tag} climatology for VAR=${v}: ${future_file}"
     fi

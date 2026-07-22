@@ -37,10 +37,12 @@ WINDOWS   : baseline, 2030-2060, 2050-2060, 2090-2100
 ```text
 thetao so uo vo zos mlotst siconc
   -> GLORYS baseline
+  -> delta regridded to GLORYS 0p05, following CESM-to-GLORYS logic
   -> final downscaled output at 0p05 only
 
 chl o2 ph
   -> hindcast BGC baseline
+  -> delta regridded to hindcast 0p25 anomaly grid
   -> final downscaled output at 0p05 and 0p25
 
 zooc
@@ -51,8 +53,9 @@ zooc
 Important distinction:
 
 ```text
-delta_windows_0p25 is an internal anomaly product used by the add step.
-It is not the same thing as final /downscaled/<var>/0p25 output.
+delta_windows_0p05 is the internal anomaly product for GLORYS-target variables.
+delta_windows_0p25 is the internal anomaly product for hindcast-target variables.
+Neither is the same thing as final /downscaled/<var>/0p25 output.
 ```
 
 # Shared Setup
@@ -168,8 +171,9 @@ others -> additive
 Expected delta products:
 
 ```text
-delta_windows/
-delta_windows_0p25/
+thetao so uo vo zos mlotst siconc -> delta_windows/ plus delta_windows_0p05/
+chl o2 ph                         -> delta_windows/ plus delta_windows_0p25/
+zooc                              -> delta_windows/ only
 ```
 
 # Step 6: Add Deltas To Trusted Baselines
@@ -252,4 +256,3 @@ List final NetCDF products:
 find /home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2 \
   -type f -name "*.nc" | sort
 ```
-

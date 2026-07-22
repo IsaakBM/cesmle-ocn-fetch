@@ -92,11 +92,11 @@ Current anomaly-add and baseline matrix:
 
 | Variable(s) | Source class | Model processing | Delta regrid | Trusted baseline for add | Native add grid | Coastal/wet-mask rule |
 | --- | --- | --- | --- | --- | --- | --- |
-| `thetao`, `so`, `uo`, `vo` | 3D ocean | vertical interpolation to GLORYS levels, climatology, delta | `0p25` common grid | GLORYS12v1 | `0p05` GLORYS | baseline finite mask |
-| `chl`, `o2`, `ph` | 3D BGC | vertical interpolation to GLORYS levels, climatology, delta | `0p25` common grid | Global Ocean Biogeochemistry Hindcast, remapped to GLORYS coast | `0p05` GLORYS coast | GLORYS `thetao` wet mask for coastal fill |
-| `zos`, `mlotst` | 2D ocean | climatology, delta | `0p25` common grid | GLORYS12v1 | `0p05` GLORYS | baseline finite mask |
-| `siconc` | 2D sea ice | climatology, delta | `0p25` common grid | GLORYS12v1 | `0p05` GLORYS | baseline finite mask |
-| `zooc` | 3D BGC CMIP6 variable | vertical interpolation to GLORYS levels, climatology, delta | `0p25` common grid | none configured | stop at delta | add later when a trusted baseline is selected |
+| `thetao`, `so`, `uo`, `vo` | 3D ocean | vertical interpolation to GLORYS levels, climatology, delta | `0p05` GLORYS grid | GLORYS12v1 | `0p05` GLORYS | baseline finite mask |
+| `chl`, `o2`, `ph` | 3D BGC | vertical interpolation to GLORYS levels, climatology, delta | `0p25` hindcast anomaly grid | Global Ocean Biogeochemistry Hindcast, remapped to GLORYS coast | `0p05` GLORYS coast | GLORYS `thetao` wet mask for coastal fill |
+| `zos`, `mlotst` | 2D ocean | climatology, delta | `0p05` GLORYS grid | GLORYS12v1 | `0p05` GLORYS | baseline finite mask |
+| `siconc` | 2D sea ice | climatology, delta | `0p05` GLORYS grid | GLORYS12v1 | `0p05` GLORYS | baseline finite mask |
+| `zooc` | 3D BGC CMIP6 variable | vertical interpolation to GLORYS levels, climatology, delta | none | none configured | stop at delta | add later when a trusted baseline is selected |
 
 The future products use an additive change-field, or delta-change, approach:
 a model-specific change field is first calculated from the difference between
@@ -732,7 +732,10 @@ Current logic:
    horizontally harmonized 2D products
 7. compute IPCC/ESGF change fields from future and historical
    climatologies
-8. optionally regrid those change fields to `0.25 x 0.25`
+8. regrid those change fields by trusted-baseline family:
+   - GLORYS-target variables to `0.05 x 0.05`
+   - hindcast-target variables to `0.25 x 0.25`
+   - variables without a trusted baseline stay at `/delta_windows/`
 
 Expected input organization:
 
@@ -764,7 +767,8 @@ Regridded monthly products are organized as:
                 ├── on_glorys/        # 3D variables only
                 ├── clim_windows/
                 ├── delta_windows/
-                ├── delta_windows_0p25/
+                ├── delta_windows_0p05/   # GLORYS-target variables only
+                ├── delta_windows_0p25/   # hindcast-target variables only
                 ├── tmp_clim/
                 ├── tmp_delta/
                 └── tmp_vinterp/      # 3D variables only
@@ -774,6 +778,7 @@ Example:
 
 ```text
 /home/SB5/ipcc_esgf/monthly_1deg/CNRM-ESM2-1/r1i1p1f2/ssp585/chl/delta_windows_0p25/
+/home/SB5/ipcc_esgf/monthly_1deg/CNRM-ESM2-1/r1i1p1f2/ssp585/thetao/delta_windows_0p05/
 ```
 
 The helper [ipcc_esgf_discovery.sh](scripts/lib/ipcc_esgf_discovery.sh)
@@ -871,10 +876,16 @@ Operational sequence for the current IPCC branch:
    - future windows: `2030-2060`, `2050-2060`, and `2090-2100`
 
 4. run [run_delta_from_climatologies.sh](scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh)
-   - computes an additive change field from each discovered future climatology
-     relative to historical `2006-2014` climatology
+   - computes a change field from each discovered future climatology relative
+     to historical `2006-2014` climatology
    - writes `/delta_windows/`
-   - also writes `/delta_windows_0p25/` when delta regridding is enabled
+   - writes `/delta_windows_0p05/` for GLORYS-target variables:
+     `thetao`, `so`, `uo`, `vo`, `zos`, `mlotst`, and `siconc`
+   - writes `/delta_windows_0p25/` for hindcast-target variables:
+     `chl`, `o2`, and `ph`
+   - leaves variables without a trusted baseline, currently `zooc`, at
+     `/delta_windows/`
+   - uses `log_ratio` deltas for `chl`; other variables use additive deltas
    - now targets exact expected climatology filenames instead of picking the
      first wildcard match in the directory
 
@@ -885,13 +896,28 @@ Relevant runners:
 - [run_climatology_window.sh](scripts/runners/ipcc_esgf/run_climatology_window.sh)
 - [run_delta_from_climatologies.sh](scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh)
 
-### IPCC / ESGF To Hindcast Downscaling
+### IPCC / ESGF To Trusted Baselines
 
 Current logic:
 
+The IPCC/ESGF final add wrapper routes variables by trusted baseline family.
+
+GLORYS-target variables follow the CESM-to-GLORYS anomaly/add logic:
+
+1. use GLORYS12v1 `0.05 x 0.05` climatology as the trusted baseline
+2. use IPCC/ESGF change fields already regridded to the GLORYS `0.05 x 0.05`
+   grid
+3. add the change field directly to the GLORYS baseline without another anomaly
+   remap
+4. fill anomaly coastal gaps inside the GLORYS baseline finite mask
+5. write only the native downscaled output at `0.05 x 0.05`
+
+Hindcast-target variables use the GLORYS-coast-filled BGC hindcast branch:
+
 1. use the GLORYS-coast-filled hindcast biogeochemistry climatology at
    `0.05 x 0.05` as the trusted baseline
-2. use IPCC/ESGF change fields at `0.25 x 0.25`
+2. use IPCC/ESGF change fields regridded to the hindcast `0.25 x 0.25`
+   anomaly grid
 3. remap those change fields to the trusted hindcast baseline grid
 4. fill missing anomaly cells inside the GLORYS wet mask plus any cells that
    are already valid in the fixed hindcast baseline
@@ -903,13 +929,19 @@ Current logic:
 6. if the final product still has missing top layers, fill them from the first
    deeper level with valid values
 7. write the native downscaled output at `0.05 x 0.05`
-8. optionally regrid the downscaled product to `0.25 x 0.25`
+8. also regrid the downscaled product to `0.25 x 0.25`
 
 Expected inputs:
 
+- GLORYS baseline climatologies:
+  `/home/SB5/reanalysis/glorys12v1/monthly_0p05/<var>/clim_windows/*.nc`
+- GLORYS-target IPCC/ESGF change-field files already regridded to
+  `0.05 x 0.05`:
+  `/home/SB5/ipcc_esgf/monthly_1deg/<model>/<member>/<scenario>/<var>/delta_windows_0p05/*.nc`
 - GLORYS-coast-filled hindcast baseline climatologies:
-  `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast/<var>/clim_windows/*.nc`
-- IPCC/ESGF change-field files already regridded to `0.25 x 0.25`:
+  `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast/<var>/clim_windows/*.nc`
+- hindcast-target IPCC/ESGF change-field files already regridded to
+  `0.25 x 0.25`:
   `/home/SB5/ipcc_esgf/monthly_1deg/<model>/<member>/<scenario>/<var>/delta_windows_0p25/*.nc`
 
 Downscaled outputs are organized as:
@@ -940,24 +972,30 @@ Operational sequence for this final stage:
 
 1. run [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh)
    - reads GLORYS baseline climatology files from
-     `/home/SB5/glorys12v1_monthly_0p05` for
+     `/home/SB5/reanalysis/glorys12v1/monthly_0p05` for
      `thetao`, `so`, `uo`, `vo`, `zos`, `mlotst`, and `siconc`
    - reads GLORYS-coast hindcast baseline climatology files from
-     `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast`
+     `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast`
      for `chl`, `o2`, and `ph`
-   - reads IPCC/ESGF delta files from the member-aware `delta_windows_0p25/`
-     tree under `/home/SB5/ipcc_esgf/monthly_1deg`
+   - reads GLORYS-target IPCC/ESGF delta files from member-aware
+     `delta_windows_0p05/` trees under `/home/SB5/ipcc_esgf/monthly_1deg`
+   - reads hindcast-target IPCC/ESGF delta files from member-aware
+     `delta_windows_0p25/` trees under `/home/SB5/ipcc_esgf/monthly_1deg`
    - leaves variables without a configured trusted baseline, currently `zooc`,
      at the delta stage
    - writes to `/home/SB5/downscaled/<model>/<realization>/<scenario>/<var>/`
-   - remaps the anomaly to the GLORYS `0.05` grid
+   - for GLORYS-target variables, adds `0.05` anomalies directly to GLORYS
+     `0.05` baselines
+   - for hindcast-target variables, remaps the anomaly to the GLORYS-coast
+     hindcast `0.05` grid
    - fills anomaly coastal gaps inside the target baseline wet mask; hindcast
      BGC variables use the GLORYS `thetao` mask for GLORYS-coast filling
    - computes fixed baseline plus fixed anomaly
    - then fills top missing layers dynamically in the final output
    - writes the native downscaled output at `0.05`
-   - also writes a `0.25` product using `remapdis`
-   - now targets exact expected hindcast baseline and delta filenames instead
+   - also writes a `0.25` product using `remapdis` only for hindcast-target
+     variables
+   - now targets exact expected baseline and delta filenames instead
      of selecting the first wildcard match
 
 Important note:

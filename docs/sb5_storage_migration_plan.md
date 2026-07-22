@@ -57,7 +57,8 @@ New CMIP6 processed products should use this layout:
 ```
 
 where `<stage>` may include `parts`, `on_glorys`, `clim_windows`,
-`delta_windows`, and `delta_windows_0p25`.
+`delta_windows`, `delta_windows_0p05` for GLORYS-target anomalies, and
+`delta_windows_0p25` for hindcast-target anomalies.
 
 ## Current-To-Target Map
 

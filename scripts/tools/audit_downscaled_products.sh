@@ -41,6 +41,8 @@ shopt -s nullglob
 #   COMPUTE_STATS   : yes | no
 #                     (default: yes)
 #   MAX_FILES       : optional positive integer limit for quick tests
+#   PROGRESS_EVERY  : print progress every N inspected files
+#                     (default: 1)
 # ==============================================================================
 
 DOWNSCALED_ROOT="${DOWNSCALED_ROOT:-/home/SB5/downscaled}"
@@ -57,6 +59,7 @@ BASELINE_TAG="${BASELINE_TAG:-2006-2014}"
 OUT_FILE="${OUT_FILE:-data/manifests/downscaled_product_audit.csv}"
 COMPUTE_STATS="${COMPUTE_STATS:-yes}"
 MAX_FILES="${MAX_FILES:-}"
+PROGRESS_EVERY="${PROGRESS_EVERY:-1}"
 
 GLORYS_BASELINE_VARS="${GLORYS_BASELINE_VARS:-thetao so uo vo zos mlotst siconc}"
 HINDCAST_BASELINE_VARS="${HINDCAST_BASELINE_VARS:-chl o2 ph}"
@@ -68,6 +71,11 @@ fi
 
 if [[ -n "${MAX_FILES}" ]] && ! [[ "${MAX_FILES}" =~ ^[0-9]+$ ]]; then
   echo "ERROR: MAX_FILES must be a positive integer when set" >&2
+  exit 1
+fi
+
+if ! [[ "${PROGRESS_EVERY}" =~ ^[0-9]+$ ]] || [[ "${PROGRESS_EVERY}" -eq 0 ]]; then
+  echo "ERROR: PROGRESS_EVERY must be a positive integer" >&2
   exit 1
 fi
 
@@ -219,12 +227,18 @@ get_attr() {
     ' || true
 }
 
-grid_value() {
+grid_summary() {
   local file="$1"
-  local key="$2"
 
   cdo -s griddes "${file}" 2>/dev/null \
-    | awk -v k="${key}" '$1 == k {print $3; exit}' || true
+    | awk '
+      $1 == "gridtype" {gridtype = $3}
+      $1 == "xsize" {xsize = $3}
+      $1 == "ysize" {ysize = $3}
+      $1 == "xinc" {xinc = $3}
+      $1 == "yinc" {yinc = $3}
+      END {printf "%s\t%s\t%s\t%s\t%s\n", gridtype, xsize, ysize, xinc, yinc}
+    ' || true
 }
 
 level_count() {
@@ -309,6 +323,10 @@ trap 'rm -f "${tmp_files}"' EXIT
 find "${DOWNSCALED_ROOT%/}/${MODEL}" -type f -name '*.nc' 2>/dev/null \
   | sort > "${tmp_files}"
 
+total_candidates="$(wc -l < "${tmp_files}" | awk '{print $1}')"
+echo "Downscaled product audit candidates: ${total_candidates}" >&2
+echo "Writing audit to: ${OUT_FILE}" >&2
+
 csv_row \
   model member scenario var resolution window target_family file \
   expected_resolution baseline_file baseline_exists \
@@ -333,6 +351,10 @@ while IFS= read -r file; do
     break
   fi
 
+  if (( inspected == 1 || inspected % PROGRESS_EVERY == 0 )); then
+    echo "[${inspected}] ${scenario}/${var}/${resolution}/${window}" >&2
+  fi
+
   family="$(target_family_for_var "${var}")"
   expected_res="$(expected_resolution_for_var "${var}" "${resolution}")"
   baseline_file="$(baseline_file_for_product "${var}" "${resolution}")"
@@ -347,11 +369,7 @@ while IFS= read -r file; do
     fi
   fi
 
-  gridtype="$(grid_value "${file}" gridtype)"
-  xsize="$(grid_value "${file}" xsize)"
-  ysize="$(grid_value "${file}" ysize)"
-  xinc="$(grid_value "${file}" xinc)"
-  yinc="$(grid_value "${file}" yinc)"
+  IFS=$'\t' read -r gridtype xsize ysize xinc yinc < <(grid_summary "${file}")
 
   baseline_gridtype=""
   baseline_xsize=""
@@ -361,11 +379,7 @@ while IFS= read -r file; do
   grid_matches_baseline="no"
 
   if [[ "${baseline_exists}" == "yes" ]]; then
-    baseline_gridtype="$(grid_value "${baseline_file}" gridtype)"
-    baseline_xsize="$(grid_value "${baseline_file}" xsize)"
-    baseline_ysize="$(grid_value "${baseline_file}" ysize)"
-    baseline_xinc="$(grid_value "${baseline_file}" xinc)"
-    baseline_yinc="$(grid_value "${baseline_file}" yinc)"
+    IFS=$'\t' read -r baseline_gridtype baseline_xsize baseline_ysize baseline_xinc baseline_yinc < <(grid_summary "${baseline_file}")
     if [[ "${gridtype}" == "${baseline_gridtype}" \
       && "${xsize}" == "${baseline_xsize}" \
       && "${ysize}" == "${baseline_ysize}" \

@@ -931,6 +931,9 @@ Two GLORYS-target variables need explicit final-stage handling:
   the additive anomaly is on the correct scale. Large negative anomalies can
   still push shallow baseline cells below zero, so the final product is bounded
   to `>= 0 m`.
+- `so`: GLORYS and CMIP/IPCC salinity units are equivalent (`1e-3` / `0.001`).
+  The final product is bounded to `>= 0` to remove rare shallow/coastal
+  additive-overshoot cells.
 
 Hindcast-target variables use the GLORYS-coast-filled BGC hindcast branch:
 
@@ -1014,7 +1017,8 @@ Operational sequence for this final stage:
    - scales `siconc` anomalies by `0.01` before addition because CMIP/IPCC
      `siconc` deltas are percentage points and the GLORYS baseline is a
      fraction
-   - bounds final `siconc` to `[0, 1]` and final `mlotst` to `>= 0`
+   - bounds final `siconc` to `[0, 1]`, final `mlotst` to `>= 0`, and final
+     `so` to `>= 0`
    - then fills top missing layers dynamically in the final output
    - writes the native downscaled output at `0.05`
    - also writes a `0.25` product using `remapdis` only for hindcast-target
@@ -1065,7 +1069,7 @@ What this worker changes relative to the generic adder:
 - it can optionally scale anomalies by output variable with
   `ANOMALY_SCALE_SPEC`, e.g. `siconc:0.01`
 - it can optionally bound final outputs by variable with
-  `OUTPUT_BOUNDS_SPEC`, e.g. `mlotst:0: siconc:0:1`
+  `OUTPUT_BOUNDS_SPEC`, e.g. `mlotst:0: siconc:0:1 so:0:`
 - it still applies the dynamic top-layer fill after baseline plus anomaly
 - it can still optionally regrid the final downscaled output afterward
 

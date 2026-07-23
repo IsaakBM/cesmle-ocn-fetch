@@ -369,6 +369,16 @@ suggest_var_scale_and_note() {
         printf '1,chl uses log-ratio for deltas; still review absolute baseline units'
       fi
       ;;
+    so)
+      if [[ ( "${su}" == "0.001" || "${su}" == "1e-3" ) \
+        && ( "${bu}" == "0.001" || "${bu}" == "1e-3" ) ]]; then
+        printf '1,salinity source/baseline units are equivalent'
+      elif [[ -n "${source_units}" && -n "${baseline_units}" && "${su}" != "${bu}" ]]; then
+        printf 'review,source/baseline salinity units differ'
+      else
+        printf '1,salinity units look compatible or unavailable'
+      fi
+      ;;
     ph)
       printf '1,ph should be dimensionless pH; review scale/convention manually'
       ;;

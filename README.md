@@ -910,7 +910,21 @@ GLORYS-target variables follow the CESM-to-GLORYS anomaly/add logic:
 3. add the change field directly to the GLORYS baseline without another anomaly
    remap
 4. fill anomaly coastal gaps inside the GLORYS baseline finite mask
-5. write only the native downscaled output at `0.05 x 0.05`
+5. apply configured scale conversions and physical bounds for bounded
+   variables
+6. write only the native downscaled output at `0.05 x 0.05`
+
+Two GLORYS-target variables need explicit final-stage handling:
+
+- `siconc`: GLORYS stores sea-ice concentration as a fraction (`0-1`), while
+  the CMIP/IPCC `siconc` climatologies and deltas are in percent
+  (`0-100`). The final add step therefore scales `siconc` anomalies by `0.01`
+  before adding them to the GLORYS baseline, then bounds the final product to
+  `[0, 1]`.
+- `mlotst`: GLORYS and CMIP/IPCC mixed-layer thickness are both in meters, so
+  the additive anomaly is on the correct scale. Large negative anomalies can
+  still push shallow baseline cells below zero, so the final product is bounded
+  to `>= 0 m`.
 
 Hindcast-target variables use the GLORYS-coast-filled BGC hindcast branch:
 
@@ -991,6 +1005,10 @@ Operational sequence for this final stage:
    - fills anomaly coastal gaps inside the target baseline wet mask; hindcast
      BGC variables use the GLORYS `thetao` mask for GLORYS-coast filling
    - computes fixed baseline plus fixed anomaly
+   - scales `siconc` anomalies by `0.01` before addition because CMIP/IPCC
+     `siconc` deltas are percentage points and the GLORYS baseline is a
+     fraction
+   - bounds final `siconc` to `[0, 1]` and final `mlotst` to `>= 0`
    - then fills top missing layers dynamically in the final output
    - writes the native downscaled output at `0.05`
    - also writes a `0.25` product using `remapdis` only for hindcast-target
@@ -1038,6 +1056,10 @@ What this worker changes relative to the generic adder:
   `distance_weighted`
 - it can optionally require complete anomaly coverage inside the allowed wet
   mask with `COASTAL_FILL_REQUIRE_COMPLETE=yes`
+- it can optionally scale anomalies by output variable with
+  `ANOMALY_SCALE_SPEC`, e.g. `siconc:0.01`
+- it can optionally bound final outputs by variable with
+  `OUTPUT_BOUNDS_SPEC`, e.g. `mlotst:0: siconc:0:1`
 - it still applies the dynamic top-layer fill after baseline plus anomaly
 - it can still optionally regrid the final downscaled output afterward
 

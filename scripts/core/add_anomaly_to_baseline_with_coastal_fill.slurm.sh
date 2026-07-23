@@ -109,6 +109,13 @@ export OMP_NUM_THREADS=1
 #                               baseline for additive anomalies and unchanged
 #                               multiplicative factor for log-ratio anomalies
 #                               (default: 0)
+#   OUTPUT_BOUNDS_SPEC        : optional space-separated bounds by output var.
+#                               Format: var:min:max. Leave min or max empty for
+#                               one-sided bounds, e.g. mlotst:0: siconc:0:1
+#   ANOMALY_SCALE_SPEC        : optional space-separated anomaly scale factors
+#                               by output var. Format: var:scale, e.g.
+#                               siconc:0.01 to convert percent-point anomalies
+#                               before adding to a fraction baseline.
 # ==============================================================================
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"
@@ -148,6 +155,8 @@ COASTAL_FILL_WEIGHT_POWER="${COASTAL_FILL_WEIGHT_POWER:-2.0}"
 COASTAL_FILL_MIN_DONORS="${COASTAL_FILL_MIN_DONORS:-4}"
 COASTAL_FILL_REQUIRE_COMPLETE="${COASTAL_FILL_REQUIRE_COMPLETE:-no}"
 COASTAL_FILL_COMPLETE_FALLBACK_VALUE="${COASTAL_FILL_COMPLETE_FALLBACK_VALUE:-0}"
+OUTPUT_BOUNDS_SPEC="${OUTPUT_BOUNDS_SPEC:-}"
+ANOMALY_SCALE_SPEC="${ANOMALY_SCALE_SPEC:-}"
 
 if [[ -z "$VAR" || -z "$BASELINE_FILE" || -z "$ANOMALY_FILE" || -z "$OUT_DIR" ]]; then
   echo "ERROR: Missing required environment variables."
@@ -351,6 +360,8 @@ from collections import deque
 baseline_file = "${BASELINE_FILE}"
 anomaly_file = "${ANOMALY_FOR_PYTHON}"
 anomaly_mode = "${ANOMALY_MODE}"
+output_bounds_spec = "${OUTPUT_BOUNDS_SPEC}"
+anomaly_scale_spec = "${ANOMALY_SCALE_SPEC}"
 coastal_mask_file = "${COASTAL_MASK_FILE}"
 coastal_mask_var = "${COASTAL_MASK_VAR}"
 tmp_native = "${TMP_NATIVE}"
@@ -386,6 +397,40 @@ def pick_main_var(ds, requested=None):
     if not candidates:
         raise ValueError(f"No valid data variable found in dataset: {list(ds.data_vars)}")
     return candidates[0]
+
+def parse_output_bounds(spec, var_name):
+    for item in str(spec).split():
+        parts = item.split(":")
+        if len(parts) != 3:
+            raise ValueError(
+                "OUTPUT_BOUNDS_SPEC entries must use var:min:max format; "
+                f"bad entry: {item}"
+            )
+        name, min_text, max_text = parts
+        if name != var_name:
+            continue
+        lower = float(min_text) if min_text != "" else None
+        upper = float(max_text) if max_text != "" else None
+        if lower is not None and upper is not None and lower > upper:
+            raise ValueError(
+                f"Invalid OUTPUT_BOUNDS_SPEC for {var_name}: lower > upper"
+            )
+        return lower, upper
+    return None, None
+
+def parse_anomaly_scale(spec, var_name):
+    for item in str(spec).split():
+        parts = item.split(":")
+        if len(parts) != 2:
+            raise ValueError(
+                "ANOMALY_SCALE_SPEC entries must use var:scale format; "
+                f"bad entry: {item}"
+            )
+        name, scale_text = parts
+        if name != var_name:
+            continue
+        return float(scale_text)
+    return 1.0
 
 def infer_xy_dims(da):
     preferred = [
@@ -816,6 +861,10 @@ if coastal_fill:
 else:
     da_anom_filled = da_anom_aligned
 
+anomaly_scale_factor = parse_anomaly_scale(anomaly_scale_spec, base_var)
+if anomaly_scale_factor != 1.0:
+    da_anom_filled = da_anom_filled * anomaly_scale_factor
+
 if anomaly_mode == "additive":
     da_out = da_base_filled + da_anom_filled
 elif anomaly_mode == "log_ratio":
@@ -896,6 +945,22 @@ if fill_top_missing:
         if valid_indices.size > 0:
             first_valid_index = int(valid_indices.min())
 
+output_lower_bound, output_upper_bound = parse_output_bounds(output_bounds_spec, base_var)
+bounded_below_count = 0
+bounded_above_count = 0
+if output_lower_bound is not None:
+    below_mask = np.isfinite(da_out) & (da_out < output_lower_bound)
+    bounded_below_count = int(below_mask.sum().item())
+    da_out = xr.where(below_mask, output_lower_bound, da_out)
+if output_upper_bound is not None:
+    above_mask = np.isfinite(da_out) & (da_out > output_upper_bound)
+    bounded_above_count = int(above_mask.sum().item())
+    da_out = xr.where(above_mask, output_upper_bound, da_out)
+if output_lower_bound is not None or output_upper_bound is not None:
+    da_out.attrs["output_bounds_applied"] = (
+        f"lower={output_lower_bound}, upper={output_upper_bound}"
+    )
+
 ds_out = ds_base.copy()
 ds_out[base_var] = da_out
 ds_out[base_var].attrs.pop("coordinates", None)
@@ -912,6 +977,7 @@ encoding = {base_var: {"zlib": True, "complevel": 1}}
 print(f"BASE VAR              : {base_var}")
 print(f"ANOM VAR              : {anom_var}")
 print(f"ANOMALY MODE          : {anomaly_mode}")
+print(f"ANOMALY SCALE FACTOR  : {anomaly_scale_factor}")
 print(f"COASTAL MASK FILE     : {coastal_mask_file or '<baseline finite mask>'}")
 print(f"COASTAL MASK VAR      : {mask_var or '<none>'}")
 print(f"COASTAL FILL ENABLED  : {coastal_fill}")
@@ -926,6 +992,10 @@ print(f"FORCE FILL MAX WAVE   : {coastal_force_iterations}")
 print(f"TOP ANOMALY FILLED    : {filled_top_anomaly_count}")
 print(f"FIRST VALID INDEX     : {first_valid_index}")
 print(f"TOP LEVELS FILLED     : {filled_top_count}")
+print(f"OUTPUT LOWER BOUND    : {output_lower_bound if output_lower_bound is not None else '<none>'}")
+print(f"OUTPUT UPPER BOUND    : {output_upper_bound if output_upper_bound is not None else '<none>'}")
+print(f"OUTPUT BELOW CLIPPED  : {bounded_below_count}")
+print(f"OUTPUT ABOVE CLIPPED  : {bounded_above_count}")
 
 if write_native:
     ds_out.to_netcdf(tmp_native, format="NETCDF4", encoding=encoding)

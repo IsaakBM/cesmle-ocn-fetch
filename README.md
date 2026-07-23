@@ -1145,6 +1145,19 @@ Current coastal-fill controls exposed by the runners:
     propagation when complete coverage is required
   - current IPCC/ESGF biogeochemistry wrapper default is `0`
 
+The existing unit/depth audit is also the preflight check for add-stage scale
+and bounds assumptions. Before running the final add step for a new model, run
+[audit_units_and_depths.sh](scripts/tools/audit_units_and_depths.sh) and review
+these columns:
+
+- `suggested_anomaly_scale`
+- `suggested_output_bounds`
+- `add_stage_status`
+
+This keeps the pipeline sequence unchanged while still flagging model-specific
+cases such as percent-vs-fraction `siconc` or nonnegative physical variables
+that can need final bounds after additive anomaly application.
+
 Runner layout for this coastal-fill branch:
 
 - general configurable runner:

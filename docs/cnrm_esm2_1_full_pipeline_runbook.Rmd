@@ -91,7 +91,7 @@ bash scripts/runners/ipcc_esgf/run_temporal_aggregate_regrid.sh
 
 After submission, check jobs with `sacct` using the job IDs printed by the runner.
 
-# Step 2: Unit/Depth Audit
+# Step 2: Unit/Depth/Add-Stage Audit
 
 ```{bash}
 SCENARIOS="$SCENARIOS_ALL" \
@@ -107,7 +107,7 @@ bash scripts/tools/audit_units_and_depths.sh
 Inspect the key columns:
 
 ```{bash}
-cut -d, -f1,2,3,4,15,25,26,27,28 \
+cut -d, -f1,2,3,4,15,25,26,27,28,29,30,31 \
   data/manifests/unit_depth_audit_CNRM-ESM2-1_full.csv
 ```
 
@@ -117,6 +117,30 @@ Expected high-level interpretation:
 thetao so uo vo zos mlotst siconc -> target baseline should be glorys
 chl o2 ph                         -> target baseline should be hindcast
 zooc                              -> no trusted add baseline
+```
+
+This audit also checks add-stage assumptions before Step 6. The important
+columns are:
+
+```text
+suggested_anomaly_scale
+suggested_output_bounds
+add_stage_status
+```
+
+For the current GLORYS-target defaults:
+
+```text
+siconc -> anomaly scale 0.01, final bounds 0:1
+mlotst -> final bounds 0:
+so     -> final bounds 0:
+```
+
+These defaults handle the known scale/bounds cases:
+
+```text
+siconc CMIP/IPCC deltas are percentage points, while GLORYS siconc is fraction.
+mlotst and so use compatible units, but final products are physically nonnegative.
 ```
 
 # Step 3: Vertical Interpolation

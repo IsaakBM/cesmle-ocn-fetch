@@ -13,6 +13,7 @@
 #    - Inspect representative NetCDF files without modifying them
 #    - Flag likely depth-unit mismatches before vertical interpolation
 #    - Flag likely variable unit/scale mismatches before delta/add workflows
+#    - Flag likely final add-stage anomaly scaling and physical bounds needs
 #    - Write a CSV report for review before running the full pipeline
 #
 #  Intended to be run on an HPC login node or Slurm node with cdo and ncdump.
@@ -381,6 +382,94 @@ suggest_var_scale_and_note() {
   esac
 }
 
+suggest_add_stage_scale_bounds_and_note() {
+  local var="$1"
+  local source_units="$2"
+  local source_min="$3"
+  local source_max="$4"
+  local baseline_units="$5"
+  local baseline_min="$6"
+  local baseline_max="$7"
+  local baseline_target="$8"
+  local su bu anomaly_scale output_bounds status note
+
+  su="$(normalize_units "${source_units}")"
+  bu="$(normalize_units "${baseline_units}")"
+
+  anomaly_scale="1"
+  output_bounds=""
+  status="ok"
+  note="no special add-stage scale or bounds inferred"
+
+  case "${var}" in
+    siconc)
+      if [[ "${bu}" == "1" || "${bu}" == "fraction" || "${bu}" == "unitless" ]] \
+        && [[ "${su}" == "%" || "${su}" == "percent" ]]; then
+        anomaly_scale="0.01"
+        output_bounds="0:1"
+        status="scale_and_bounds_required"
+        note="target siconc is fraction and source siconc is percent; scale additive anomaly by 0.01 and bound final to [0-1]"
+      elif [[ "${bu}" == "%" || "${bu}" == "percent" ]] \
+        && [[ "${su}" == "1" || "${su}" == "fraction" || "${su}" == "unitless" ]]; then
+        anomaly_scale="100"
+        output_bounds="0:100"
+        status="scale_and_bounds_required"
+        note="target siconc is percent and source siconc is fraction; scale additive anomaly by 100 and bound final to [0-100]"
+      elif [[ -n "${source_max}" && -n "${baseline_max}" ]] \
+        && awk -v s="${source_max}" -v b="${baseline_max}" 'BEGIN { exit !(s > 2 && b <= 1.5) }'; then
+        anomaly_scale="0.01"
+        output_bounds="0:1"
+        status="scale_and_bounds_required"
+        note="target siconc range looks fractional and source range looks percent; scale additive anomaly by 0.01 and bound final to [0-1]"
+      elif [[ -n "${source_max}" && -n "${baseline_max}" ]] \
+        && awk -v s="${source_max}" -v b="${baseline_max}" 'BEGIN { exit !(s <= 1.5 && b > 2) }'; then
+        anomaly_scale="100"
+        output_bounds="0:100"
+        status="scale_and_bounds_required"
+        note="target siconc range looks percent and source range looks fractional; scale additive anomaly by 100 and bound final to [0-100]"
+      elif [[ "${bu}" == "1" || "${bu}" == "fraction" || "${bu}" == "unitless" ]]; then
+        output_bounds="0:1"
+        status="bounds_required"
+        note="target siconc appears fractional; bound final to [0-1]"
+      elif [[ "${bu}" == "%" || "${bu}" == "percent" ]]; then
+        output_bounds="0:100"
+        status="bounds_required"
+        note="target siconc appears percent; bound final to [0-100]"
+      else
+        output_bounds="review"
+        status="review_add_stage_scale"
+        note="could not determine siconc target/source scale from metadata or ranges"
+      fi
+      ;;
+    mlotst)
+      output_bounds="0:"
+      status="bounds_required"
+      note="mixed layer thickness is nonnegative; bound final to >=0"
+      ;;
+    so)
+      output_bounds="0:"
+      status="bounds_required"
+      note="salinity is nonnegative; bound rare additive-overshoot cells to >=0"
+      ;;
+    chl)
+      if [[ "${baseline_target}" == "hindcast" ]]; then
+        output_bounds="0:"
+        status="bounds_recommended"
+        note="chlorophyll is nonnegative; log-ratio deltas should preserve positivity and final lower bound is scientifically valid if enabled"
+      fi
+      ;;
+    o2)
+      output_bounds="0:"
+      status="bounds_recommended"
+      note="oxygen is nonnegative; review final products for rare additive overshoot"
+      ;;
+    *)
+      ;;
+  esac
+
+  printf '%s,%s,%s,%s' "${anomaly_scale}" "${output_bounds}" "${status}" "${note}"
+}
+
 status_from_notes() {
   local baseline_target="$1"
   local baseline_file="$2"
@@ -433,7 +522,8 @@ csv_row \
   source_z_dim source_z_units source_z_min source_z_max source_min source_max \
   baseline_target baseline_file baseline_data_var baseline_units baseline_z_dim \
   baseline_z_units baseline_z_min baseline_z_max baseline_min baseline_max \
-  suggested_z_scale suggested_var_scale status notes > "${OUT_FILE}"
+  suggested_z_scale suggested_var_scale suggested_anomaly_scale \
+  suggested_output_bounds add_stage_status status notes > "${OUT_FILE}"
 
 processed=0
 
@@ -511,8 +601,19 @@ while IFS= read -r model; do
             "${baseline_min}" \
             "${baseline_max}"
         )"
+        IFS=',' read -r suggested_anomaly_scale suggested_output_bounds add_stage_status add_stage_note <<< "$(
+          suggest_add_stage_scale_bounds_and_note \
+            "${var}" \
+            "${source_units}" \
+            "${source_min}" \
+            "${source_max}" \
+            "${baseline_units}" \
+            "${baseline_min}" \
+            "${baseline_max}" \
+            "${baseline_target}"
+        )"
         status="$(status_from_notes "${baseline_target}" "${baseline_file}" "${suggested_z_scale}" "${suggested_var_scale}")"
-        notes="${z_note}; ${var_note}"
+        notes="${z_note}; ${var_note}; ${add_stage_note}"
 
         csv_row \
           "${model}" \
@@ -541,6 +642,9 @@ while IFS= read -r model; do
           "${baseline_max}" \
           "${suggested_z_scale}" \
           "${suggested_var_scale}" \
+          "${suggested_anomaly_scale}" \
+          "${suggested_output_bounds}" \
+          "${add_stage_status}" \
           "${status}" \
           "${notes}" >> "${OUT_FILE}"
 

@@ -98,16 +98,22 @@ Current anomaly-add and baseline matrix:
 | `siconc` | 2D sea ice | climatology, delta | `0p05` GLORYS grid | GLORYS12v1 | `0p05` GLORYS | baseline finite mask |
 | `zooc` | 3D BGC CMIP6 variable | vertical interpolation to GLORYS levels, climatology, delta | none | none configured | stop at delta | add later when a trusted baseline is selected |
 
-The future products use an additive change-field, or delta-change, approach:
-a model-specific change field is first calculated from the difference between
-that model's future-period climatology and its historical/current reference
-climatology. That change field is then added to a trusted present-day target
-baseline, following the IPCC Data Distribution Centre description of
-[constructing change fields](https://www.ipcc-data.org/guidelines/pages/change_field.html):
+The future products use a climatological change-field, or delta-change,
+approach. A model-specific change field is calculated from the difference or
+ratio between that model's future-period projection climatology and its
+historical/current reference climatology. That change field is then transferred
+onto a trusted present-day target baseline, following the IPCC Data Distribution
+Centre description of
+[constructing change fields](https://www.ipcc-data.org/guidelines/pages/change_field.html)
+and the projection-focused guidance in Schoeman et al. (2023),
+["Demystifying global climate models for use in the life sciences"](https://doi.org/10.1016/j.tree.2023.04.005):
 
 ```text
-change field = model future climatology - model historical/current climatology
-downscaled future = trusted target baseline + change field
+additive change field = model future climatology - model historical/current climatology
+additive downscaled projection = trusted target baseline + change field
+
+log-ratio change field = log(model future climatology) - log(model historical/current climatology)
+log-ratio downscaled projection = trusted target baseline * exp(change field)
 ```
 
 The current curated-product chain is:
@@ -1848,9 +1854,22 @@ The scripts assume the cluster environment provides:
 The current downscaling workflow makes several explicit methodological
 assumptions that should be kept in mind when interpreting the outputs.
 
-- Future change is represented with an additive climatological change field
-  computed within each model family, then applied to a trusted target baseline:
-  `downscaled future = trusted target baseline + model-derived change field`.
+- Future conditions are treated as scenario-conditioned climate projections, not
+  predictions or forecasts. The products are intended for climatological
+  exposure and ecological screening workflows, not event timing or weather-like
+  forecasting.
+
+- Future change is represented with a climatological change field computed
+  within each model family, then transferred onto a trusted target baseline.
+  Most variables use an additive delta:
+  `downscaled projection = trusted target baseline + model-derived change field`.
+  The current IPCC/ESGF `chl` path uses a log-ratio delta:
+  `downscaled projection = trusted target baseline * exp(model-derived log change)`.
+
+- The central delta-change assumption is that each model's simulated
+  climatological change signal is transferable onto the trusted baseline grid,
+  coastline, vertical levels, and present-day climatology. This preserves the
+  trusted baseline state while borrowing the model's projected change signal.
 
 - The hindcast climatology is treated as the historical baseline for the
   IPCC-to-hindcast downscaling branch.
@@ -1868,6 +1887,7 @@ assumptions that should be kept in mind when interpreting the outputs.
   baseline product. Future anomaly fields are then remapped and repaired
   against the same GLORYS wet mask plus any cells already valid in that fixed
   baseline before being added to it.
+
 - Baseline completion and anomaly completion use different fallback meanings.
   Remaining GLORYS-wet baseline gaps are completed by local propagation from
   finite biogeochemistry baseline values, then by the nearest finite baseline
@@ -1886,6 +1906,7 @@ assumptions that should be kept in mind when interpreting the outputs.
   local propagation from neighboring repaired anomaly cells. This is an
   explicit coverage assumption so future products share the same coastal domain
   as the fixed hindcast baseline.
+
 - If no connected anomaly donor exists even after local propagation, the
   current IPCC/ESGF biogeochemistry path assigns a zero anomaly. This carries
   the fixed hindcast baseline forward unchanged at those cells.
@@ -1894,16 +1915,17 @@ assumptions that should be kept in mind when interpreting the outputs.
   The two repaired inputs are the GLORYS-coast baseline product and the
   remapped anomaly product.
 
-- The coastal-fill implementation is target-mask-based, not a guarantee of
-  fully conservative coastal behavior in every application. Its purpose here is
-  to make the hindcast baseline and future anomaly fields share the same
-  GLORYS-coast ocean domain before final addition.
+- The coastal-fill implementation is target-mask-based, not a guarantee that
+  coarse climate-model projections resolve fine coastal gradients. Its purpose
+  here is to make the hindcast baseline and future anomaly fields share the
+  same GLORYS-coast ocean domain before final addition.
 
-- The force-complete baseline/anomaly fallback is not conservative remapping. It is a
-  pragmatic choice for coastal biological delivery products where consistent
-  wet-mask coverage is more important than preserving tiny unresolved anomaly
-  holes from coarse IPCC/ESGF source fields. The zero-anomaly fallback should be
-  treated as a caveat in any interpretation of fine coastal anomaly patterns.
+- The force-complete baseline/anomaly fallback is not conservative remapping. It
+  is a pragmatic choice for coastal biological delivery products where
+  consistent wet-mask coverage is more important than preserving tiny
+  unresolved anomaly holes from coarse IPCC/ESGF source fields. The zero-anomaly
+  fallback should be treated as a caveat in any interpretation of fine coastal
+  anomaly patterns.
 
 - Horizontal remapping method is not assumed to be universal across all model
   products:
@@ -1933,7 +1955,8 @@ assumptions that should be kept in mind when interpreting the outputs.
 
 - This workflow is a statistical downscaling approach built from climatologies,
   anomalies, interpolation, and remapping. It is not a dynamical ocean-model
-  simulation.
+  simulation, and it should not be interpreted as adding resolved fine-scale
+  coastal dynamics to the source climate projections.
 
 ## Next Steps For Future Statistical Improvements
 
@@ -1942,21 +1965,25 @@ checks around the current change-field method, not a full empirical-statistical
 downscaling framework.
 
 - Validation first: add a historical pseudo-future test. For example, use an
-  earlier model window to predict a later observed, hindcast, or GLORYS window,
-  then compare the predicted field against the trusted target. Useful metrics
-  include bias, RMSE/MAE, spatial correlation, and possibly quantile error. This
-  would show whether the current method is already good enough.
+  earlier model window to project a later observed, hindcast, or GLORYS window,
+  then compare the projected field against the trusted target. Useful metrics
+  include bias, RMSE/MAE, spatial correlation, and possibly quantile error,
+  summarized by variable, depth, region, and coast/offshore class. This would
+  show where the current method is already good enough and where the caveats
+  matter most.
 
 - Variable-specific delta modes: keep additive deltas for `thetao`, probably
-  `so`, and velocities depending on interpretation. For `chl`, test
-  multiplicative or log-ratio deltas:
+  `so`, and velocities depending on interpretation. The current IPCC/ESGF `chl`
+  path uses a log-ratio delta:
 
   ```text
   downscaled = baseline * future_model / historical_model
   log(downscaled) = log(baseline) + [log(future_model) - log(historical_model)]
   ```
 
-  This is likely more useful than adding GLMs, analogs, or neural networks.
+  Similar sensitivity checks may be useful for bounded or strictly positive
+  variables such as `o2`, `ph`, and `siconc` before considering heavier
+  empirical-statistical downscaling methods.
 
 - Distribution check, not full quantile mapping: full daily or monthly quantile
   mapping is probably unnecessary if temporal structure is not needed. A simpler

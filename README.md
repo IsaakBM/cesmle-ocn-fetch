@@ -108,6 +108,10 @@ archived from the IPCC Data Distribution Centre
 and the projection-focused guidance in Schoeman et al. (2023),
 ["Demystifying global climate models for use in the life sciences"](https://doi.org/10.1016/j.tree.2023.04.005):
 
+In IPCC scenario-workflow terms, this sits in the statistical downscaling family:
+it is not a regional dynamical model or a full empirical-statistical model, but
+it is still a complex multi-stage climate/ocean data production pipeline.
+
 ```text
 additive change field = model future climatology - model historical/current climatology
 additive downscaled projection = trusted target baseline + change field

@@ -1880,6 +1880,12 @@ assumptions that should be kept in mind when interpreting the outputs.
   exposure and ecological screening workflows, not event timing or weather-like
   forecasting.
 
+- This repository produces downscaled climatological projection products from
+  CMIP/IPCC monthly ocean fields. It does not generate daily dynamically
+  consistent 3D ocean forecasts or simulations; those would require running a
+  regional ocean model such as ROMS with appropriate forcing and boundary
+  conditions.
+
 - Future change is represented with a climatological change field computed
   within each model family, then transferred onto a trusted target baseline.
   Most variables use an additive delta:

@@ -102,9 +102,9 @@ The future products use a climatological change-field, or delta-change,
 approach. A model-specific change field is calculated from the difference or
 ratio between that model's future-period projection climatology and its
 historical/current reference climatology. That change field is then transferred
-onto a trusted present-day target baseline, following the IPCC Data Distribution
-Centre description of
-[constructing change fields](https://www.ipcc-data.org/guidelines/pages/change_field.html)
+onto a trusted present-day target baseline, following the official IPCC-TGICA
+[General Guidelines on the Use of Scenario Data](https://web.archive.org/web/20231118225102/https://www.ipcc-data.org/guidelines/TGICA_guidance_sdciaa_v2_final.pdf)
+archived from the IPCC Data Distribution Centre
 and the projection-focused guidance in Schoeman et al. (2023),
 ["Demystifying global climate models for use in the life sciences"](https://doi.org/10.1016/j.tree.2023.04.005):
 

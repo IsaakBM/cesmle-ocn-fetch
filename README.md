@@ -88,6 +88,10 @@ with a `2006-2014` historical baseline and future windows `2030-2060`,
 `chl`, `o2`, and `ph` use the GLORYS-coast hindcast; `zooc` stops at delta
 until a trusted present-day baseline is defined.
 
+`MPI-ESM1-2-HR` and `MPI-ESM1-2-LR` are handled as separate CMIP6 source
+branches, but interpreted as related configurations of the MPI-ESM1.2 model
+family rather than fully independent models.
+
 Current anomaly-add and baseline matrix:
 
 | Variable(s) | Source class | Model processing | Delta regrid | Trusted baseline for add | Native add grid | Coastal/wet-mask rule |

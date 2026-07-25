@@ -244,6 +244,25 @@ grid_summary() {
     ' || true
 }
 
+gridtypes_compatible() {
+  local product_gridtype="$1"
+  local baseline_gridtype="$2"
+
+  if [[ "${product_gridtype}" == "${baseline_gridtype}" ]]; then
+    return 0
+  fi
+
+  # CDO may label remapped regular lon/lat products as "generic" even when
+  # their dimensions and increments exactly match the lonlat baseline grid.
+  case "${product_gridtype}:${baseline_gridtype}" in
+    generic:lonlat|lonlat:generic)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 level_count() {
   local file="$1"
 
@@ -383,8 +402,8 @@ while IFS= read -r file; do
 
   if [[ "${baseline_exists}" == "yes" ]]; then
     IFS=$'\t' read -r baseline_gridtype baseline_xsize baseline_ysize baseline_xinc baseline_yinc < <(grid_summary "${baseline_file}")
-    if [[ "${gridtype}" == "${baseline_gridtype}" \
-      && "${xsize}" == "${baseline_xsize}" \
+    if gridtypes_compatible "${gridtype}" "${baseline_gridtype}" \
+      && [[ "${xsize}" == "${baseline_xsize}" \
       && "${ysize}" == "${baseline_ysize}" \
       && "${xinc}" == "${baseline_xinc}" \
       && "${yinc}" == "${baseline_yinc}" ]]; then

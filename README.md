@@ -127,13 +127,14 @@ log-ratio downscaled projection = trusted target baseline * exp(change field)
 The current curated-product chain is:
 
 1. [run_organize_ocean_downscaling_products.sh](scripts/runners/products/run_organize_ocean_downscaling_products.sh)
-2. [run_aggregate_ocean_downscaling_products_fine_layers.sh](scripts/runners/products/run_aggregate_ocean_downscaling_products_fine_layers.sh)
-3. [run_aggregate_ocean_downscaling_products_pelagic_layers.sh](scripts/runners/products/run_aggregate_ocean_downscaling_products_pelagic_layers.sh)
-4. [run_export_ocean_downscaling_products_layers_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_layers_to_parquet.sh)
-5. [run_export_ocean_downscaling_products_pelagic_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_parquet.sh)
-6. [run_export_ocean_downscaling_products_layers_to_geotiff.sh](scripts/runners/products/run_export_ocean_downscaling_products_layers_to_geotiff.sh)
-7. [run_export_ocean_downscaling_products_pelagic_to_geotiff.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_geotiff.sh)
-8. [run_stage_ocean_downscaling_sample_products.sh](scripts/runners/products/run_stage_ocean_downscaling_sample_products.sh)
+2. [run_build_ocean_downscaling_ensemble_products.sh](scripts/runners/products/run_build_ocean_downscaling_ensemble_products.sh)
+3. [run_aggregate_ocean_downscaling_products_fine_layers.sh](scripts/runners/products/run_aggregate_ocean_downscaling_products_fine_layers.sh)
+4. [run_aggregate_ocean_downscaling_products_pelagic_layers.sh](scripts/runners/products/run_aggregate_ocean_downscaling_products_pelagic_layers.sh)
+5. [run_export_ocean_downscaling_products_layers_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_layers_to_parquet.sh)
+6. [run_export_ocean_downscaling_products_pelagic_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_parquet.sh)
+7. [run_export_ocean_downscaling_products_layers_to_geotiff.sh](scripts/runners/products/run_export_ocean_downscaling_products_layers_to_geotiff.sh)
+8. [run_export_ocean_downscaling_products_pelagic_to_geotiff.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_geotiff.sh)
+9. [run_stage_ocean_downscaling_sample_products.sh](scripts/runners/products/run_stage_ocean_downscaling_sample_products.sh)
 
 Optional individual-depth products can also be derived from the same curated
 3D tree with [run_split_ocean_downscaling_products_by_depth.sh](scripts/runners/products/run_split_ocean_downscaling_products_by_depth.sh).
@@ -1211,6 +1212,8 @@ Built with:
 
 - [organize_ocean_downscaling_products.sh](scripts/tools/organize_ocean_downscaling_products.sh)
 - [run_organize_ocean_downscaling_products.sh](scripts/runners/products/run_organize_ocean_downscaling_products.sh)
+- [build_ocean_downscaling_ensemble_products.sh](scripts/tools/build_ocean_downscaling_ensemble_products.sh)
+- [run_build_ocean_downscaling_ensemble_products.sh](scripts/runners/products/run_build_ocean_downscaling_ensemble_products.sh)
 
 Current source roots:
 
@@ -1301,6 +1304,16 @@ Expected output root:
                         └── 0p25/
 ```
 
+Model-ensemble products are written into the same future grammar:
+
+```text
+/home/SB5/ocean_downscaling_products/future/ensemble/
+├── model_mean/
+│   └── <scenario>/<var>/<window>/<resolution>/
+└── model_sd/
+    └── <scenario>/<var>/<window>/<resolution>/
+```
+
 Notes:
 
 - `baseline/` stores curated climatological reference products
@@ -1321,6 +1334,12 @@ Notes:
 - `future/` stores curated future/downscaled products
 - future products preserve model, realization/member-or-statistic, scenario,
   variable, window, and resolution
+- ensemble products preserve the same grammar with `ensemble` as the model and
+  `model_mean` or `model_sd` in the realization/statistic slot
+- `model_mean` is computed with CDO `ensmean`; `model_sd` is computed with CDO
+  `ensstd1`, the sample standard deviation normalized by `n - 1`
+- `cesm_f09_g16`, `legacy_downscaled_rcp85`, and existing `ensemble` products
+  are excluded from new ensemble calculations by default
 - the runner now submits one Slurm job per curated subtree:
   - `baseline/<var>`
   - `future/<var>/<window>` copy tasks, which may populate multiple

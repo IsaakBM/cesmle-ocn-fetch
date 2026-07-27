@@ -14,14 +14,16 @@
 #      layer, pelagic, and individual-depth product outputs
 #    - Preserve the viewer product layout:
 #        layers/baseline/<variable>/<resolution>/*
-#        layers/future/<scenario>/<variable>/<window>/<resolution>/*
+#        layers/future/<model>/<realization_or_statistic>/<scenario>/<variable>/<window>/<resolution>/*
 #        pelagic/baseline/<variable>/<resolution>/*
-#        pelagic/future/<scenario>/<variable>/<window>/<resolution>/*
+#        pelagic/future/<model>/<realization_or_statistic>/<scenario>/<variable>/<window>/<resolution>/*
 #        depths/baseline/<variable>/<resolution>/*
-#        depths/future/<scenario>/<variable>/<window>/<resolution>/*
+#        depths/future/<model>/<realization_or_statistic>/<scenario>/<variable>/<window>/<resolution>/*
 #    - Restrict sample staging to one resolution, usually 0p05
-#    - For future products with multiple realizations/members, keep one
-#      deterministic realization per model/scenario/variable/window/resolution
+#    - For non-ensemble future products with multiple realizations/members, keep
+#      one deterministic realization per model/scenario/variable/window/resolution
+#    - Keep both ensemble model_mean and model_sd products
+#    - Exclude obsolete CESM/RCP-era future products by default
 #    - Write staged GeoTIFF manifests that match only copied/planned files
 #
 #  Intended to be run on Slurm-based HPC systems or an HPC login node.
@@ -64,6 +66,12 @@ shopt -s nullglob
 #                         yes -> include individual-depth GeoTIFF products
 #                         no  -> stage only layers and pelagic products
 #                         (default: yes)
+#   EXCLUDE_FUTURE_MODELS
+#                       : space-separated model branches to skip
+#                         (default: cesm_f09_g16 legacy_downscaled_rcp85)
+#   EXCLUDE_FUTURE_SCENARIOS
+#                       : space-separated future scenarios to skip
+#                         (default: rcp85)
 # ==============================================================================
 
 LAYERS_SOURCE_ROOT="${LAYERS_SOURCE_ROOT:-/home/SB5/ocean_downscaling_products_layers_geotiff}"
@@ -78,6 +86,8 @@ DRY_RUN="${DRY_RUN:-no}"
 OVERWRITE="${OVERWRITE:-yes}"
 STAGE_MANIFESTS="${STAGE_MANIFESTS:-yes}"
 STAGE_DEPTHS="${STAGE_DEPTHS:-yes}"
+EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS:-cesm_f09_g16 legacy_downscaled_rcp85}"
+EXCLUDE_FUTURE_SCENARIOS="${EXCLUDE_FUTURE_SCENARIOS:-rcp85}"
 
 case "${DRY_RUN}" in
   yes|no) ;;
@@ -113,6 +123,29 @@ esac
 
 SELECTED_REALIZATIONS=""
 
+contains_word() {
+  local needle="$1"
+  shift
+  local candidate
+
+  for candidate in "$@"; do
+    [[ "${candidate}" == "${needle}" ]] && return 0
+  done
+  return 1
+}
+
+read -r -a EXCLUDE_FUTURE_MODEL_LIST <<< "${EXCLUDE_FUTURE_MODELS}"
+read -r -a EXCLUDE_FUTURE_SCENARIO_LIST <<< "${EXCLUDE_FUTURE_SCENARIOS}"
+
+keep_future_product() {
+  local model="$1"
+  local scenario="$2"
+
+  contains_word "${model}" "${EXCLUDE_FUTURE_MODEL_LIST[@]}" && return 1
+  contains_word "${scenario}" "${EXCLUDE_FUTURE_SCENARIO_LIST[@]}" && return 1
+  return 0
+}
+
 keep_future_realization() {
   local product_type="$1"
   local model="$2"
@@ -122,6 +155,10 @@ keep_future_realization() {
   local window="$6"
   local resolution="$7"
   local key selected entry_key entry_value
+
+  if [[ "${model}" == "ensemble" ]]; then
+    return 0
+  fi
 
   key="${product_type}|${model}|${scenario}|${variable}|${window}|${resolution}"
   selected=""
@@ -205,13 +242,19 @@ stage_one_file() {
       return 0
     fi
 
+    if ! keep_future_product "${model}" "${scenario}"; then
+      echo "[SKIP] ${product_type}/${rel_path} (excluded future model/scenario)"
+      SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+      return 0
+    fi
+
     if ! keep_future_realization "${product_type}" "${model}" "${realization}" "${scenario}" "${variable}" "${window}" "${resolution}"; then
       echo "[SKIP] ${product_type}/${rel_path} (keeping selected realization only)"
       SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
       return 0
     fi
 
-    dest="${STAGE_ROOT}/${product_type}/future/${scenario}/${variable}/${window}/${resolution}/${file_name}"
+    dest="${STAGE_ROOT}/${product_type}/future/${model}/${realization}/${scenario}/${variable}/${window}/${resolution}/${file_name}"
   else
     echo "[WARN] Skipping file outside baseline/future layout: ${rel_path}" >&2
     return 0
@@ -273,7 +316,9 @@ stage_manifests() {
     "${MEMBER}" \
     "${PHYSICAL_VARS}" \
     "${DRY_RUN}" \
-    "${STAGE_DEPTHS}" <<'PY'
+    "${STAGE_DEPTHS}" \
+    "${EXCLUDE_FUTURE_MODELS}" \
+    "${EXCLUDE_FUTURE_SCENARIOS}" <<'PY'
 import csv
 import os
 import sys
@@ -293,9 +338,17 @@ except ImportError:
     _physical_vars_text,
     dry_run,
     stage_depths,
-) = sys.argv[1:10]
+    exclude_future_models_text,
+    exclude_future_scenarios_text,
+) = sys.argv[1:12]
 
 selected_realizations = {}
+exclude_future_models = set(exclude_future_models_text.split())
+exclude_future_scenarios = set(exclude_future_scenarios_text.split())
+
+
+def keep_future_product(model, scenario):
+    return model not in exclude_future_models and scenario not in exclude_future_scenarios
 
 
 def geotiff_tags(path):
@@ -399,12 +452,16 @@ def staged_info_for_row(row, source_root):
         if source_resolution != resolution:
             return None
 
-        key = (product_type, model, scenario, variable, window, source_resolution)
-        selected = selected_realizations.get(key)
-        if selected is None:
-            selected_realizations[key] = realization
-        elif realization != selected:
+        if not keep_future_product(model, scenario):
             return None
+
+        if model != "ensemble":
+            key = (product_type, model, scenario, variable, window, source_resolution)
+            selected = selected_realizations.get(key)
+            if selected is None:
+                selected_realizations[key] = realization
+            elif realization != selected:
+                return None
 
         info.update(
             {
@@ -416,7 +473,17 @@ def staged_info_for_row(row, source_root):
                 "resolution": source_resolution,
             }
         )
-        staged_rel = os.path.join(product_type, "future", scenario, variable, window, resolution, file_name)
+        staged_rel = os.path.join(
+            product_type,
+            "future",
+            model,
+            realization,
+            scenario,
+            variable,
+            window,
+            resolution,
+            file_name,
+        )
     else:
         return None
 
@@ -504,7 +571,10 @@ echo "PELAGIC SOURCE : ${PELAGIC_SOURCE_ROOT}"
 echo "DEPTHS SOURCE  : ${DEPTHS_SOURCE_ROOT}"
 echo "STAGE ROOT     : ${STAGE_ROOT}"
 echo "RESOLUTION     : ${RESOLUTION}"
-echo "REALIZATION    : first sorted per model/scenario/variable/window"
+echo "FUTURE LAYOUT  : future/<model>/<realization_or_statistic>/<scenario>/<variable>/<window>/<resolution>"
+echo "REALIZATION    : first sorted per non-ensemble model/scenario/variable/window"
+echo "EXCLUDE MODELS : ${EXCLUDE_FUTURE_MODELS}"
+echo "EXCLUDE SCEN.  : ${EXCLUDE_FUTURE_SCENARIOS}"
 echo "EXTENSIONS     : ${EXTENSIONS}"
 echo "DRY RUN        : ${DRY_RUN}"
 echo "OVERWRITE      : ${OVERWRITE}"

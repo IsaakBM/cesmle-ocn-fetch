@@ -1643,13 +1643,13 @@ Expected output root:
 /home/SB5/ocean_downscaling_sample_products_geotiff/
 ├── layers/
 │   ├── baseline/<var>/0p05/*.tif
-│   └── future/<scenario>/<var>/<window>/0p05/*.tif
+│   └── future/<model>/<realization_or_statistic>/<scenario>/<var>/<window>/0p05/*.tif
 ├── pelagic/
 │   ├── baseline/<var>/0p05/*.tif
-│   └── future/<scenario>/<var>/<window>/0p05/*.tif
+│   └── future/<model>/<realization_or_statistic>/<scenario>/<var>/<window>/0p05/*.tif
 ├── depths/
 │   ├── baseline/<var>/0p05/*.tif
-│   └── future/<scenario>/<var>/<window>/0p05/*.tif
+│   └── future/<model>/<realization_or_statistic>/<scenario>/<var>/<window>/0p05/*.tif
 └── manifests/
     ├── layers_geotiff_manifest.csv
     ├── pelagic_geotiff_manifest.csv
@@ -1662,12 +1662,19 @@ Notes:
 - this is a copy-only staging step for viewer deployment tests
 - it reads from the layer, pelagic, and individual-depth GeoTIFF trees
 - it only stages `0p05` products
-- future outputs are staged by `scenario/variable/window/resolution` for the
-  Shiny app, while the manifests retain `model`, `realization`, `scenario`,
-  `variable`, `window`, and `resolution`
-- when a future model/scenario/variable/window has multiple realizations, it
-  keeps the first sorted realization only, so CESM currently stages member
-  `001` and IPCC/ESGF currently stages `r1i1p1f2`
+- baseline outputs keep the simple `baseline/<variable>/<resolution>` layout;
+  manifests mark these rows as `model=baseline`, `realization=baseline`, and
+  `scenario=baseline` for the Shiny app
+- future outputs preserve model and realization/statistic in the staged path so
+  the Shiny app can expose a `Model` selector:
+  `future/<model>/<realization_or_statistic>/<scenario>/<variable>/<window>/<resolution>`
+- ensemble products are staged as `future/ensemble/model_mean/...` and
+  `future/ensemble/model_sd/...`
+- when a non-ensemble future model/scenario/variable/window has multiple
+  realizations, it keeps the first sorted realization only
+- obsolete CESM/RCP-era future products are skipped by default with
+  `EXCLUDE_FUTURE_MODELS="cesm_f09_g16 legacy_downscaled_rcp85"` and
+  `EXCLUDE_FUTURE_SCENARIOS="rcp85"`
 - it stages filtered manifests for the copied GeoTIFFs:
   - `layers_geotiff_manifest.csv`
   - `pelagic_geotiff_manifest.csv`

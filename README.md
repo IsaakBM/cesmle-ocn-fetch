@@ -386,6 +386,11 @@ packaging/export/organization steps than as reusable scientific operators.
     `/home/SB5/downscaled/<model>/<realization>/<scenario>/<var>/...`
   - writes future products with that provenance preserved:
     `future/<model>/<realization>/<scenario>/<var>/<window>/<resolution>/`
+  - future-product organization can be restricted to one model with
+    `MODEL=<model>` or to an explicit space-separated list with
+    `MODELS="<model1> <model2> ..."`; use this instead of `MODEL=auto`
+    when refreshing only selected CMIP6 products while leaving CESM/legacy
+    products untouched
   - still supports older CESM-style window-folder layouts as a transition
     fallback
 

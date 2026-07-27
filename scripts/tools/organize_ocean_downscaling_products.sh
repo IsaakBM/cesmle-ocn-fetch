@@ -15,6 +15,7 @@ GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/glorys12v1_monthly_0p05}"
 DOWNSCALED_ROOT="${DOWNSCALED_ROOT:-${IPCC_DOWNSCALED_ROOT:-/home/SB5/downscaled}}"
 CESM_LEGACY_DOWNSCALED_ROOT="${CESM_LEGACY_DOWNSCALED_ROOT:-${CESM_DOWNSCALED_ROOT:-/home/SB5/downscaled_rcp85}}"
 MODEL="${MODEL:-auto}"
+MODELS="${MODELS:-${MODEL}}"
 REALIZATION="${REALIZATION:-auto}"
 SCENARIO="${SCENARIO:-auto}"
 ORGANIZE_SCOPE="${ORGANIZE_SCOPE:-all}"
@@ -27,6 +28,19 @@ NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-4}}"
 OVERWRITE="${OVERWRITE:-no}"
 USE_COASTAL_FILLED_BASELINE="${USE_COASTAL_FILLED_BASELINE:-no}"
 COASTAL_FILLED_BASELINE_VARS="${COASTAL_FILLED_BASELINE_VARS:-chl o2}"
+
+read -r -a MODEL_LIST <<< "${MODELS}"
+
+contains_word() {
+  local needle="$1"
+  shift
+  local candidate
+
+  for candidate in "$@"; do
+    [[ "${candidate}" == "${needle}" ]] && return 0
+  done
+  return 1
+}
 
 copy_one() {
   local src="$1"
@@ -102,7 +116,7 @@ find_downscaled_var_roots() {
     realization="$(basename "$(dirname "$(dirname "${candidate}")")")"
     scenario="$(basename "$(dirname "${candidate}")")"
 
-    [[ "${MODEL}" != "auto" && "${MODEL}" != "${model}" ]] && continue
+    [[ "${MODELS}" != "auto" ]] && ! contains_word "${model}" "${MODEL_LIST[@]}" && continue
     [[ "${REALIZATION}" != "auto" && "${REALIZATION}" != "${realization}" ]] && continue
     [[ "${SCENARIO}" != "auto" && "${SCENARIO}" != "${scenario}" ]] && continue
 
@@ -111,7 +125,7 @@ find_downscaled_var_roots() {
   done < <(find "${DOWNSCALED_ROOT}" -mindepth 4 -maxdepth 4 -type d -name "${var}" | sort)
 
   if (( count == 0 )); then
-    echo "[WARN] No downscaled ${var} directories match MODEL=${MODEL} REALIZATION=${REALIZATION} SCENARIO=${SCENARIO}" >&2
+    echo "[WARN] No downscaled ${var} directories match MODELS=${MODELS} REALIZATION=${REALIZATION} SCENARIO=${SCENARIO}" >&2
   fi
 }
 
@@ -298,6 +312,7 @@ echo "GLORYS 0.05   : ${GLORYS_ROOT}"
 echo "DOWN ROOT     : ${DOWNSCALED_ROOT}"
 echo "CESM LEGACY   : ${CESM_LEGACY_DOWNSCALED_ROOT}"
 echo "MODEL         : ${MODEL}"
+echo "MODELS        : ${MODELS}"
 echo "REALIZATION   : ${REALIZATION}"
 echo "SCENARIO      : ${SCENARIO}"
 echo "SCOPE         : ${ORGANIZE_SCOPE}"

@@ -280,3 +280,21 @@ List final NetCDF products:
 find /home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2 \
   -type f -name "*.nc" | sort
 ```
+
+# Curated Product Refresh
+
+The curated product organizer writes to `/home/SB5/ocean_downscaling_products`
+from the final `/home/SB5/downscaled` tree. Use `MODEL=<model>` for one model,
+or `MODELS="<model1> <model2> ..."` for an explicit multi-model refresh. This
+keeps selected CMIP6 refreshes separate from CESM/legacy products.
+
+```{bash}
+ORGANIZE_SCOPES="future" \
+MODELS="CNRM-ESM2-1 IPSL-CM6A-LR MPI-ESM1-2-HR MPI-ESM1-2-LR UKESM1-0-LL" \
+REALIZATION="auto" \
+SCENARIO="auto" \
+VARS="thetao so uo vo zos mlotst siconc chl o2 ph" \
+WINDOWS="2030-2060 2050-2060 2090-2100" \
+OVERWRITE=yes \
+bash scripts/runners/products/run_organize_ocean_downscaling_products.sh
+```

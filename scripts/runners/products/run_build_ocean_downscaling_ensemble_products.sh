@@ -18,6 +18,7 @@ NTASKS="${NTASKS:-1}"
 CPUS_PER_TASK="${CPUS_PER_TASK:-4}"
 MEMORY="${MEMORY:-128G}"
 WALLTIME="${WALLTIME:-1-00:00:00}"
+EXCLUDE_NODES="${EXCLUDE_NODES:-${SBATCH_EXCLUDE:-}}"
 
 PRODUCT_ROOT="${PRODUCT_ROOT:-/home/SB5/ocean_downscaling_products}"
 SCENARIOS="${SCENARIOS:-ssp126 ssp245 ssp585}"
@@ -58,6 +59,7 @@ echo "EXCLUDE MODELS : ${EXCLUDE_MODELS}"
 echo "MIN MODELS     : ${MIN_MODELS}"
 echo "SD METHOD      : CDO ensstd1"
 echo "OVERWRITE      : ${OVERWRITE}"
+echo "EXCLUDE NODES  : ${EXCLUDE_NODES:-<none>}"
 echo
 
 for scenario in "${SCENARIO_LIST[@]}"; do
@@ -65,6 +67,10 @@ for scenario in "${SCENARIO_LIST[@]}"; do
     for window in "${WINDOW_LIST[@]}"; do
       for resolution in "${RESOLUTION_LIST[@]}"; do
         job_tag="$(printf '%s_%s_%s_%s' "${scenario}" "${var}" "${window}" "${resolution}" | tr -cd '[:alnum:]_')"
+        sbatch_args=()
+        if [[ -n "${EXCLUDE_NODES}" ]]; then
+          sbatch_args+=(--exclude="${EXCLUDE_NODES}")
+        fi
         jid=$(
           sbatch --parsable \
             --job-name="ens_${job_tag}" \
@@ -74,6 +80,7 @@ for scenario in "${SCENARIO_LIST[@]}"; do
             --cpus-per-task="${CPUS_PER_TASK}" \
             --mem="${MEMORY}" \
             --time="${WALLTIME}" \
+            "${sbatch_args[@]}" \
             --output="${LOG_DIR}/ensemble_${job_tag}_%j.out" \
             --error="${LOG_DIR}/ensemble_${job_tag}_%j.err" \
             --export=ALL,PRODUCT_ROOT="${PRODUCT_ROOT}",SCENARIO="${scenario}",VAR="${var}",WINDOW="${window}",RESOLUTION="${resolution}",MODELS="${MODELS}",EXCLUDE_MODELS="${EXCLUDE_MODELS}",MIN_MODELS="${MIN_MODELS}",OVERWRITE="${OVERWRITE}",FILE_INCLUDE_REGEX="${FILE_INCLUDE_REGEX}" \

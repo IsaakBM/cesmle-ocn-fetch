@@ -386,6 +386,10 @@ packaging/export/organization steps than as reusable scientific operators.
     `/home/SB5/downscaled/<model>/<realization>/<scenario>/<var>/...`
   - writes future products with that provenance preserved:
     `future/<model>/<realization>/<scenario>/<var>/<window>/<resolution>/`
+  - copies only expected future resolutions by variable:
+    GLORYS-target variables (`thetao`, `so`, `uo`, `vo`, `zos`, `mlotst`,
+    and `siconc`) use `0p05` only; hindcast-target variables (`chl`, `o2`,
+    and `ph`) use both `0p05` and `0p25`
   - future-product organization can be restricted to one model with
     `MODEL=<model>` or to an explicit space-separated list with
     `MODELS="<model1> <model2> ..."`; when `MODELS` is set it takes

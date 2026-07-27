@@ -288,6 +288,8 @@ from the final `/home/SB5/downscaled` tree. Use `MODEL=<model>` for one model,
 or `MODELS="<model1> <model2> ..."` for an explicit multi-model refresh. When
 `MODELS` is set it takes precedence over any stale `MODEL` value, keeping
 selected CMIP6 refreshes separate from CESM/legacy products.
+The organizer copies `0p05` only for GLORYS-target variables and both `0p05`
+and `0p25` for hindcast-target variables.
 
 ```{bash}
 ORGANIZE_SCOPES="future" \

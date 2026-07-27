@@ -46,6 +46,22 @@ contains_word() {
   return 1
 }
 
+future_resolutions_for_var() {
+  local var="$1"
+
+  case "${var}" in
+    chl|o2|ph)
+      printf '%s\n' "0p05 0p25"
+      ;;
+    thetao|so|uo|vo|zos|mlotst|siconc)
+      printf '%s\n' "0p05"
+      ;;
+    *)
+      printf '%s\n' "0p05 0p25"
+      ;;
+  esac
+}
+
 copy_one() {
   local src="$1"
   local dest_dir="$2"
@@ -137,18 +153,18 @@ copy_future_products() {
   local var="$1"
   local window="$2"
   local root model realization scenario
+  local resolutions resolution src_dir
   local copied=0
+  resolutions="$(future_resolutions_for_var "${var}")"
 
   while IFS=$'\t' read -r root model realization scenario; do
-    local new_0p25="${root}/0p25/${window}"
-    local new_0p05="${root}/0p05/${window}"
     local dest_base="${FUTURE_DIR}/${model}/${realization}/${scenario}/${var}/${window}"
 
-    if [[ -d "${new_0p25}" || -d "${new_0p05}" ]]; then
-      copy_all_from_dir_parallel "${new_0p25}" "${dest_base}/0p25" "future-${model}-${realization}-${scenario}-${var}-${window}-0p25"
-      copy_all_from_dir_parallel "${new_0p05}" "${dest_base}/0p05" "future-${model}-${realization}-${scenario}-${var}-${window}-0p05"
-      copied=$((copied + 1))
-    fi
+    for resolution in ${resolutions}; do
+      src_dir="${root}/${resolution}/${window}"
+      copy_all_from_dir_parallel "${src_dir}" "${dest_base}/${resolution}" "future-${model}-${realization}-${scenario}-${var}-${window}-${resolution}"
+    done
+    copied=$((copied + 1))
   done < <(find_downscaled_var_roots "${var}")
 
   if (( copied > 0 )); then

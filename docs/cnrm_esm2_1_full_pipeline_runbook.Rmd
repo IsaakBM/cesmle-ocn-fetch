@@ -285,8 +285,9 @@ find /home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2 \
 
 The curated product organizer writes to `/home/SB5/ocean_downscaling_products`
 from the final `/home/SB5/downscaled` tree. Use `MODEL=<model>` for one model,
-or `MODELS="<model1> <model2> ..."` for an explicit multi-model refresh. This
-keeps selected CMIP6 refreshes separate from CESM/legacy products.
+or `MODELS="<model1> <model2> ..."` for an explicit multi-model refresh. When
+`MODELS` is set it takes precedence over any stale `MODEL` value, keeping
+selected CMIP6 refreshes separate from CESM/legacy products.
 
 ```{bash}
 ORGANIZE_SCOPES="future" \

@@ -31,7 +31,11 @@ MEMORY="${MEMORY:-64G}"
 WALLTIME="${WALLTIME:-2-00:00:00}"
 NPROC="${NPROC:-${CPUS_PER_TASK}}"
 MODEL="${MODEL:-auto}"
-MODELS="${MODELS:-${MODEL}}"
+if [[ -n "${MODELS+x}" && -n "${MODELS}" ]]; then
+  MODEL="auto"
+else
+  MODELS="${MODEL}"
+fi
 REALIZATION="${REALIZATION:-auto}"
 SCENARIO="${SCENARIO:-auto}"
 PRODUCT_ROOT="${PRODUCT_ROOT:-/home/SB5/ocean_downscaling_products}"

@@ -30,6 +30,7 @@ CPUS_PER_TASK="${CPUS_PER_TASK:-4}"
 MEMORY="${MEMORY:-64G}"
 WALLTIME="${WALLTIME:-2-00:00:00}"
 NPROC="${NPROC:-${CPUS_PER_TASK}}"
+EXCLUDE_NODES="${EXCLUDE_NODES:-}"
 MODEL="${MODEL:-auto}"
 if [[ -n "${MODELS+x}" && -n "${MODELS}" ]]; then
   MODEL="auto"
@@ -98,12 +99,17 @@ echo "SCENARIO        : ${SCENARIO}"
 echo "PRODUCT ROOT    : ${PRODUCT_ROOT}"
 echo "DOWNSCALED ROOT : ${DOWNSCALED_ROOT}"
 echo "OVERWRITE       : ${OVERWRITE}"
+echo "EXCLUDE NODES   : ${EXCLUDE_NODES:-<none>}"
 echo
 
 echo "Submitting curated ocean product organization jobs by subtree:"
 for task in "${TASKS[@]}"; do
   read -r scope var window <<<"${task}"
   job_tag="${scope}_${var}"
+  sbatch_args=()
+  if [[ -n "${EXCLUDE_NODES}" ]]; then
+    sbatch_args+=(--exclude="${EXCLUDE_NODES}")
+  fi
   wrap_cmd="ORGANIZE_SCOPE='${scope}' VAR='${var}' NPROC='${NPROC}' MODEL='${MODEL}' MODELS='${MODELS}' REALIZATION='${REALIZATION}' SCENARIO='${SCENARIO}' PRODUCT_ROOT='${PRODUCT_ROOT}' HINDCAST_0P25_ROOT='${HINDCAST_0P25_ROOT}' HINDCAST_0P05_ROOT='${HINDCAST_0P05_ROOT}' HINDCAST_0P05_COASTAL_FILLED_ROOT='${HINDCAST_0P05_COASTAL_FILLED_ROOT}' GLORYS_ROOT='${GLORYS_ROOT}' DOWNSCALED_ROOT='${DOWNSCALED_ROOT}' CESM_LEGACY_DOWNSCALED_ROOT='${CESM_LEGACY_DOWNSCALED_ROOT}' USE_COASTAL_FILLED_BASELINE='${USE_COASTAL_FILLED_BASELINE}' COASTAL_FILLED_BASELINE_VARS='${COASTAL_FILLED_BASELINE_VARS}' BASELINE_VARS='${BASELINE_VARS}' FUTURE_VARS='${VARS}' WINDOWS='${WINDOWS}' OVERWRITE='${OVERWRITE}'"
   if [[ "${scope}" == "future" ]]; then
     job_tag="${job_tag}_${window}"
@@ -120,6 +126,7 @@ for task in "${TASKS[@]}"; do
       --cpus-per-task="${CPUS_PER_TASK}" \
       --mem="${MEMORY}" \
       --time="${WALLTIME}" \
+      "${sbatch_args[@]}" \
       --output="${LOG_DIR}/organize_${job_tag}_%j.out" \
       --error="${LOG_DIR}/organize_${job_tag}_%j.err" \
       --wrap="${wrap_cmd}"

@@ -290,6 +290,8 @@ or `MODELS="<model1> <model2> ..."` for an explicit multi-model refresh. When
 selected CMIP6 refreshes separate from CESM/legacy products.
 The organizer copies `0p05` only for GLORYS-target variables and both `0p05`
 and `0p25` for hindcast-target variables.
+If a Slurm node cannot write to `/home/SB5`, set `EXCLUDE_NODES`, for example
+`EXCLUDE_NODES="hpc-18"`.
 
 ```{bash}
 ORGANIZE_SCOPES="future" \

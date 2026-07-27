@@ -396,6 +396,8 @@ packaging/export/organization steps than as reusable scientific operators.
     precedence over any stale `MODEL` value. Use `MODELS` instead of
     `MODEL=auto` when refreshing only selected CMIP6 products while leaving
     CESM/legacy products untouched
+  - the Slurm runner accepts `EXCLUDE_NODES="<node1>[,<node2>...]"` for
+    avoiding nodes with missing mounts or permissions during copy jobs
   - still supports older CESM-style window-folder layouts as a transition
     fallback
 

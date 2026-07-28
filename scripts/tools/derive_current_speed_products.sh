@@ -53,6 +53,8 @@ make_current_speed() {
   local u_file="$1"
   local v_file="$2"
   local out_file="$3"
+  local time_start="$4"
+  local time_end="$5"
   local out_dir
   local tmp_file
 
@@ -77,6 +79,42 @@ make_current_speed() {
   rm -f "${tmp_file}"
 
   cdo -O -expr,'current_speed=sqrt(uo*uo+vo*vo)' -merge "${u_file}" "${v_file}" "${tmp_file}"
+
+  python3 - <<PY
+import numpy as np
+import xarray as xr
+
+path = "${tmp_file}"
+start_text = "${time_start}"
+end_text = "${time_end}"
+start = np.datetime64(start_text)
+end = np.datetime64(end_text)
+midpoint = start + (end - start) // 2
+
+with xr.open_dataset(path) as ds:
+    out = ds.load()
+if "time" in out.dims:
+    if out.sizes["time"] != 1:
+        raise ValueError(f"Expected singleton climatology time dimension, got {out.sizes['time']}")
+    out = out.assign_coords(time=("time", np.array([midpoint], dtype="datetime64[ns]")))
+else:
+    out = out.expand_dims(time=np.array([midpoint], dtype="datetime64[ns]"))
+attrs = dict(out["time"].attrs)
+attrs.update({"long_name": "climatology time", "climatology": "time_bnds"})
+out["time"].attrs = attrs
+out["time_bnds"] = xr.DataArray(
+    np.array([[start, end]], dtype="datetime64[ns]"),
+    coords={"time": out["time"], "bnds": [0, 1]},
+    dims=("time", "bnds"),
+)
+out.attrs["climatology_window_start"] = start_text
+out.attrs["climatology_window_end"] = end_text
+out.attrs["climatology_time_policy"] = (
+    "time coordinate set to midpoint of current_speed climatology window; "
+    "time_bnds stores the configured window bounds"
+)
+out.to_netcdf(path, format="NETCDF4")
+PY
 
   if command -v ncatted >/dev/null 2>&1; then
     ncatted -O \
@@ -125,7 +163,7 @@ derive_baseline() {
         v_file="$(find "${v_dir}" -maxdepth 1 -type f -name '*.nc' | sort | head -1)"
       fi
       out_file="${PRODUCT_ROOT}/baseline/current_speed/${resolution}/$(current_speed_basename "${u_file}")"
-      make_current_speed "${u_file}" "${v_file}" "${out_file}"
+      make_current_speed "${u_file}" "${v_file}" "${out_file}" "2006-01-01" "2014-12-31"
     done
   done
 }
@@ -155,7 +193,7 @@ derive_future() {
 
     out_base="$(current_speed_basename "${u_file}")"
     out_file="${PRODUCT_ROOT}/future/${model}/${realization}/${scenario}/current_speed/${window}/${resolution}/${out_base}"
-    make_current_speed "${u_file}" "${v_file}" "${out_file}"
+    make_current_speed "${u_file}" "${v_file}" "${out_file}" "${window%%-*}-01-01" "${window##*-}-12-31"
   done < <(find "${PRODUCT_ROOT}/future" -path "*/uo/*/*/*.nc" -type f | sort)
 }
 

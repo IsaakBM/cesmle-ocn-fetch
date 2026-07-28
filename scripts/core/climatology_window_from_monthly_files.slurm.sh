@@ -174,6 +174,41 @@ rm -f "${OUTFILE}" "${TMP_OUT}" "${TMP_FILLED}"
 echo "[STEP2] Computing climatological mean directly from monthly files"
 cdo -L -O timmean -mergetime "${VALID_FILES[@]}" "${TMP_OUT}"
 
+python3 - <<PY
+import numpy as np
+import xarray as xr
+
+path = "${TMP_OUT}"
+start_yyyymm = "${WINDOW_START}"
+end_yyyymm = "${WINDOW_END}"
+start_text = f"{start_yyyymm[:4]}-{start_yyyymm[4:6]}-01"
+end_text = f"{end_yyyymm[:4]}-{end_yyyymm[4:6]}-28"
+start = np.datetime64(start_text)
+end = np.datetime64(end_text)
+midpoint = start + (end - start) // 2
+
+with xr.open_dataset(path) as ds:
+    out = ds.load()
+if "time" in out.dims:
+    if out.sizes["time"] != 1:
+        raise ValueError(f"Expected singleton climatology time dimension, got {out.sizes['time']}")
+    out = out.assign_coords(time=("time", np.array([midpoint], dtype="datetime64[ns]")))
+else:
+    out = out.expand_dims(time=np.array([midpoint], dtype="datetime64[ns]"))
+attrs = dict(out["time"].attrs)
+attrs.update({"long_name": "climatology time", "climatology": "time_bnds"})
+out["time"].attrs = attrs
+out["time_bnds"] = xr.DataArray(
+    np.array([[start, end]], dtype="datetime64[ns]"),
+    coords={"time": out["time"], "bnds": [0, 1]},
+    dims=("time", "bnds"),
+)
+out.attrs["climatology_window_start"] = start_text
+out.attrs["climatology_window_end"] = end_text
+out.attrs["climatology_selected_timesteps"] = "${#VALID_FILES[@]}"
+out.to_netcdf(path, format="NETCDF4")
+PY
+
 if [[ "$FILL_TOP_MISSING" == "yes" ]]; then
   echo "[STEP3] Filling missing top climatology layers dynamically"
   python3 - <<PY

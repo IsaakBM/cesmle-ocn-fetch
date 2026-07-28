@@ -215,6 +215,8 @@ for spec in "${VAR_MAP[@]}"; do
   fi
 
   for window in "${WINDOWS[@]}"; do
+    output_time_start="${window%%-*}-01-01"
+    output_time_end="${window##*-}-12-31"
     ANOMALY_FILE="$(render_template "${ANOMALY_FILE_TEMPLATE}" "${src_var}" "${tgt_var}" "${window}")"
     if [[ ! -f "$ANOMALY_FILE" ]]; then
       echo "WARN: Missing anomaly for SRC=${src_var} TGT=${tgt_var} WINDOW=${window}: ${ANOMALY_FILE}"
@@ -240,6 +242,8 @@ for spec in "${VAR_MAP[@]}"; do
         FUTURE_TAG="$window" \
         OUT_SUFFIX="$OUT_SUFFIX" \
         NATIVE_SUFFIX="$NATIVE_SUFFIX" \
+        OUTPUT_TIME_START="$output_time_start" \
+        OUTPUT_TIME_END="$output_time_end" \
         ANOMALY_MODE="$anomaly_mode_for_this_var" \
         WRITE_NATIVE_OUTPUT="$WRITE_NATIVE_OUTPUT" \
         FILL_TOP_MISSING="$FILL_TOP_MISSING" \

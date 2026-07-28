@@ -1229,6 +1229,8 @@ Built with:
 - [run_derive_current_speed_products.sh](scripts/runners/products/run_derive_current_speed_products.sh)
 - [build_ocean_downscaling_ensemble_products.sh](scripts/tools/build_ocean_downscaling_ensemble_products.sh)
 - [run_build_ocean_downscaling_ensemble_products.sh](scripts/runners/products/run_build_ocean_downscaling_ensemble_products.sh)
+- [audit_ocean_downscaling_product_integrity.sh](scripts/tools/audit_ocean_downscaling_product_integrity.sh)
+- [run_audit_ocean_downscaling_product_integrity.sh](scripts/runners/products/run_audit_ocean_downscaling_product_integrity.sh)
 
 Current source roots:
 
@@ -1367,6 +1369,13 @@ Notes:
   before building the `current_speed` ensemble; ensemble spread should be
   calculated from per-model current-speed products, not from
   `sqrt(model_sd(uo)^2 + model_sd(vo)^2)`
+- downscaled future products are stamped with climatology-window time metadata:
+  a singleton `time` coordinate at the window midpoint and `time_bnds` spanning
+  the configured window. This prevents future climatology products from
+  inheriting the 2006-2014 trusted-baseline time coordinate.
+- audit the curated tree for filename/path/time consistency with:
+  `run_audit_ocean_downscaling_product_integrity.sh`; set
+  `FAIL_ON_ISSUE=yes` when the audit should fail the job on mismatches
 - `baseline/` stores curated climatological reference products
 - baseline products are now organized by resolution when available
 - biogeochemistry variables can include both `0p25` and derived `0p05`

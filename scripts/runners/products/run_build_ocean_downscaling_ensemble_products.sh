@@ -30,6 +30,7 @@ EXCLUDE_MODELS="${EXCLUDE_MODELS:-cesm_f09_g16 legacy_downscaled_rcp85 ensemble}
 MIN_MODELS="${MIN_MODELS:-2}"
 OVERWRITE="${OVERWRITE:-no}"
 FILE_INCLUDE_REGEX="${FILE_INCLUDE_REGEX:-}"
+VALIDATE_INPUT_TIME="${VALIDATE_INPUT_TIME:-warn}"
 
 mkdir -p "${LOG_DIR}"
 
@@ -59,6 +60,7 @@ echo "EXCLUDE MODELS : ${EXCLUDE_MODELS}"
 echo "MIN MODELS     : ${MIN_MODELS}"
 echo "SD METHOD      : CDO ensstd1"
 echo "OVERWRITE      : ${OVERWRITE}"
+echo "VALIDATE TIME  : ${VALIDATE_INPUT_TIME}"
 echo "EXCLUDE NODES  : ${EXCLUDE_NODES:-<none>}"
 echo
 
@@ -83,7 +85,7 @@ for scenario in "${SCENARIO_LIST[@]}"; do
             "${sbatch_args[@]}" \
             --output="${LOG_DIR}/ensemble_${job_tag}_%j.out" \
             --error="${LOG_DIR}/ensemble_${job_tag}_%j.err" \
-            --export=ALL,PRODUCT_ROOT="${PRODUCT_ROOT}",SCENARIO="${scenario}",VAR="${var}",WINDOW="${window}",RESOLUTION="${resolution}",MODELS="${MODELS}",EXCLUDE_MODELS="${EXCLUDE_MODELS}",MIN_MODELS="${MIN_MODELS}",OVERWRITE="${OVERWRITE}",FILE_INCLUDE_REGEX="${FILE_INCLUDE_REGEX}" \
+            --export=ALL,PRODUCT_ROOT="${PRODUCT_ROOT}",SCENARIO="${scenario}",VAR="${var}",WINDOW="${window}",RESOLUTION="${resolution}",MODELS="${MODELS}",EXCLUDE_MODELS="${EXCLUDE_MODELS}",MIN_MODELS="${MIN_MODELS}",OVERWRITE="${OVERWRITE}",FILE_INCLUDE_REGEX="${FILE_INCLUDE_REGEX}",VALIDATE_INPUT_TIME="${VALIDATE_INPUT_TIME}" \
             "${TOOL_SCRIPT}"
         )
         echo "  submitted SCENARIO=${scenario} VAR=${var} WINDOW=${window} RESOLUTION=${resolution} as jobid=${jid}"

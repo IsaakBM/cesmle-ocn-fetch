@@ -116,6 +116,8 @@ export OMP_NUM_THREADS=1
 #                               by output var. Format: var:scale, e.g.
 #                               siconc:0.01 to convert percent-point anomalies
 #                               before adding to a fraction baseline.
+#   OUTPUT_TIME_START         : optional output climatology-window start date
+#   OUTPUT_TIME_END           : optional output climatology-window end date
 # ==============================================================================
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"
@@ -139,6 +141,8 @@ REGRID_METHOD="${REGRID_METHOD:-remapdis}"
 REGRID_GRIDFILE="${REGRID_GRIDFILE:-}"
 REGRID_OUT_DIR="${REGRID_OUT_DIR:-}"
 REGRID_SUFFIX="${REGRID_SUFFIX:-}"
+OUTPUT_TIME_START="${OUTPUT_TIME_START:-}"
+OUTPUT_TIME_END="${OUTPUT_TIME_END:-}"
 
 REMAP_ANOMALY_TO_BASELINE="${REMAP_ANOMALY_TO_BASELINE:-no}"
 ANOMALY_GRIDFILE="${ANOMALY_GRIDFILE:-}"
@@ -304,6 +308,8 @@ echo "WRITE NATIVE         : ${WRITE_NATIVE_OUTPUT}"
 echo "FILL TOP MISSING     : ${FILL_TOP_MISSING}"
 echo "FILL TOP ANOMALY     : ${FILL_TOP_MISSING_ANOMALY}"
 echo "WRITE FILLED ANOM    : ${WRITE_FILLED_ANOM}"
+echo "OUTPUT TIME START    : ${OUTPUT_TIME_START:-<unchanged>}"
+echo "OUTPUT TIME END      : ${OUTPUT_TIME_END:-<unchanged>}"
 echo "REMAP ANOM TO TARGET : ${REMAP_ANOMALY_TO_BASELINE}"
 echo "COASTAL FILL         : ${COASTAL_FILL}"
 echo "COASTAL FILL METHOD  : ${COASTAL_FILL_METHOD}"
@@ -378,6 +384,8 @@ coastal_fill_complete_fallback_value = float("${COASTAL_FILL_COMPLETE_FALLBACK_V
 coastal_fill_max_steps = int("${COASTAL_FILL_MAX_STEPS}")
 coastal_fill_weight_power = float("${COASTAL_FILL_WEIGHT_POWER}")
 coastal_fill_min_donors = int("${COASTAL_FILL_MIN_DONORS}")
+output_time_start = "${OUTPUT_TIME_START}"
+output_time_end = "${OUTPUT_TIME_END}"
 
 ds_base = xr.open_dataset(baseline_file)
 ds_anom = xr.open_dataset(anomaly_file)
@@ -431,6 +439,54 @@ def parse_anomaly_scale(spec, var_name):
             continue
         return float(scale_text)
     return 1.0
+
+def set_climatology_time(ds, start_text, end_text):
+    if not start_text and not end_text:
+        return ds
+    if not start_text or not end_text:
+        raise ValueError("OUTPUT_TIME_START and OUTPUT_TIME_END must be set together")
+
+    start = np.datetime64(start_text)
+    end = np.datetime64(end_text)
+    if end < start:
+        raise ValueError(
+            f"OUTPUT_TIME_END is before OUTPUT_TIME_START: {start_text} > {end_text}"
+        )
+
+    midpoint = start + (end - start) // 2
+    time_values = np.array([midpoint], dtype="datetime64[ns]")
+    bnds_values = np.array([[start, end]], dtype="datetime64[ns]")
+
+    out = ds.copy()
+    if "time" in out.dims:
+        if out.sizes["time"] != 1:
+            raise ValueError(
+                f"Cannot stamp climatology time on output with time size {out.sizes['time']}; "
+                "expected a singleton climatology time dimension"
+            )
+        out = out.assign_coords(time=("time", time_values))
+    else:
+        out = out.expand_dims(time=time_values)
+
+    time_attrs = dict(out["time"].attrs)
+    time_attrs.update({
+        "long_name": "climatology time",
+        "climatology": "time_bnds",
+    })
+    out["time"].attrs = time_attrs
+    out["time_bnds"] = xr.DataArray(
+        bnds_values,
+        coords={"time": out["time"], "bnds": [0, 1]},
+        dims=("time", "bnds"),
+        name="time_bnds",
+    )
+    out.attrs["climatology_window_start"] = start_text
+    out.attrs["climatology_window_end"] = end_text
+    out.attrs["climatology_time_policy"] = (
+        "time coordinate set to midpoint of output climatology window; "
+        "time_bnds stores the configured window bounds"
+    )
+    return out
 
 def infer_xy_dims(da):
     preferred = [
@@ -963,6 +1019,7 @@ if output_lower_bound is not None or output_upper_bound is not None:
 
 ds_out = ds_base.copy()
 ds_out[base_var] = da_out
+ds_out = set_climatology_time(ds_out, output_time_start, output_time_end)
 ds_out[base_var].attrs.pop("coordinates", None)
 ds_out[base_var].encoding.pop("coordinates", None)
 for coord_name in ds_out.coords:

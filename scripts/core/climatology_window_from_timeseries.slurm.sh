@@ -176,9 +176,48 @@ fi
 
 echo "[STEP3] Selecting climatology window"
 cdo -L -O seldate,"${WINDOW_START}","${WINDOW_END}" "${SOURCE_FILE}" "${TMP_SEL}"
+selected_steps="$(cdo -s ntime "${TMP_SEL}" | tr -d '[:space:]')"
+if [[ -z "${selected_steps}" || "${selected_steps}" -eq 0 ]]; then
+  echo "ERROR: No timesteps selected for window ${WINDOW_START} to ${WINDOW_END} from ${SOURCE_FILE}" >&2
+  exit 1
+fi
+echo "SELECTED STEPS : ${selected_steps}"
 
 echo "[STEP4] Computing climatological mean"
 cdo -L -O timmean "${TMP_SEL}" "${TMP_OUT}"
+
+python3 - <<PY
+import numpy as np
+import xarray as xr
+
+path = "${TMP_OUT}"
+start_text = "${WINDOW_START}"
+end_text = "${WINDOW_END}"
+start = np.datetime64(start_text)
+end = np.datetime64(end_text)
+midpoint = start + (end - start) // 2
+
+with xr.open_dataset(path) as ds:
+    out = ds.load()
+if "time" in out.dims:
+    if out.sizes["time"] != 1:
+        raise ValueError(f"Expected singleton climatology time dimension, got {out.sizes['time']}")
+    out = out.assign_coords(time=("time", np.array([midpoint], dtype="datetime64[ns]")))
+else:
+    out = out.expand_dims(time=np.array([midpoint], dtype="datetime64[ns]"))
+attrs = dict(out["time"].attrs)
+attrs.update({"long_name": "climatology time", "climatology": "time_bnds"})
+out["time"].attrs = attrs
+out["time_bnds"] = xr.DataArray(
+    np.array([[start, end]], dtype="datetime64[ns]"),
+    coords={"time": out["time"], "bnds": [0, 1]},
+    dims=("time", "bnds"),
+)
+out.attrs["climatology_window_start"] = start_text
+out.attrs["climatology_window_end"] = end_text
+out.attrs["climatology_selected_timesteps"] = "${selected_steps}"
+out.to_netcdf(path, format="NETCDF4")
+PY
 
 echo "[STEP5] Writing final output"
 mv -f "${TMP_OUT}" "${OUTFILE}"

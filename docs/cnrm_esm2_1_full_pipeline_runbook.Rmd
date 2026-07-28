@@ -342,3 +342,20 @@ EXCLUDE_FUTURE_MODELS="cesm_f09_g16" \
 EXCLUDE_NODES="hpc-18.grit.ucsb.edu" \
 bash scripts/runners/products/<downstream_runner>.sh
 ```
+
+Audit the curated product tree for path, filename, variable, dimensions, and
+time-window consistency:
+
+```{bash}
+FUTURE_MODELS="CNRM-ESM2-1 IPSL-CM6A-LR MPI-ESM1-2-HR MPI-ESM1-2-LR UKESM1-0-LL ensemble" \
+EXCLUDE_FUTURE_MODELS="cesm_f09_g16 legacy_downscaled_rcp85" \
+SCENARIOS="ssp126 ssp245 ssp585" \
+VARS="thetao so uo vo current_speed zos mlotst siconc chl o2 ph" \
+WINDOWS="2030-2060 2050-2060 2090-2100" \
+RESOLUTIONS="0p05" \
+COMPUTE_STATS=no \
+FAIL_ON_ISSUE=no \
+EXCLUDE_NODES="hpc-18.grit.ucsb.edu" \
+OUT_FILE="data/manifests/ocean_downscaling_product_integrity_audit.csv" \
+bash scripts/runners/products/run_audit_ocean_downscaling_product_integrity.sh
+```

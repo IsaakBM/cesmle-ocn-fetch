@@ -304,6 +304,34 @@ OVERWRITE=yes \
 bash scripts/runners/products/run_organize_ocean_downscaling_products.sh
 ```
 
+After `uo` and `vo` are curated, derive `current_speed` from the curated
+product tree. Do this before rebuilding the `current_speed` ensemble, because
+ensemble spread should be calculated from per-model current-speed products.
+
+```{bash}
+DERIVE_SCOPES="baseline future" \
+MODELS="CNRM-ESM2-1 IPSL-CM6A-LR MPI-ESM1-2-HR MPI-ESM1-2-LR UKESM1-0-LL" \
+EXCLUDE_MODELS="cesm_f09_g16 legacy_downscaled_rcp85 ensemble" \
+SCENARIOS="ssp126 ssp245 ssp585" \
+WINDOWS="2030-2060 2050-2060 2090-2100" \
+RESOLUTIONS="0p05" \
+EXCLUDE_NODES="hpc-18.grit.ucsb.edu" \
+OVERWRITE=yes \
+bash scripts/runners/products/run_derive_current_speed_products.sh
+```
+
+Then build only the `current_speed` ensemble product:
+
+```{bash}
+VARS="current_speed" \
+RESOLUTIONS="0p05" \
+MODELS="CNRM-ESM2-1 IPSL-CM6A-LR MPI-ESM1-2-HR MPI-ESM1-2-LR UKESM1-0-LL" \
+EXCLUDE_MODELS="cesm_f09_g16 legacy_downscaled_rcp85 ensemble" \
+EXCLUDE_NODES="hpc-18.grit.ucsb.edu" \
+OVERWRITE=yes \
+bash scripts/runners/products/run_build_ocean_downscaling_ensemble_products.sh
+```
+
 For downstream depth, layer, pelagic, GeoTIFF, Parquet, and by-depth CSV
 products, include only the CMIP6 branches plus the ensemble branch and skip the
 legacy CESM branch:

@@ -127,14 +127,15 @@ log-ratio downscaled projection = trusted target baseline * exp(change field)
 The current curated-product chain is:
 
 1. [run_organize_ocean_downscaling_products.sh](scripts/runners/products/run_organize_ocean_downscaling_products.sh)
-2. [run_build_ocean_downscaling_ensemble_products.sh](scripts/runners/products/run_build_ocean_downscaling_ensemble_products.sh)
-3. [run_aggregate_ocean_downscaling_products_fine_layers.sh](scripts/runners/products/run_aggregate_ocean_downscaling_products_fine_layers.sh)
-4. [run_aggregate_ocean_downscaling_products_pelagic_layers.sh](scripts/runners/products/run_aggregate_ocean_downscaling_products_pelagic_layers.sh)
-5. [run_export_ocean_downscaling_products_layers_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_layers_to_parquet.sh)
-6. [run_export_ocean_downscaling_products_pelagic_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_parquet.sh)
-7. [run_export_ocean_downscaling_products_layers_to_geotiff.sh](scripts/runners/products/run_export_ocean_downscaling_products_layers_to_geotiff.sh)
-8. [run_export_ocean_downscaling_products_pelagic_to_geotiff.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_geotiff.sh)
-9. [run_stage_ocean_downscaling_sample_products.sh](scripts/runners/products/run_stage_ocean_downscaling_sample_products.sh)
+2. [run_derive_current_speed_products.sh](scripts/runners/products/run_derive_current_speed_products.sh)
+3. [run_build_ocean_downscaling_ensemble_products.sh](scripts/runners/products/run_build_ocean_downscaling_ensemble_products.sh)
+4. [run_aggregate_ocean_downscaling_products_fine_layers.sh](scripts/runners/products/run_aggregate_ocean_downscaling_products_fine_layers.sh)
+5. [run_aggregate_ocean_downscaling_products_pelagic_layers.sh](scripts/runners/products/run_aggregate_ocean_downscaling_products_pelagic_layers.sh)
+6. [run_export_ocean_downscaling_products_layers_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_layers_to_parquet.sh)
+7. [run_export_ocean_downscaling_products_pelagic_to_parquet.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_parquet.sh)
+8. [run_export_ocean_downscaling_products_layers_to_geotiff.sh](scripts/runners/products/run_export_ocean_downscaling_products_layers_to_geotiff.sh)
+9. [run_export_ocean_downscaling_products_pelagic_to_geotiff.sh](scripts/runners/products/run_export_ocean_downscaling_products_pelagic_to_geotiff.sh)
+10. [run_stage_ocean_downscaling_sample_products.sh](scripts/runners/products/run_stage_ocean_downscaling_sample_products.sh)
 
 Optional individual-depth products can also be derived from the same curated
 3D tree with [run_split_ocean_downscaling_products_by_depth.sh](scripts/runners/products/run_split_ocean_downscaling_products_by_depth.sh).
@@ -1224,6 +1225,8 @@ Built with:
 
 - [organize_ocean_downscaling_products.sh](scripts/tools/organize_ocean_downscaling_products.sh)
 - [run_organize_ocean_downscaling_products.sh](scripts/runners/products/run_organize_ocean_downscaling_products.sh)
+- [derive_current_speed_products.sh](scripts/tools/derive_current_speed_products.sh)
+- [run_derive_current_speed_products.sh](scripts/runners/products/run_derive_current_speed_products.sh)
 - [build_ocean_downscaling_ensemble_products.sh](scripts/tools/build_ocean_downscaling_ensemble_products.sh)
 - [run_build_ocean_downscaling_ensemble_products.sh](scripts/runners/products/run_build_ocean_downscaling_ensemble_products.sh)
 
@@ -1280,6 +1283,33 @@ products, run with:
 OVERWRITE=yes ./scripts/runners/products/run_organize_ocean_downscaling_products.sh
 ```
 
+After `uo` and `vo` are present in the curated tree, derive scalar current
+speed products:
+
+```bash
+DERIVE_SCOPES="baseline future" \
+MODELS="CNRM-ESM2-1 IPSL-CM6A-LR MPI-ESM1-2-HR MPI-ESM1-2-LR UKESM1-0-LL" \
+EXCLUDE_MODELS="cesm_f09_g16 legacy_downscaled_rcp85 ensemble" \
+SCENARIOS="ssp126 ssp245 ssp585" \
+WINDOWS="2030-2060 2050-2060 2090-2100" \
+RESOLUTIONS="0p05" \
+EXCLUDE_NODES="hpc-18.grit.ucsb.edu" \
+OVERWRITE=yes \
+bash scripts/runners/products/run_derive_current_speed_products.sh
+```
+
+Then build the ensemble for the derived scalar itself:
+
+```bash
+VARS="current_speed" \
+RESOLUTIONS="0p05" \
+MODELS="CNRM-ESM2-1 IPSL-CM6A-LR MPI-ESM1-2-HR MPI-ESM1-2-LR UKESM1-0-LL" \
+EXCLUDE_MODELS="cesm_f09_g16 legacy_downscaled_rcp85 ensemble" \
+EXCLUDE_NODES="hpc-18.grit.ucsb.edu" \
+OVERWRITE=yes \
+bash scripts/runners/products/run_build_ocean_downscaling_ensemble_products.sh
+```
+
 Expected output root:
 
 ```text
@@ -1303,6 +1333,8 @@ Expected output root:
 │   ├── uo/
 │   │   └── 0p05/
 │   ├── vo/
+│   │   └── 0p05/
+│   ├── current_speed/
 │   │   └── 0p05/
 │   └── zos/
 │       └── 0p05/
@@ -1328,6 +1360,13 @@ Model-ensemble products are written into the same future grammar:
 
 Notes:
 
+- `current_speed` is a derived scalar velocity product computed from curated
+  `uo` and `vo` with `sqrt(uo^2 + vo^2)`, units `m s-1`, and CF
+  `standard_name=sea_water_speed`
+- derive `current_speed` for baseline and individual future model products
+  before building the `current_speed` ensemble; ensemble spread should be
+  calculated from per-model current-speed products, not from
+  `sqrt(model_sd(uo)^2 + model_sd(vo)^2)`
 - `baseline/` stores curated climatological reference products
 - baseline products are now organized by resolution when available
 - biogeochemistry variables can include both `0p25` and derived `0p05`

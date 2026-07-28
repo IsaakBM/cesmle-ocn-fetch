@@ -86,7 +86,7 @@ OUT_ROOT="${OUT_ROOT:-/home/SB5/ocean_downscaling_products_layers_geotiff}"
 TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_export_geotiff}"
 GEOTIFF_PYTHON="${GEOTIFF_PYTHON:-/home/ibrito/venvs/parquet_export/bin/python}"
 GDAL_TRANSLATE="${GDAL_TRANSLATE:-gdal_translate}"
-SCALE_FACTORS="${SCALE_FACTORS:-thetao=100,TEMP=100,so=100,SALT=100,uo=100,UVEL=100,o2=1000,O2=1000,chl=10000,CHL=10000}"
+SCALE_FACTORS="${SCALE_FACTORS:-thetao=100,TEMP=100,so=100,SALT=100,uo=100,UVEL=100,vo=100,current_speed=100,o2=1000,O2=1000,chl=10000,CHL=10000}"
 DEFAULT_SCALE="${DEFAULT_SCALE:-100}"
 ENCODE_DTYPE="${ENCODE_DTYPE:-auto}"
 COMPRESS="${COMPRESS:-DEFLATE}"
@@ -347,7 +347,7 @@ def axis_spacing(values, name):
 def detect_variable_key(path, main_var):
     tokens = [main_var]
     tokens.extend(re.split(r"[/_.-]+", path))
-    known = ["thetao", "temp", "so", "salt", "uo", "uvel", "o2", "chl"]
+    known = ["thetao", "temp", "so", "salt", "uo", "uvel", "vo", "current_speed", "o2", "chl"]
     for token in tokens:
         low = token.lower()
         if low in known:

@@ -41,6 +41,9 @@ TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_split_bydepth}"
 MIN_DECIMALS="${MIN_DECIMALS:-3}"
 INTEGER_WIDTH="${INTEGER_WIDTH:-4}"
 COPY_2D_FILES="${COPY_2D_FILES:-yes}"
+FUTURE_MODELS="${FUTURE_MODELS:-auto}"
+EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS:-}"
+EXCLUDE_NODES="${EXCLUDE_NODES:-${SBATCH_EXCLUDE:-}}"
 
 GEOTIFF="${GEOTIFF:-no}"
 GEOTIFF_LOWER="${GEOTIFF,,}"
@@ -78,15 +81,24 @@ echo "IN ROOT          : ${IN_ROOT}"
 echo "OUT ROOT         : ${OUT_ROOT}"
 echo "MAX DEPTH M      : ${MAX_DEPTH_M:-<all>}"
 echo "COPY 2D FILES    : ${COPY_2D_FILES}"
+echo "FUTURE MODELS    : ${FUTURE_MODELS}"
+echo "EXCLUDE FUTURE   : ${EXCLUDE_FUTURE_MODELS:-<none>}"
+echo "EXCLUDE NODES    : ${EXCLUDE_NODES:-<none>}"
 echo "GEOTIFF          : ${GEOTIFF}"
 if [[ "${GEOTIFF}" == "yes" ]]; then
   echo "GEOTIFF OUT ROOT : ${GEOTIFF_OUT_ROOT}"
   echo "GEOTIFF OVERWRITE: ${GEOTIFF_OVERWRITE}"
 fi
 
+sbatch_args=()
+if [[ -n "${EXCLUDE_NODES}" ]]; then
+  sbatch_args+=(--exclude="${EXCLUDE_NODES}")
+fi
+
 jid=$(
   sbatch --parsable \
-    --export=ALL,IN_ROOT="${IN_ROOT}",OUT_ROOT="${OUT_ROOT}",TMP_DIR="${TMP_DIR}",MAX_DEPTH_M="${MAX_DEPTH_M}",MIN_DECIMALS="${MIN_DECIMALS}",INTEGER_WIDTH="${INTEGER_WIDTH}",COPY_2D_FILES="${COPY_2D_FILES}" \
+    "${sbatch_args[@]}" \
+    --export=ALL,IN_ROOT="${IN_ROOT}",OUT_ROOT="${OUT_ROOT}",TMP_DIR="${TMP_DIR}",MAX_DEPTH_M="${MAX_DEPTH_M}",MIN_DECIMALS="${MIN_DECIMALS}",INTEGER_WIDTH="${INTEGER_WIDTH}",COPY_2D_FILES="${COPY_2D_FILES}",FUTURE_MODELS="${FUTURE_MODELS}",EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS}" \
     "${TOOL_SCRIPT}"
 )
 
@@ -97,10 +109,11 @@ if [[ "${GEOTIFF}" == "yes" ]]; then
     sbatch --parsable \
       --dependency="afterok:${jid}" \
       --job-name="tif_depths" \
+      "${sbatch_args[@]}" \
       --output="${LOG_DIR}/geotiff_depths_%j.out" \
       --error="${LOG_DIR}/geotiff_depths_%j.err" \
       --cpus-per-task="${GEOTIFF_CPUS_PER_TASK}" \
-      --export=ALL,IN_ROOT="${OUT_ROOT}",OUT_ROOT="${GEOTIFF_OUT_ROOT}",OVERWRITE="${GEOTIFF_OVERWRITE}",NPROC="${GEOTIFF_CPUS_PER_TASK}" \
+      --export=ALL,IN_ROOT="${OUT_ROOT}",OUT_ROOT="${GEOTIFF_OUT_ROOT}",OVERWRITE="${GEOTIFF_OVERWRITE}",NPROC="${GEOTIFF_CPUS_PER_TASK}",FUTURE_MODELS="${FUTURE_MODELS}",EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS}" \
       "${GEOTIFF_TOOL_SCRIPT}"
   )
   echo "  submitted GeoTIFF export as jobid=${geotiff_jid} afterok:${jid}"

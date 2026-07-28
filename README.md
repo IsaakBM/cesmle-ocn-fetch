@@ -1348,6 +1348,11 @@ Notes:
   variable, window, and resolution
 - ensemble products preserve the same grammar with `ensemble` as the model and
   `model_mean` or `model_sd` in the realization/statistic slot
+- downstream depth, layer, pelagic, GeoTIFF, Parquet, and by-depth CSV runners
+  accept `FUTURE_MODELS="<model1> ... ensemble"` and
+  `EXCLUDE_FUTURE_MODELS="<model>"` so derived products can include the CMIP6
+  model branches plus ensemble products while explicitly skipping legacy
+  branches such as `cesm_f09_g16`
 - `model_mean` is computed with CDO `ensmean`; `model_sd` is computed with CDO
   `ensstd1`, the sample standard deviation normalized by `n - 1`
 - `cesm_f09_g16`, `legacy_downscaled_rcp85`, and existing `ensemble` products

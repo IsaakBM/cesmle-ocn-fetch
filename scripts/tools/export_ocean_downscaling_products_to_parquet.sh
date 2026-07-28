@@ -65,6 +65,13 @@ shopt -s nullglob
 #   FILE_INCLUDE_REGEX
 #                    : optional extended regex matched against paths relative
 #                      to IN_ROOT, useful for refreshing a subset of products
+#   FUTURE_MODELS    : auto or space-separated future top-level branches to include
+#                      when IN_ROOT contains baseline/future
+#                      (default: auto)
+#   EXCLUDE_FUTURE_MODELS
+#                    : space-separated future top-level branches to exclude
+#                      when IN_ROOT contains baseline/future
+#                      (default: none)
 # ==============================================================================
 IN_ROOT="${IN_ROOT:-/home/SB5/ocean_downscaling_products_layers}"
 OUT_ROOT="${OUT_ROOT:-/home/SB5/ocean_downscaling_products_layers_parquet}"
@@ -76,6 +83,46 @@ NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-5}}"
 OVERWRITE="${OVERWRITE:-no}"
 FUTURE_UO_UVEL_CM_S_TO_M_S="${FUTURE_UO_UVEL_CM_S_TO_M_S:-yes}"
 FILE_INCLUDE_REGEX="${FILE_INCLUDE_REGEX:-}"
+FUTURE_MODELS="${FUTURE_MODELS:-auto}"
+EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS:-}"
+read -r -a FUTURE_MODEL_LIST <<< "${FUTURE_MODELS}"
+read -r -a EXCLUDE_FUTURE_MODEL_LIST <<< "${EXCLUDE_FUTURE_MODELS}"
+
+contains_word() {
+  local needle="$1"
+  shift
+  local candidate
+
+  for candidate in "$@"; do
+    [[ "${candidate}" == "${needle}" ]] && return 0
+  done
+  return 1
+}
+
+include_relative_path() {
+  local rel_path="$1"
+  local model
+
+  case "${rel_path}" in
+    baseline/*)
+      return 0
+      ;;
+    future/*)
+      model="${rel_path#future/}"
+      model="${model%%/*}"
+      if [[ -n "${EXCLUDE_FUTURE_MODELS}" ]] && contains_word "${model}" "${EXCLUDE_FUTURE_MODEL_LIST[@]}"; then
+        return 1
+      fi
+      if [[ "${FUTURE_MODELS}" != "auto" ]] && ! contains_word "${model}" "${FUTURE_MODEL_LIST[@]}"; then
+        return 1
+      fi
+      return 0
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
 
 if [[ ! -d "${IN_ROOT}" ]]; then
   echo "ERROR: IN_ROOT does not exist: ${IN_ROOT}"
@@ -313,10 +360,17 @@ echo "PARQUET PYTHON  : ${PARQUET_PYTHON}"
 echo "PARQUET ENGINE  : ${PARQUET_ENGINE}"
 echo "PARALLEL FILES  : ${NPROC}"
 echo "OVERWRITE       : ${OVERWRITE}"
+echo "FUTURE MODELS   : ${FUTURE_MODELS}"
+echo "EXCLUDE FUTURE  : ${EXCLUDE_FUTURE_MODELS:-<none>}"
 echo "FILE FILTER     : ${FILE_INCLUDE_REGEX:-<none>}"
 echo "============================================================"
 
-mapfile -t files < <(find "${IN_ROOT}" -type f -name "*.nc" | sort)
+mapfile -t files < <(
+  while IFS= read -r file; do
+    rel_file="${file#${IN_ROOT}/}"
+    include_relative_path "${rel_file}" && printf '%s\n' "${file}"
+  done < <(find "${IN_ROOT}" -type f -name "*.nc" | sort)
+)
 if [[ -n "${FILE_INCLUDE_REGEX}" ]]; then
   filtered_files=()
   for file in "${files[@]}"; do
@@ -351,7 +405,7 @@ except Exception as exc:
     )
 PY
 
-export IN_ROOT OUT_ROOT TMP_DIR DROP_MISSING PARQUET_PYTHON PARQUET_ENGINE OVERWRITE FUTURE_UO_UVEL_CM_S_TO_M_S
+export IN_ROOT OUT_ROOT TMP_DIR DROP_MISSING PARQUET_PYTHON PARQUET_ENGINE OVERWRITE FUTURE_UO_UVEL_CM_S_TO_M_S FUTURE_MODELS EXCLUDE_FUTURE_MODELS
 export -f process_one_file
 
 printf '%s\0' "${files[@]}" \

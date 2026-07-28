@@ -54,6 +54,11 @@ shopt -s nullglob
 #                   yes -> replace existing outputs
 #                   no  -> keep existing outputs
 #                   (default: no)
+#   FUTURE_MODELS : auto or space-separated future top-level branches to include
+#                   (default: auto)
+#   EXCLUDE_FUTURE_MODELS
+#                 : space-separated future top-level branches to exclude
+#                   (default: none)
 # ==============================================================================
 IN_ROOT="${IN_ROOT:-/home/SB5/ocean_downscaling_products}"
 BIN_SET="${BIN_SET:-fine}"
@@ -75,7 +80,47 @@ OUT_ROOT="${OUT_ROOT:-${DEFAULT_OUT_ROOT}}"
 TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_depth_bins}"
 COPY_2D_FILES="${COPY_2D_FILES:-yes}"
 OVERWRITE="${OVERWRITE:-no}"
+FUTURE_MODELS="${FUTURE_MODELS:-auto}"
+EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS:-}"
 NPROC="${SLURM_CPUS_PER_TASK:-5}"
+read -r -a FUTURE_MODEL_LIST <<< "${FUTURE_MODELS}"
+read -r -a EXCLUDE_FUTURE_MODEL_LIST <<< "${EXCLUDE_FUTURE_MODELS}"
+
+contains_word() {
+  local needle="$1"
+  shift
+  local candidate
+
+  for candidate in "$@"; do
+    [[ "${candidate}" == "${needle}" ]] && return 0
+  done
+  return 1
+}
+
+include_relative_path() {
+  local rel_path="$1"
+  local model
+
+  case "${rel_path}" in
+    baseline/*)
+      return 0
+      ;;
+    future/*)
+      model="${rel_path#future/}"
+      model="${model%%/*}"
+      if [[ -n "${EXCLUDE_FUTURE_MODELS}" ]] && contains_word "${model}" "${EXCLUDE_FUTURE_MODEL_LIST[@]}"; then
+        return 1
+      fi
+      if [[ "${FUTURE_MODELS}" != "auto" ]] && ! contains_word "${model}" "${FUTURE_MODEL_LIST[@]}"; then
+        return 1
+      fi
+      return 0
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
 
 if [[ ! -d "${IN_ROOT}" ]]; then
   echo "ERROR: IN_ROOT does not exist: ${IN_ROOT}"
@@ -346,10 +391,17 @@ echo "TMP DIR         : ${TMP_DIR}"
 echo "BIN SET         : ${BIN_SET}"
 echo "COPY 2D FILES   : ${COPY_2D_FILES}"
 echo "OVERWRITE       : ${OVERWRITE}"
+echo "FUTURE MODELS   : ${FUTURE_MODELS}"
+echo "EXCLUDE FUTURE  : ${EXCLUDE_FUTURE_MODELS:-<none>}"
 echo "PARALLEL FILES  : ${NPROC}"
 echo "============================================================"
 
-mapfile -t files < <(find "${IN_ROOT}" -type f -name "*.nc" | sort)
+mapfile -t files < <(
+  while IFS= read -r file; do
+    rel_path="${file#${IN_ROOT}/}"
+    include_relative_path "${rel_path}" && printf '%s\n' "${file}"
+  done < <(find "${IN_ROOT}" -type f -name "*.nc" | sort)
+)
 if (( ${#files[@]} == 0 )); then
   echo "ERROR: No NetCDF files found under: ${IN_ROOT}"
   exit 1

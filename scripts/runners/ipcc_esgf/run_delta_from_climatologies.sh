@@ -61,6 +61,10 @@ read -r -a SCENARIOS <<< "${SCENARIOS:-}"
 read -r -a WINDOWS <<< "${WINDOWS:-}"
 DELTA_MODE="${DELTA_MODE:-additive}"
 DELTA_MODE_SPEC="${DELTA_MODE_SPEC:-chl=log_ratio}"
+LOG_RATIO_FLOOR="${LOG_RATIO_FLOOR:-0}"
+LOG_RATIO_FLOOR_SPEC="${LOG_RATIO_FLOOR_SPEC:-chl=1e-12}"
+LOG_RATIO_INVALID_POLICY="${LOG_RATIO_INVALID_POLICY:-missing}"
+LOG_RATIO_INVALID_POLICY_SPEC="${LOG_RATIO_INVALID_POLICY_SPEC:-chl=no_change}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
 
 contains_filter_value() {
@@ -101,6 +105,24 @@ delta_mode_for_var() {
   done
 
   printf '%s\n' "$DELTA_MODE"
+}
+
+spec_value_for_var() {
+  local var="$1"
+  local default_value="$2"
+  local spec="$3"
+  local item key value
+
+  for item in ${spec}; do
+    key="${item%%=*}"
+    value="${item#*=}"
+    if [[ "$key" == "$var" ]]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+  done
+
+  printf '%s\n' "$default_value"
 }
 
 # ------------------------------------------------------------------------------
@@ -247,6 +269,8 @@ for group in "${FUTURE_GROUPS[@]}"; do
   BASELINE_FILE="${HIST_DIR}/${DATASET_LABEL}_${model}_${HISTORICAL_SCENARIO}_${member}_${v}_clim_${BASELINE_TAG}.nc"
   DELTA_PREFIX="${DATASET_LABEL}_${model}_${scen}_${member}_${v}"
   delta_mode="$(delta_mode_for_var "$v")"
+  log_ratio_floor="$(spec_value_for_var "$v" "$LOG_RATIO_FLOOR" "$LOG_RATIO_FLOOR_SPEC")"
+  log_ratio_invalid_policy="$(spec_value_for_var "$v" "$LOG_RATIO_INVALID_POLICY" "$LOG_RATIO_INVALID_POLICY_SPEC")"
   mapfile -t sbatch_extra_args < <(make_sbatch_extra_args)
 
   if [[ ! -f "$BASELINE_FILE" ]]; then
@@ -271,6 +295,8 @@ for group in "${FUTURE_GROUPS[@]}"; do
         BASELINE_TAG="$BASELINE_TAG" \
         OUT_PREFIX="${DELTA_PREFIX}" \
         DELTA_MODE="$delta_mode" \
+        LOG_RATIO_FLOOR="$log_ratio_floor" \
+        LOG_RATIO_INVALID_POLICY="$log_ratio_invalid_policy" \
         REGRID_DELTA="$regrid_delta" \
         GRIDFILE="$gridfile" \
         METHOD="$method" \
@@ -280,7 +306,7 @@ for group in "${FUTURE_GROUPS[@]}"; do
         "${sbatch_extra_args[@]}" \
         --job-name="delta_${future_tag}_${v}" \
         "$CORE_SCRIPT")
-      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=${future_tag} TARGET=${target_family} DELTA_MODE=${delta_mode} REGRID_DELTA=${regrid_delta} as jobid=${jid}"
+      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=${future_tag} TARGET=${target_family} DELTA_MODE=${delta_mode} LOG_RATIO_FLOOR=${log_ratio_floor} LOG_RATIO_POLICY=${log_ratio_invalid_policy} REGRID_DELTA=${regrid_delta} as jobid=${jid}"
     else
       echo "WARN: Missing ${future_tag} climatology for VAR=${v}: ${future_file}"
     fi

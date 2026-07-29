@@ -914,6 +914,11 @@ Operational sequence for the current IPCC branch:
    - leaves variables without a trusted baseline, currently `zooc`, at
      `/delta_windows/`
    - uses `log_ratio` deltas for `chl`; other variables use additive deltas
+   - guards `chl` log-ratio cells with a tiny positive floor
+     (`LOG_RATIO_FLOOR_SPEC=chl=1e-12`) and defaults finite invalid/floored
+     cells to no change (`LOG_RATIO_INVALID_POLICY_SPEC=chl=no_change`) to
+     avoid extreme `exp(delta)` values from near-zero historical or future
+     chlorophyll cells
    - now targets exact expected climatology filenames instead of picking the
      first wildcard match in the directory
 
@@ -1987,6 +1992,9 @@ assumptions that should be kept in mind when interpreting the outputs.
   `downscaled projection = trusted target baseline + model-derived change field`.
   The current IPCC/ESGF `chl` path uses a log-ratio delta:
   `downscaled projection = trusted target baseline * exp(model-derived log change)`.
+  For `chl`, the log-ratio delta step also applies a tiny positive floor by
+  default and treats finite cells below that floor as no change, preventing
+  localized near-zero denominators from creating unrealistic chlorophyll spikes.
 
 - The central delta-change assumption is that each model's simulated
   climatological change signal is transferable onto the trusted baseline grid,

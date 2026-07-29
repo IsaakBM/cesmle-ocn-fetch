@@ -192,6 +192,18 @@ chl    -> log_ratio
 others -> additive
 ```
 
+The IPCC/ESGF `chl` log-ratio path uses guarded defaults:
+
+```text
+LOG_RATIO_FLOOR_SPEC=chl=1e-12
+LOG_RATIO_INVALID_POLICY_SPEC=chl=no_change
+```
+
+This keeps finite cells with near-zero or invalid chlorophyll inputs from
+becoming extreme multiplicative changes in Step 6. Those cells are treated as
+zero log change, while normal positive cells still use the model-derived
+`log(future) - log(historical)` anomaly.
+
 Expected delta products:
 
 ```text

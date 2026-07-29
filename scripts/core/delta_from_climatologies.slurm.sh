@@ -47,6 +47,11 @@ set -euo pipefail
 #   BASELINE_TAG      : label for the baseline window (default: baseline)
 #   OUT_PREFIX        : output prefix (default: <DATASET_LABEL>_<VAR>)
 #   DELTA_MODE        : additive | log_ratio (default: additive)
+#   LOG_RATIO_FLOOR   : optional positive floor for log_ratio inputs
+#                       (default: 0)
+#   LOG_RATIO_INVALID_POLICY
+#                     : missing | no_change for invalid/floored log_ratio cells
+#                       (default: missing)
 #   REGRID_DELTA      : yes | no (default: no)
 #   GRIDFILE          : target grid file when REGRID_DELTA=yes
 #   METHOD            : CDO remapping method (default: remapbil)
@@ -66,6 +71,8 @@ FUTURE_TAG="${FUTURE_TAG:-future}"
 BASELINE_TAG="${BASELINE_TAG:-baseline}"
 OUT_PREFIX="${OUT_PREFIX:-}"
 DELTA_MODE="${DELTA_MODE:-additive}"
+LOG_RATIO_FLOOR="${LOG_RATIO_FLOOR:-0}"
+LOG_RATIO_INVALID_POLICY="${LOG_RATIO_INVALID_POLICY:-missing}"
 REGRID_DELTA="${REGRID_DELTA:-no}"
 GRIDFILE="${GRIDFILE:-}"
 METHOD="${METHOD:-remapbil}"
@@ -96,6 +103,11 @@ fi
 
 if [[ "$DELTA_MODE" != "additive" && "$DELTA_MODE" != "log_ratio" ]]; then
   echo "ERROR: DELTA_MODE must be one of: additive, log_ratio"
+  exit 1
+fi
+
+if [[ "$LOG_RATIO_INVALID_POLICY" != "missing" && "$LOG_RATIO_INVALID_POLICY" != "no_change" ]]; then
+  echo "ERROR: LOG_RATIO_INVALID_POLICY must be one of: missing, no_change"
   exit 1
 fi
 
@@ -138,6 +150,10 @@ echo "BASELINE TAG    : ${BASELINE_TAG}"
 echo "FUTURE TAG      : ${FUTURE_TAG}"
 echo "OUT PREFIX      : ${OUT_PREFIX}"
 echo "DELTA MODE      : ${DELTA_MODE}"
+if [[ "$DELTA_MODE" == "log_ratio" ]]; then
+  echo "LOG RATIO FLOOR : ${LOG_RATIO_FLOOR}"
+  echo "LOG RATIO POLICY: ${LOG_RATIO_INVALID_POLICY}"
+fi
 echo "REGRID DELTA    : ${REGRID_DELTA}"
 if [[ "$REGRID_DELTA" == "yes" ]]; then
   echo "GRIDFILE        : ${GRIDFILE}"
@@ -166,6 +182,11 @@ future_file = "${FUTURE_FILE}"
 tmp_delta = "${TMP_DELTA}"
 requested_var = "${VAR}"
 delta_mode = "${DELTA_MODE}"
+log_ratio_floor = float("${LOG_RATIO_FLOOR}")
+log_ratio_invalid_policy = "${LOG_RATIO_INVALID_POLICY}"
+
+if log_ratio_floor < 0:
+    raise ValueError(f"LOG_RATIO_FLOOR must be non-negative, got {log_ratio_floor}")
 
 def pick_main_var(ds, requested=None):
     if requested and requested in ds.data_vars:
@@ -198,14 +219,17 @@ with xr.open_dataset(baseline_file) as ds_base, xr.open_dataset(future_file) as 
 
     future_values = np.asarray(da_future.values, dtype=float)
     base_values = np.asarray(da_base.values, dtype=float)
-    valid = (
-        np.isfinite(future_values)
-        & np.isfinite(base_values)
-        & (future_values > 0)
-        & (base_values > 0)
-    )
+    finite = np.isfinite(future_values) & np.isfinite(base_values)
+    positive = (future_values > 0) & (base_values > 0)
+    above_floor = (future_values >= log_ratio_floor) & (base_values >= log_ratio_floor)
+    valid = finite & positive & above_floor
+    no_change = np.zeros(future_values.shape, dtype=bool)
     delta_values = np.full(future_values.shape, np.nan, dtype=float)
     delta_values[valid] = np.log(future_values[valid]) - np.log(base_values[valid])
+    if log_ratio_invalid_policy == "no_change":
+        no_change = finite & ~valid
+        delta_values[no_change] = 0.0
+    missing = ~np.isfinite(delta_values)
     da_delta = xr.DataArray(
         delta_values,
         coords=da_future.coords,
@@ -216,11 +240,23 @@ with xr.open_dataset(baseline_file) as ds_base, xr.open_dataset(future_file) as 
     da_delta.attrs.update({
         "delta_mode": delta_mode,
         "delta_formula": "log(future) - log(baseline)",
-        "invalid_log_ratio_policy": "missing where future <= 0, baseline <= 0, or either input is missing",
+        "log_ratio_floor": log_ratio_floor,
+        "invalid_log_ratio_policy": log_ratio_invalid_policy,
+        "log_ratio_policy_note": (
+            "missing leaves invalid/floored cells as missing; no_change sets "
+            "finite invalid/floored cells to zero log change"
+        ),
+        "log_ratio_valid_cells": int(valid.sum()),
+        "log_ratio_no_change_cells": int(no_change.sum()),
+        "log_ratio_missing_cells": int(missing.sum()),
         "units": "1",
     })
-    print(f"LOG RATIO VALID CELLS : {int(valid.sum())}")
-    print(f"LOG RATIO MASKED CELLS: {int(valid.size - valid.sum())}")
+    print(f"LOG RATIO FLOOR          : {log_ratio_floor}")
+    print(f"LOG RATIO POLICY         : {log_ratio_invalid_policy}")
+    print(f"LOG RATIO FINITE CELLS   : {int(finite.sum())}")
+    print(f"LOG RATIO VALID CELLS    : {int(valid.sum())}")
+    print(f"LOG RATIO NO-CHANGE CELLS: {int(no_change.sum())}")
+    print(f"LOG RATIO MISSING CELLS  : {int(missing.sum())}")
 
     ds_out = ds_future.copy(deep=True)
     ds_out[future_var] = da_delta

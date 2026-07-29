@@ -38,7 +38,7 @@ VAR_MAP_SPEC="${VAR_MAP_SPEC:-chl:chl o2:o2}"
 read -r -a VAR_MAP <<< "${VAR_MAP_SPEC}"
 
 WINDOWS_DEFAULT=(
-  2030-2060
+  2030-2040
   2050-2060
   2090-2100
 )

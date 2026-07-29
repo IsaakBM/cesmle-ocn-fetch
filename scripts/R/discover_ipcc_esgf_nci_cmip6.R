@@ -72,9 +72,9 @@ replica <- env_value("REPLICA", "")
 
 windows <- data.frame(
   experiment_group = c("historical", "future", "future", "future"),
-  window = c("2006-2014", "2030-2060", "2050-2060", "2090-2100"),
+  window = c("2006-2014", "2030-2040", "2050-2060", "2090-2100"),
   start = as.Date(c("2006-01-01", "2030-01-01", "2050-01-01", "2090-01-01")),
-  end = as.Date(c("2014-12-31", "2060-12-31", "2060-12-31", "2100-12-31"))
+  end = as.Date(c("2014-12-31", "2040-12-31", "2060-12-31", "2100-12-31"))
 )
 
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)

@@ -29,7 +29,7 @@ MODEL  : CNRM-ESM2-1
 MEMBER : auto
 SCENARIOS : historical, ssp126, ssp245, ssp585
 VARIABLES : thetao so uo vo zos mlotst siconc chl o2 ph zooc
-WINDOWS   : baseline, 2030-2060, 2050-2060, 2090-2100
+WINDOWS   : baseline, 2030-2040, 2050-2060, 2090-2100
 ```
 
 # Product Logic
@@ -74,8 +74,8 @@ export SCENARIOS_FUTURE="ssp126 ssp245 ssp585"
 export VARS="thetao so uo vo zos mlotst siconc chl o2 ph zooc"
 export VARS_3D="thetao so uo vo chl o2 ph zooc"
 
-export WINDOWS_ALL="baseline 2030-2060 2050-2060 2090-2100"
-export WINDOWS_FUTURE="2030-2060 2050-2060 2090-2100"
+export WINDOWS_ALL="baseline 2030-2040 2050-2060 2090-2100"
+export WINDOWS_FUTURE="2030-2040 2050-2060 2090-2100"
 
 export GLORYS_ROOT="/home/SB5/reanalysis/glorys12v1/monthly_0p05"
 export HINDCAST_ROOT="/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast"
@@ -172,9 +172,9 @@ Expected window logic:
 
 ```text
 historical -> baseline, meaning 2006-2014
-ssp126     -> 2030-2060, 2050-2060, 2090-2100
-ssp245     -> 2030-2060, 2050-2060, 2090-2100
-ssp585     -> 2030-2060, 2050-2060, 2090-2100
+ssp126     -> 2030-2040, 2050-2060, 2090-2100
+ssp245     -> 2030-2040, 2050-2060, 2090-2100
+ssp585     -> 2030-2040, 2050-2060, 2090-2100
 ```
 
 # Step 5: Future-Minus-Historical Deltas
@@ -311,7 +311,7 @@ MODELS="CNRM-ESM2-1 IPSL-CM6A-LR MPI-ESM1-2-HR MPI-ESM1-2-LR UKESM1-0-LL" \
 REALIZATION="auto" \
 SCENARIO="auto" \
 VARS="thetao so uo vo zos mlotst siconc chl o2 ph" \
-WINDOWS="2030-2060 2050-2060 2090-2100" \
+WINDOWS="2030-2040 2050-2060 2090-2100" \
 OVERWRITE=yes \
 bash scripts/runners/products/run_organize_ocean_downscaling_products.sh
 ```
@@ -325,7 +325,7 @@ DERIVE_SCOPES="baseline future" \
 MODELS="CNRM-ESM2-1 IPSL-CM6A-LR MPI-ESM1-2-HR MPI-ESM1-2-LR UKESM1-0-LL" \
 EXCLUDE_MODELS="cesm_f09_g16 legacy_downscaled_rcp85 ensemble" \
 SCENARIOS="ssp126 ssp245 ssp585" \
-WINDOWS="2030-2060 2050-2060 2090-2100" \
+WINDOWS="2030-2040 2050-2060 2090-2100" \
 RESOLUTIONS="0p05" \
 EXCLUDE_NODES="hpc-18.grit.ucsb.edu" \
 OVERWRITE=yes \
@@ -363,7 +363,7 @@ FUTURE_MODELS="CNRM-ESM2-1 IPSL-CM6A-LR MPI-ESM1-2-HR MPI-ESM1-2-LR UKESM1-0-LL 
 EXCLUDE_FUTURE_MODELS="cesm_f09_g16 legacy_downscaled_rcp85" \
 SCENARIOS="ssp126 ssp245 ssp585" \
 VARS="thetao so uo vo current_speed zos mlotst siconc chl o2 ph" \
-WINDOWS="2030-2060 2050-2060 2090-2100" \
+WINDOWS="2030-2040 2050-2060 2090-2100" \
 RESOLUTIONS="0p05" \
 COMPUTE_STATS=no \
 FAIL_ON_ISSUE=no \

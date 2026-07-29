@@ -52,7 +52,7 @@ COASTAL_FILLED_BASELINE_VARS="${COASTAL_FILLED_BASELINE_VARS:-chl o2}"
 ORGANIZE_SCOPES="${ORGANIZE_SCOPES:-baseline future}"
 VARS="${VARS:-thetao so ph o2 chl uo vo zooc zos mlotst siconc}"
 BASELINE_VARS="${BASELINE_VARS:-chl o2 ph thetao so uo vo zos mlotst siconc}"
-WINDOWS="${WINDOWS:-2030-2060 2050-2060 2090-2100}"
+WINDOWS="${WINDOWS:-2030-2040 2050-2060 2090-2100}"
 
 mkdir -p "${LOG_DIR}"
 

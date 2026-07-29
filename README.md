@@ -80,7 +80,7 @@ The current scientific branches are:
 The current CMIP6/IPCC expansion targets five first-member model branches:
 `CNRM-ESM2-1`, `IPSL-CM6A-LR`, `MPI-ESM1-2-HR`, `MPI-ESM1-2-LR`, and
 `UKESM1-0-LL`. It covers `historical`, `ssp126`, `ssp245`, and `ssp585`,
-with a `2006-2014` historical baseline and future windows `2030-2060`,
+with a `2006-2014` historical baseline and future windows `2030-2040`,
 `2050-2060`, and `2090-2100`. The 3D stack is `thetao`, `so`, `ph`, `o2`,
 `chl`, `uo`, `vo`, and `zooc`; 2D diagnostic or sea-ice layers are `zos`,
 `mlotst`, and `siconc`. The anomaly-add target is split by trusted baseline:
@@ -845,7 +845,7 @@ The current CMIP6/IPCC search target is:
 - historical window:
   `2006-2014`
 - future windows:
-  `2030-2060`, `2050-2060`, and `2090-2100`
+  `2030-2040`, `2050-2060`, and `2090-2100`
 
 Variables are split by processing dimension:
 
@@ -901,7 +901,7 @@ Operational sequence for the current IPCC branch:
    - reads `/parts/` for 2D variables
    - writes `/clim_windows/`
    - historical baseline window: `2006-2014`
-   - future windows: `2030-2060`, `2050-2060`, and `2090-2100`
+   - future windows: `2030-2040`, `2050-2060`, and `2090-2100`
 
 4. run [run_delta_from_climatologies.sh](scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh)
    - computes a change field from each discovered future climatology relative
@@ -1003,11 +1003,11 @@ Downscaled outputs are organized as:
         └── <scenario>/
             └── <var>/
                 ├── 0p25/
-                │   ├── 2030-2060/
+                │   ├── 2030-2040/
                 │   ├── 2050-2060/
                 │   └── 2090-2100/
                 └── 0p05/
-                    ├── 2030-2060/
+                    ├── 2030-2040/
                     ├── 2050-2060/
                     └── 2090-2100/
 ```
@@ -1265,7 +1265,7 @@ the GLORYS-coast biogeochemistry products:
 ORGANIZE_SCOPES="baseline future" \
 BASELINE_VARS="chl o2 ph" \
 VARS="chl o2 ph" \
-WINDOWS="2030-2060 2050-2060 2090-2100" \
+WINDOWS="2030-2040 2050-2060 2090-2100" \
 MODEL=CNRM-ESM2-1 \
 REALIZATION=r1i1p1f2 \
 SCENARIO=ssp585 \
@@ -1298,7 +1298,7 @@ DERIVE_SCOPES="baseline future" \
 MODELS="CNRM-ESM2-1 IPSL-CM6A-LR MPI-ESM1-2-HR MPI-ESM1-2-LR UKESM1-0-LL" \
 EXCLUDE_MODELS="cesm_f09_g16 legacy_downscaled_rcp85 ensemble" \
 SCENARIOS="ssp126 ssp245 ssp585" \
-WINDOWS="2030-2060 2050-2060 2090-2100" \
+WINDOWS="2030-2040 2050-2060 2090-2100" \
 RESOLUTIONS="0p05" \
 EXCLUDE_NODES="hpc-18.grit.ucsb.edu" \
 OVERWRITE=yes \
@@ -1905,7 +1905,7 @@ Examples:
   `global_ocean_biogeochemistry_hindcast_chl_clim_2006-2014.nc`
 - time-series climatology:
   `ipcc_esgf_CNRM-ESM2-1_historical_r1i1p1f2_chl_clim_2006-2014.nc`
-  `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_chl_clim_2030-2060.nc`
+  `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_chl_clim_2030-2040.nc`
   `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_chl_clim_2050-2060.nc`
   `ipcc_esgf_CNRM-ESM2-1_ssp585_r1i1p1f2_chl_clim_2090-2100.nc`
 
@@ -1929,7 +1929,7 @@ Examples:
 - current final downscaled path:
   `/home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2/ssp585/chl/0p05/2050-2060/`
 - additional current future windows include:
-  `/home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2/ssp585/chl/0p05/2030-2060/`
+  `/home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2/ssp585/chl/0p05/2030-2040/`
   and `/home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2/ssp585/chl/0p05/2090-2100/`
 - current CESM final downscaled path:
   `/home/SB5/downscaled/cesm_f09_g16/001/rcp85/thetao/0p05/2050-2060/`

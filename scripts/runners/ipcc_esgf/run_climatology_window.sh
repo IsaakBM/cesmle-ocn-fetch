@@ -96,7 +96,7 @@ HIST_WINDOW_END="2014-12-31"
 
 # Future scenario windows
 FUT2030_WINDOW_START="2030-01-01"
-FUT2030_WINDOW_END="2060-12-31"
+FUT2030_WINDOW_END="2040-12-31"
 FUT2050_WINDOW_START="2050-01-01"
 FUT2050_WINDOW_END="2060-12-31"
 FUT2090_WINDOW_START="2090-01-01"
@@ -180,7 +180,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
       echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=baseline as jobid=${jid}"
     fi
   else
-    if contains_filter_value "2030-2060" "${WINDOWS[@]}"; then
+    if contains_filter_value "2030-2040" "${WINDOWS[@]}"; then
       jid2030=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
         VAR="$v" \
         IN_DIR="$IN_DIR" \
@@ -195,7 +195,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         "${sbatch_extra_args[@]}" \
         --job-name="clim2030_${v}" \
         "$CORE_SCRIPT")
-      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2030-2060 as jobid=${jid2030}"
+      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2030-2040 as jobid=${jid2030}"
     fi
 
     if contains_filter_value "2050-2060" "${WINDOWS[@]}"; then

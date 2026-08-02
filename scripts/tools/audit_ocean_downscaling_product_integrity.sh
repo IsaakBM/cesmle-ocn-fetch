@@ -72,6 +72,13 @@ def contains_token(filename, token):
     parts = re.split(r"[/_.-]+", filename)
     return token in parts or token in filename
 
+def token_text_for_record(path, filename, record, label):
+    scopes = record.get("token_search_scope", {})
+    scope = scopes.get(label, "filename")
+    if scope == "path":
+        return str(path)
+    return filename
+
 def pick_main_var(ds, expected):
     if expected in ds.data_vars:
         return expected
@@ -175,10 +182,11 @@ def audit_one(path, record):
                 ("window", expected_window),
                 ("resolution", expected_resolution),
             ):
-                if token and not contains_token(filename, token):
+                token_text = token_text_for_record(path, filename, record, label)
+                if token and not contains_token(token_text, token):
                     if status == "ok":
                         status = "filename_mismatch"
-                    notes.append(f"filename does not contain {label} token {token!r}")
+                    notes.append(f"{record.get('token_search_scope', {}).get(label, 'filename')} does not contain {label} token {token!r}")
 
             ncells = min_value = max_value = mean_value = ""
             if compute_stats and main_var:
@@ -196,7 +204,7 @@ def audit_one(path, record):
         status = "read_error"
         notes = [str(exc)]
 
-    row = dict(record)
+    row = {k: v for k, v in record.items() if k != "token_search_scope"}
     row.update({
         "file": str(path),
         "filename": filename,
@@ -239,6 +247,7 @@ if include_baseline:
                 "var": var,
                 "window": "2006-2014",
                 "resolution": resolution,
+                "token_search_scope": {"resolution": "path"},
             }))
 
 if include_future:

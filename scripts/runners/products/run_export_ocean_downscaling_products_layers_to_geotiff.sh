@@ -97,6 +97,7 @@ for subtree in "${SUBTREES[@]}"; do
   rel_path="${subtree#${SOURCE_ROOT}/}"
   out_subtree="${TARGET_ROOT}/${rel_path}"
   job_tag="$(echo "${rel_path}" | tr '/' '_' | tr -cd '[:alnum:]_')"
+  tmp_subtree="${TARGET_ROOT}/tmp_export_geotiff/${job_tag}"
   sbatch_args=()
   if [[ -n "${EXCLUDE_NODES}" ]]; then
     sbatch_args+=(--exclude="${EXCLUDE_NODES}")
@@ -108,7 +109,7 @@ for subtree in "${SUBTREES[@]}"; do
       --output="${LOG_DIR}/geotiff_layers_${job_tag}_%j.out" \
       --error="${LOG_DIR}/geotiff_layers_${job_tag}_%j.err" \
       --cpus-per-task=5 \
-      --export=ALL,IN_ROOT="${subtree}",OUT_ROOT="${out_subtree}",OVERWRITE="${OVERWRITE}",NPROC=5,FUTURE_MODELS="${FUTURE_MODELS}",EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS}" \
+      --export=ALL,IN_ROOT="${subtree}",OUT_ROOT="${out_subtree}",TMP_DIR="${tmp_subtree}",OVERWRITE="${OVERWRITE}",NPROC=5,FUTURE_MODELS="${FUTURE_MODELS}",EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS}" \
       "${TOOL_SCRIPT}"
   )
   echo "  submitted SUBTREE=${rel_path} as jobid=${jid}"

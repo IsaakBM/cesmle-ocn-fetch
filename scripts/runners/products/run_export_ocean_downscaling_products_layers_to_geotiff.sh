@@ -17,6 +17,7 @@ OVERWRITE="${OVERWRITE:-no}"
 FUTURE_MODELS="${FUTURE_MODELS:-auto}"
 EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS:-}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-${SBATCH_EXCLUDE:-}}"
+SPLIT_ENSEMBLE_STATS="${SPLIT_ENSEMBLE_STATS:-yes}"
 read -r -a FUTURE_MODEL_LIST <<< "${FUTURE_MODELS}"
 read -r -a EXCLUDE_FUTURE_MODEL_LIST <<< "${EXCLUDE_FUTURE_MODELS}"
 
@@ -86,6 +87,31 @@ if (( ${#SUBTREES[@]} == 0 )); then
   exit 1
 fi
 
+if [[ "${SPLIT_ENSEMBLE_STATS}" == "yes" ]]; then
+  expanded_subtrees=()
+  for subtree in "${SUBTREES[@]}"; do
+    rel_path="${subtree#${SOURCE_ROOT}/}"
+    if [[ "${rel_path}" == "future/ensemble" ]]; then
+      mapfile -t ensemble_stat_subtrees < <(
+        find "${subtree}" \
+          -mindepth 1 \
+          -maxdepth 1 \
+          -type d \
+          ! -name 'tmp*' \
+          2>/dev/null | sort
+      )
+      if (( ${#ensemble_stat_subtrees[@]} > 0 )); then
+        expanded_subtrees+=("${ensemble_stat_subtrees[@]}")
+      else
+        expanded_subtrees+=("${subtree}")
+      fi
+    else
+      expanded_subtrees+=("${subtree}")
+    fi
+  done
+  SUBTREES=("${expanded_subtrees[@]}")
+fi
+
 echo "Submitting curated ocean product layer GeoTIFF export jobs by subtree:"
 echo "SOURCE ROOT: ${SOURCE_ROOT}"
 echo "TARGET ROOT: ${TARGET_ROOT}"
@@ -93,6 +119,7 @@ echo "OVERWRITE  : ${OVERWRITE}"
 echo "FUTURE MODELS : ${FUTURE_MODELS}"
 echo "EXCLUDE FUTURE: ${EXCLUDE_FUTURE_MODELS:-<none>}"
 echo "EXCLUDE NODES : ${EXCLUDE_NODES:-<none>}"
+echo "SPLIT ENSEMBLE STATS: ${SPLIT_ENSEMBLE_STATS}"
 for subtree in "${SUBTREES[@]}"; do
   rel_path="${subtree#${SOURCE_ROOT}/}"
   out_subtree="${TARGET_ROOT}/${rel_path}"

@@ -293,7 +293,7 @@ preferred_xy = [
     ("x", "y"),
 ]
 
-ignored_vars = {"time_bnds", "lat_bnds", "lon_bnds", "depth_bnds"}
+ignored_vars = {"time_bnds", "climatology_bnds", "lat_bnds", "lon_bnds", "depth_bnds"}
 nodata_by_dtype = {"int16": -32768, "int32": -2147483648}
 limits_by_dtype = {
     "int16": (-32767, 32767),
@@ -634,6 +634,16 @@ with xr.open_dataset(infile) as ds:
         writer.writeheader()
         writer.writerow(row)
 PY
+
+  if [[ ! -f "${outfile}" ]]; then
+    echo "ERROR: GeoTIFF output was not created: ${outfile}"
+    return 1
+  fi
+
+  if [[ ! -f "${manifest_part}" ]]; then
+    echo "ERROR: GeoTIFF manifest part was not created: ${manifest_part}"
+    return 1
+  fi
 
   if [[ -f "${outfile}" && "${OVERWRITE}" == "no" ]]; then
     echo "[DONE ] manifest refreshed for existing ${outfile}"

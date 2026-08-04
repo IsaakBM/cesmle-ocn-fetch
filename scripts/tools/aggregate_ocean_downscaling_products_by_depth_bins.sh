@@ -170,6 +170,10 @@ overwrite = overwrite_flag == "yes"
 preferred_zdims = ["depth", "depth_below_sea", "lev", "z_t"]
 ignored_vars = {"time_bnds", "lat_bnds", "lon_bnds", "depth_bnds", "lev_bnds", "z_t_bnds"}
 
+def is_ignored_var(name: str) -> bool:
+    lower = name.lower()
+    return name in ignored_vars or "bnds" in lower or "bounds" in lower
+
 bin_definitions = {
     "fine": [
         ("layer", "0000_0025m", "0-25 m", 0.0, 25.0),
@@ -208,14 +212,32 @@ def choose_zdim(ds: xr.Dataset):
 
 def choose_main_var(ds: xr.Dataset, zdim: str):
     for name in ds.data_vars:
-        if name in ignored_vars:
+        if is_ignored_var(name):
             continue
         if zdim in ds[name].dims:
             return name
     for name in ds.data_vars:
-        if name not in ignored_vars:
+        if not is_ignored_var(name):
             return name
     return None
+
+def preserve_referenced_auxiliary_vars(out: xr.Dataset, ds: xr.Dataset, zdim: str):
+    for coord_name in list(out.coords):
+        coord = out[coord_name]
+        for attr_name in ["bounds", "climatology"]:
+            ref_name = coord.attrs.get(attr_name)
+            if not ref_name:
+                continue
+            if ref_name in out:
+                continue
+            if ref_name in ds and zdim not in ds[ref_name].dims:
+                for dim_name in ds[ref_name].dims:
+                    if dim_name in ds.coords and dim_name not in out.coords:
+                        out = out.assign_coords({dim_name: ds[dim_name]})
+                out[ref_name] = ds[ref_name]
+            else:
+                coord.attrs.pop(attr_name, None)
+    return out
 
 def detect_bounds(ds: xr.Dataset, zdim: str):
     coord = ds[zdim]
@@ -375,6 +397,7 @@ with xr.open_dataset(infile) as ds:
                 f"{cell_methods} {z_method}".strip() if cell_methods else z_method
             )
 
+        out = preserve_referenced_auxiliary_vars(out, ds, zdim)
         out.to_netcdf(outfile)
         print(
             f"[DONE ] {outfile} "

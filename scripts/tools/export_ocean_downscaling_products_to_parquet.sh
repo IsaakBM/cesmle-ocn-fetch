@@ -246,6 +246,14 @@ def depth_from_filename(path: str):
         return None
     return float(f"{int(match.group(1))}.{match.group(2)}")
 
+def depthless_label(var_name: str):
+    labels = {
+        "mlotst": "mixed_layer",
+        "siconc": "surface",
+        "zos": "surface",
+    }
+    return labels.get(var_name)
+
 def should_convert_future_uo_uvel_to_m_s(path: str):
     if future_uo_uvel_cm_s_to_m_s != "yes":
         return False
@@ -333,6 +341,8 @@ with xr.open_dataset(infile) as ds:
         depth_value = scalar_depth_from_dataset(ds)
     if depth_value is None:
         depth_value = depth_from_filename(base)
+    if depth_value is None:
+        depth_value = depthless_label(main_var)
     if depth_value is None:
         raise SystemExit(f"Could not derive depth label from filename or metadata in {infile}")
 

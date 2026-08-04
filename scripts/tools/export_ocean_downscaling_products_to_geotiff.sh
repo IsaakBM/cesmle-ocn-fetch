@@ -294,6 +294,10 @@ preferred_xy = [
 ]
 
 ignored_vars = {"time_bnds", "climatology_bnds", "lat_bnds", "lon_bnds", "depth_bnds"}
+
+def is_ignored_var(name: str) -> bool:
+    lower = name.lower()
+    return name in ignored_vars or "bnds" in lower or "bounds" in lower
 nodata_by_dtype = {"int16": -32768, "int32": -2147483648}
 limits_by_dtype = {
     "int16": (-32767, 32767),
@@ -319,7 +323,7 @@ def parse_scale_factors(text):
     return values
 
 def choose_main_var(ds):
-    data_vars = [v for v in ds.data_vars if v not in ignored_vars]
+    data_vars = [v for v in ds.data_vars if not is_ignored_var(v)]
     if not data_vars:
         raise SystemExit(f"No usable data variable found in {infile}")
     for candidate in data_vars:

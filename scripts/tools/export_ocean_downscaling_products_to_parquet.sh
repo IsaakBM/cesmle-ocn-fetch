@@ -215,6 +215,10 @@ preferred_xy = [
 
 ignored_vars = {"time_bnds", "climatology_bnds", "lat_bnds", "lon_bnds", "depth_bnds"}
 
+def is_ignored_var(name: str) -> bool:
+    lower = name.lower()
+    return name in ignored_vars or "bnds" in lower or "bounds" in lower
+
 def sanitize_units(units: str) -> str:
     text = (units or "").strip()
     if not text:
@@ -259,7 +263,7 @@ def should_convert_future_uo_uvel_to_m_s(path: str):
     return "uvel" in lower_path
 
 with xr.open_dataset(infile) as ds:
-    data_vars = [v for v in ds.data_vars if v not in ignored_vars]
+    data_vars = [v for v in ds.data_vars if not is_ignored_var(v)]
     if not data_vars:
         raise SystemExit(f"No usable data variable found in {infile}")
 

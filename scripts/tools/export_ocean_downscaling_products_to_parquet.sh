@@ -213,7 +213,7 @@ preferred_xy = [
     ("x", "y"),
 ]
 
-ignored_vars = {"time_bnds", "lat_bnds", "lon_bnds", "depth_bnds"}
+ignored_vars = {"time_bnds", "climatology_bnds", "lat_bnds", "lon_bnds", "depth_bnds"}
 
 def sanitize_units(units: str) -> str:
     text = (units or "").strip()
@@ -346,6 +346,11 @@ with xr.open_dataset(infile) as ds:
 
     df.to_parquet(outfile, index=False, engine=parquet_engine)
 PY
+
+  if [[ ! -f "${outfile}" ]]; then
+    echo "ERROR: Parquet export did not create expected output: ${outfile}" >&2
+    return 1
+  fi
 
   echo "[DONE ] ${outfile}"
 }

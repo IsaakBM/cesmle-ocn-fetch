@@ -11,12 +11,10 @@
 #
 #  Purpose:
 #    - Copy a small Shiny-viewer-ready sample product tree from curated
-#      layer, pelagic, and individual-depth product outputs
+#      layer and individual-depth product outputs by default
 #    - Preserve the viewer product layout:
 #        layers/baseline/<variable>/<resolution>/*
 #        layers/future/<model>/<realization_or_statistic>/<scenario>/<variable>/<window>/<resolution>/*
-#        pelagic/baseline/<variable>/<resolution>/*
-#        pelagic/future/<model>/<realization_or_statistic>/<scenario>/<variable>/<window>/<resolution>/*
 #        depths/baseline/<variable>/<resolution>/*
 #        depths/future/<model>/<realization_or_statistic>/<scenario>/<variable>/<window>/<resolution>/*
 #    - Restrict sample staging to one resolution, usually 0p05
@@ -40,8 +38,11 @@ shopt -s nullglob
 #                         (default: /home/SB5/ocean_downscaling_products_pelagic_geotiff)
 #   DEPTHS_SOURCE_ROOT  : individual-depth product source root
 #                         (default: /home/SB5/ocean_downscaling_products_depths_geotiff)
-#   STAGE_ROOT          : output root that will contain layers/, pelagic/, and depths/
+#   STAGE_ROOT          : output root that will contain selected product branches
 #                         (default: /home/SB5/ocean_downscaling_sample_products_geotiff)
+#   PRODUCT_FAMILIES    : space-separated product families to stage
+#                         supported: layers pelagic depths
+#                         (default: layers depths)
 #   RESOLUTION          : resolution directory to copy
 #                         (default: 0p05)
 #   MEMBER              : retained for compatibility with older runners
@@ -64,12 +65,13 @@ shopt -s nullglob
 #                         (default: yes)
 #   CLEAN_STAGE_ROOT    : yes | no
 #                         yes -> remove existing staged layers/, pelagic/,
-#                                depths/, and manifests/ before copying
+#                                depths/, and manifests/ before copying; this
+#                                also removes retired staged pelagic outputs
 #                         no  -> leave unrelated existing staged files in place
 #                         (default: no)
 #   STAGE_DEPTHS        : yes | no
-#                         yes -> include individual-depth GeoTIFF products
-#                         no  -> stage only layers and pelagic products
+#                         retained for compatibility; PRODUCT_FAMILIES controls
+#                         preferred product-family selection
 #                         (default: yes)
 #   EXCLUDE_FUTURE_MODELS
 #                       : space-separated model branches to skip
@@ -84,6 +86,7 @@ PELAGIC_SOURCE_ROOT="${PELAGIC_SOURCE_ROOT:-/home/SB5/ocean_downscaling_products
 DEPTHS_SOURCE_ROOT="${DEPTHS_SOURCE_ROOT:-/home/SB5/ocean_downscaling_products_depths_geotiff}"
 STAGE_ROOT="${STAGE_ROOT:-/home/SB5/ocean_downscaling_sample_products_geotiff}"
 RESOLUTION="${RESOLUTION:-0p05}"
+PRODUCT_FAMILIES="${PRODUCT_FAMILIES:-layers depths}"
 MEMBER="${MEMBER:-001}"
 PHYSICAL_VARS="${PHYSICAL_VARS:-thetao so uo}"
 EXTENSIONS="${EXTENSIONS:-tif tiff}"
@@ -150,6 +153,23 @@ contains_word() {
 
 read -r -a EXCLUDE_FUTURE_MODEL_LIST <<< "${EXCLUDE_FUTURE_MODELS}"
 read -r -a EXCLUDE_FUTURE_SCENARIO_LIST <<< "${EXCLUDE_FUTURE_SCENARIOS}"
+read -r -a PRODUCT_FAMILY_LIST <<< "${PRODUCT_FAMILIES}"
+
+for product_family in "${PRODUCT_FAMILY_LIST[@]}"; do
+  case "${product_family}" in
+    layers|pelagic|depths) ;;
+    *)
+      echo "ERROR: Unsupported PRODUCT_FAMILIES entry: ${product_family}"
+      echo "Supported product families: layers pelagic depths"
+      exit 1
+      ;;
+  esac
+done
+
+include_product_family() {
+  local product_family="$1"
+  contains_word "${product_family}" "${PRODUCT_FAMILY_LIST[@]}"
+}
 
 keep_future_product() {
   local model="$1"
@@ -327,6 +347,7 @@ stage_manifests() {
     "${DEPTHS_SOURCE_ROOT}" \
     "${STAGE_ROOT}" \
     "${RESOLUTION}" \
+    "${PRODUCT_FAMILIES}" \
     "${MEMBER}" \
     "${PHYSICAL_VARS}" \
     "${DRY_RUN}" \
@@ -348,15 +369,17 @@ except ImportError:
     depths_source_root,
     stage_root,
     resolution,
+    product_families_text,
     _member,
     _physical_vars_text,
     dry_run,
     stage_depths,
     exclude_future_models_text,
     exclude_future_scenarios_text,
-) = sys.argv[1:12]
+) = sys.argv[1:13]
 
 selected_realizations = {}
+product_families = product_families_text.split()
 exclude_future_models = set(exclude_future_models_text.split())
 exclude_future_scenarios = set(exclude_future_scenarios_text.split())
 
@@ -575,9 +598,11 @@ by_product = {}
 product_roots = [
     ("layers", layers_source_root),
     ("pelagic", pelagic_source_root),
+    ("depths", depths_source_root),
 ]
-if stage_depths == "yes":
-    product_roots.append(("depths", depths_source_root))
+if stage_depths != "yes":
+    product_roots = [(name, root) for name, root in product_roots if name != "depths"]
+product_roots = [(name, root) for name, root in product_roots if name in product_families]
 
 for product_type, source_root in product_roots:
     rows = []
@@ -596,10 +621,10 @@ for product_type, source_root in product_roots:
     by_product[product_type] = rows
     all_rows.extend(rows)
 
-write_manifest("layers_geotiff_manifest.csv", by_product.get("layers", []))
-write_manifest("pelagic_geotiff_manifest.csv", by_product.get("pelagic", []))
-if stage_depths == "yes":
-    write_manifest("depths_geotiff_manifest.csv", by_product.get("depths", []))
+for product_type in product_families:
+    if product_type == "depths" and stage_depths != "yes":
+        continue
+    write_manifest(f"{product_type}_geotiff_manifest.csv", by_product.get(product_type, []))
 write_manifest("geotiff_manifest.csv", all_rows)
 PY
 }
@@ -611,6 +636,7 @@ echo "PELAGIC SOURCE : ${PELAGIC_SOURCE_ROOT}"
 echo "DEPTHS SOURCE  : ${DEPTHS_SOURCE_ROOT}"
 echo "STAGE ROOT     : ${STAGE_ROOT}"
 echo "RESOLUTION     : ${RESOLUTION}"
+echo "PRODUCT FAMILY : ${PRODUCT_FAMILIES}"
 echo "FUTURE LAYOUT  : future/<model>/<realization_or_statistic>/<scenario>/<variable>/<window>/<resolution>"
 echo "REALIZATION    : first sorted per non-ensemble model/scenario/variable/window"
 echo "EXCLUDE MODELS : ${EXCLUDE_FUTURE_MODELS}"
@@ -633,17 +659,26 @@ if [[ "${DRY_RUN}" == "no" ]]; then
       "${STAGE_ROOT}/manifests"
   fi
 
-  mkdir -p "${STAGE_ROOT}/layers" "${STAGE_ROOT}/pelagic"
-  if [[ "${STAGE_DEPTHS}" == "yes" ]]; then
+  if include_product_family "layers"; then
+    mkdir -p "${STAGE_ROOT}/layers"
+  fi
+  if include_product_family "pelagic"; then
+    mkdir -p "${STAGE_ROOT}/pelagic"
+  fi
+  if include_product_family "depths" && [[ "${STAGE_DEPTHS}" == "yes" ]]; then
     mkdir -p "${STAGE_ROOT}/depths"
   fi
 fi
 
 COPIED_COUNT=0
 SKIPPED_COUNT=0
-stage_product_type "layers" "${LAYERS_SOURCE_ROOT}"
-stage_product_type "pelagic" "${PELAGIC_SOURCE_ROOT}"
-if [[ "${STAGE_DEPTHS}" == "yes" ]]; then
+if include_product_family "layers"; then
+  stage_product_type "layers" "${LAYERS_SOURCE_ROOT}"
+fi
+if include_product_family "pelagic"; then
+  stage_product_type "pelagic" "${PELAGIC_SOURCE_ROOT}"
+fi
+if include_product_family "depths" && [[ "${STAGE_DEPTHS}" == "yes" ]]; then
   stage_product_type "depths" "${DEPTHS_SOURCE_ROOT}"
 fi
 stage_manifests

@@ -24,6 +24,7 @@ PELAGIC_SOURCE_ROOT="${PELAGIC_SOURCE_ROOT:-/home/SB5/ocean_downscaling_products
 DEPTHS_SOURCE_ROOT="${DEPTHS_SOURCE_ROOT:-/home/SB5/ocean_downscaling_products_depths_geotiff}"
 STAGE_ROOT="${STAGE_ROOT:-/home/SB5/ocean_downscaling_sample_products_geotiff}"
 RESOLUTION="${RESOLUTION:-0p05}"
+PRODUCT_FAMILIES="${PRODUCT_FAMILIES:-layers depths}"
 MEMBER="${MEMBER:-001}"
 PHYSICAL_VARS="${PHYSICAL_VARS:-thetao so uo}"
 EXTENSIONS="${EXTENSIONS:-tif tiff}"
@@ -35,6 +36,34 @@ STAGE_DEPTHS="${STAGE_DEPTHS:-yes}"
 EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS:-cesm_f09_g16 legacy_downscaled_rcp85}"
 EXCLUDE_FUTURE_SCENARIOS="${EXCLUDE_FUTURE_SCENARIOS:-rcp85}"
 
+contains_word() {
+  local needle="$1"
+  shift
+  local candidate
+
+  for candidate in "$@"; do
+    [[ "${candidate}" == "${needle}" ]] && return 0
+  done
+  return 1
+}
+
+read -r -a PRODUCT_FAMILY_LIST <<< "${PRODUCT_FAMILIES}"
+for product_family in "${PRODUCT_FAMILY_LIST[@]}"; do
+  case "${product_family}" in
+    layers|pelagic|depths) ;;
+    *)
+      echo "ERROR: Unsupported PRODUCT_FAMILIES entry: ${product_family}"
+      echo "Supported product families: layers pelagic depths"
+      exit 1
+      ;;
+  esac
+done
+
+include_product_family() {
+  local product_family="$1"
+  contains_word "${product_family}" "${PRODUCT_FAMILY_LIST[@]}"
+}
+
 mkdir -p "${LOG_DIR}"
 
 if [[ ! -x "${TOOL_SCRIPT}" ]]; then
@@ -42,17 +71,17 @@ if [[ ! -x "${TOOL_SCRIPT}" ]]; then
   exit 1
 fi
 
-if [[ ! -d "${LAYERS_SOURCE_ROOT}" ]]; then
+if include_product_family "layers" && [[ ! -d "${LAYERS_SOURCE_ROOT}" ]]; then
   echo "ERROR: LAYERS_SOURCE_ROOT does not exist: ${LAYERS_SOURCE_ROOT}"
   exit 1
 fi
 
-if [[ ! -d "${PELAGIC_SOURCE_ROOT}" ]]; then
+if include_product_family "pelagic" && [[ ! -d "${PELAGIC_SOURCE_ROOT}" ]]; then
   echo "ERROR: PELAGIC_SOURCE_ROOT does not exist: ${PELAGIC_SOURCE_ROOT}"
   exit 1
 fi
 
-if [[ "${STAGE_DEPTHS}" == "yes" && ! -d "${DEPTHS_SOURCE_ROOT}" ]]; then
+if include_product_family "depths" && [[ "${STAGE_DEPTHS}" == "yes" && ! -d "${DEPTHS_SOURCE_ROOT}" ]]; then
   echo "ERROR: DEPTHS_SOURCE_ROOT does not exist: ${DEPTHS_SOURCE_ROOT}"
   exit 1
 fi
@@ -63,6 +92,7 @@ echo "PELAGIC SOURCE : ${PELAGIC_SOURCE_ROOT}"
 echo "DEPTHS SOURCE  : ${DEPTHS_SOURCE_ROOT}"
 echo "STAGE ROOT     : ${STAGE_ROOT}"
 echo "RESOLUTION     : ${RESOLUTION}"
+echo "PRODUCT FAMILY : ${PRODUCT_FAMILIES}"
 echo "FUTURE LAYOUT  : future/<model>/<realization_or_statistic>/<scenario>/<variable>/<window>/<resolution>"
 echo "REALIZATION    : first sorted per non-ensemble model/scenario/variable/window"
 echo "EXCLUDE MODELS : ${EXCLUDE_FUTURE_MODELS}"
@@ -83,7 +113,7 @@ jid=$(
     --time="${WALLTIME}" \
     --output="${LOG_DIR}/stage_sample_products_%j.out" \
     --error="${LOG_DIR}/stage_sample_products_%j.err" \
-    --export=ALL,LAYERS_SOURCE_ROOT="${LAYERS_SOURCE_ROOT}",PELAGIC_SOURCE_ROOT="${PELAGIC_SOURCE_ROOT}",DEPTHS_SOURCE_ROOT="${DEPTHS_SOURCE_ROOT}",STAGE_ROOT="${STAGE_ROOT}",RESOLUTION="${RESOLUTION}",MEMBER="${MEMBER}",PHYSICAL_VARS="${PHYSICAL_VARS}",EXTENSIONS="${EXTENSIONS}",DRY_RUN="${DRY_RUN}",OVERWRITE="${OVERWRITE}",STAGE_MANIFESTS="${STAGE_MANIFESTS}",CLEAN_STAGE_ROOT="${CLEAN_STAGE_ROOT}",STAGE_DEPTHS="${STAGE_DEPTHS}",EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS}",EXCLUDE_FUTURE_SCENARIOS="${EXCLUDE_FUTURE_SCENARIOS}" \
+    --export=ALL,LAYERS_SOURCE_ROOT="${LAYERS_SOURCE_ROOT}",PELAGIC_SOURCE_ROOT="${PELAGIC_SOURCE_ROOT}",DEPTHS_SOURCE_ROOT="${DEPTHS_SOURCE_ROOT}",STAGE_ROOT="${STAGE_ROOT}",RESOLUTION="${RESOLUTION}",PRODUCT_FAMILIES="${PRODUCT_FAMILIES}",MEMBER="${MEMBER}",PHYSICAL_VARS="${PHYSICAL_VARS}",EXTENSIONS="${EXTENSIONS}",DRY_RUN="${DRY_RUN}",OVERWRITE="${OVERWRITE}",STAGE_MANIFESTS="${STAGE_MANIFESTS}",CLEAN_STAGE_ROOT="${CLEAN_STAGE_ROOT}",STAGE_DEPTHS="${STAGE_DEPTHS}",EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS}",EXCLUDE_FUTURE_SCENARIOS="${EXCLUDE_FUTURE_SCENARIOS}" \
     "${TOOL_SCRIPT}"
 )
 

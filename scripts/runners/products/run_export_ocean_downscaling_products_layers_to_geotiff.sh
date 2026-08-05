@@ -19,6 +19,7 @@ EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS:-}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-${SBATCH_EXCLUDE:-}}"
 INCLUDE_BASELINE="${INCLUDE_BASELINE:-yes}"
 SPLIT_ENSEMBLE_STATS="${SPLIT_ENSEMBLE_STATS:-yes}"
+SPLIT_FUTURE_SCENARIOS="${SPLIT_FUTURE_SCENARIOS:-no}"
 read -r -a FUTURE_MODEL_LIST <<< "${FUTURE_MODELS}"
 read -r -a EXCLUDE_FUTURE_MODEL_LIST <<< "${EXCLUDE_FUTURE_MODELS}"
 
@@ -114,6 +115,35 @@ if [[ "${SPLIT_ENSEMBLE_STATS}" == "yes" ]]; then
   SUBTREES=("${expanded_subtrees[@]}")
 fi
 
+if [[ "${SPLIT_FUTURE_SCENARIOS}" == "yes" ]]; then
+  expanded_subtrees=()
+  for subtree in "${SUBTREES[@]}"; do
+    rel_path="${subtree#${SOURCE_ROOT}/}"
+    if [[ "${rel_path}" == future/* ]]; then
+      scenario_depth=2
+      if [[ "${rel_path}" == future/ensemble/* ]]; then
+        scenario_depth=1
+      fi
+      mapfile -t scenario_subtrees < <(
+        find "${subtree}" \
+          -mindepth "${scenario_depth}" \
+          -maxdepth "${scenario_depth}" \
+          -type d \
+          ! -name 'tmp*' \
+          2>/dev/null | sort
+      )
+      if (( ${#scenario_subtrees[@]} > 0 )); then
+        expanded_subtrees+=("${scenario_subtrees[@]}")
+      else
+        expanded_subtrees+=("${subtree}")
+      fi
+    else
+      expanded_subtrees+=("${subtree}")
+    fi
+  done
+  SUBTREES=("${expanded_subtrees[@]}")
+fi
+
 echo "Submitting curated ocean product layer GeoTIFF export jobs by subtree:"
 echo "SOURCE ROOT: ${SOURCE_ROOT}"
 echo "TARGET ROOT: ${TARGET_ROOT}"
@@ -123,6 +153,7 @@ echo "EXCLUDE FUTURE: ${EXCLUDE_FUTURE_MODELS:-<none>}"
 echo "EXCLUDE NODES : ${EXCLUDE_NODES:-<none>}"
 echo "INCLUDE BASELINE: ${INCLUDE_BASELINE}"
 echo "SPLIT ENSEMBLE STATS: ${SPLIT_ENSEMBLE_STATS}"
+echo "SPLIT FUTURE SCENARIOS: ${SPLIT_FUTURE_SCENARIOS}"
 for subtree in "${SUBTREES[@]}"; do
   rel_path="${subtree#${SOURCE_ROOT}/}"
   out_subtree="${TARGET_ROOT}/${rel_path}"

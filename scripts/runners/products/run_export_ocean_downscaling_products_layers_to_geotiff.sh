@@ -17,6 +17,7 @@ OVERWRITE="${OVERWRITE:-no}"
 FUTURE_MODELS="${FUTURE_MODELS:-auto}"
 EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS:-}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-${SBATCH_EXCLUDE:-}}"
+INCLUDE_BASELINE="${INCLUDE_BASELINE:-yes}"
 SPLIT_ENSEMBLE_STATS="${SPLIT_ENSEMBLE_STATS:-yes}"
 read -r -a FUTURE_MODEL_LIST <<< "${FUTURE_MODELS}"
 read -r -a EXCLUDE_FUTURE_MODEL_LIST <<< "${EXCLUDE_FUTURE_MODELS}"
@@ -39,6 +40,7 @@ include_subtree() {
   rel_path="${subtree#${SOURCE_ROOT}/}"
   case "${rel_path}" in
     baseline/*)
+      [[ "${INCLUDE_BASELINE}" == "yes" ]] || return 1
       return 0
       ;;
     future/*)
@@ -119,6 +121,7 @@ echo "OVERWRITE  : ${OVERWRITE}"
 echo "FUTURE MODELS : ${FUTURE_MODELS}"
 echo "EXCLUDE FUTURE: ${EXCLUDE_FUTURE_MODELS:-<none>}"
 echo "EXCLUDE NODES : ${EXCLUDE_NODES:-<none>}"
+echo "INCLUDE BASELINE: ${INCLUDE_BASELINE}"
 echo "SPLIT ENSEMBLE STATS: ${SPLIT_ENSEMBLE_STATS}"
 for subtree in "${SUBTREES[@]}"; do
   rel_path="${subtree#${SOURCE_ROOT}/}"

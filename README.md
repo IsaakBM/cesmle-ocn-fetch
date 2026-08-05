@@ -1690,7 +1690,7 @@ Notes:
   `real_value = stored_value / scale_factor`
 - default scale factors are variable-aware:
   - `thetao`, `TEMP`, `so`, `SALT`, `uo`, `UVEL`: `100`
-  - `o2`, `O2`: `10`
+  - `o2`, `O2`: `1000`
   - `chl`, `CHL`: `10000`
 - `ENCODE_DTYPE=auto` writes `Int16` when encoded values fit safely and
   promotes to `Int32` otherwise

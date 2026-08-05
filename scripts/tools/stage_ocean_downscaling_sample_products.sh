@@ -62,6 +62,11 @@ shopt -s nullglob
 #                         yes -> create filtered staged manifest CSVs
 #                         no  -> skip manifest staging
 #                         (default: yes)
+#   CLEAN_STAGE_ROOT    : yes | no
+#                         yes -> remove existing staged layers/, pelagic/,
+#                                depths/, and manifests/ before copying
+#                         no  -> leave unrelated existing staged files in place
+#                         (default: no)
 #   STAGE_DEPTHS        : yes | no
 #                         yes -> include individual-depth GeoTIFF products
 #                         no  -> stage only layers and pelagic products
@@ -85,6 +90,7 @@ EXTENSIONS="${EXTENSIONS:-tif tiff}"
 DRY_RUN="${DRY_RUN:-no}"
 OVERWRITE="${OVERWRITE:-yes}"
 STAGE_MANIFESTS="${STAGE_MANIFESTS:-yes}"
+CLEAN_STAGE_ROOT="${CLEAN_STAGE_ROOT:-no}"
 STAGE_DEPTHS="${STAGE_DEPTHS:-yes}"
 EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS:-cesm_f09_g16 legacy_downscaled_rcp85}"
 EXCLUDE_FUTURE_SCENARIOS="${EXCLUDE_FUTURE_SCENARIOS:-rcp85}"
@@ -109,6 +115,14 @@ case "${STAGE_MANIFESTS}" in
   yes|no) ;;
   *)
     echo "ERROR: STAGE_MANIFESTS must be yes or no"
+    exit 1
+    ;;
+esac
+
+case "${CLEAN_STAGE_ROOT}" in
+  yes|no) ;;
+  *)
+    echo "ERROR: CLEAN_STAGE_ROOT must be yes or no"
     exit 1
     ;;
 esac
@@ -378,17 +392,40 @@ def iter_manifest_rows(product_type, source_root):
     if not os.path.isdir(source_root):
         return
 
-    manifest = os.path.join(source_root, "geotiff_manifest.csv")
-    if not os.path.isfile(manifest):
-        print(f"[WARN] Missing root GeoTIFF manifest for {product_type}: {manifest}", file=sys.stderr)
+    nested_manifests = []
+    for family in ("baseline", "future"):
+        family_root = os.path.join(source_root, family)
+        if not os.path.isdir(family_root):
+            continue
+        for dirpath, dirnames, filenames in os.walk(family_root):
+            dirnames[:] = [
+                name for name in dirnames
+                if not name.startswith("tmp") and name != "tmp_export_geotiff"
+            ]
+            if "geotiff_manifest.csv" in filenames:
+                nested_manifests.append(os.path.join(dirpath, "geotiff_manifest.csv"))
+
+    root_manifest = os.path.join(source_root, "geotiff_manifest.csv")
+    if nested_manifests:
+        manifests = sorted(nested_manifests)
+    elif os.path.isfile(root_manifest):
+        manifests = [root_manifest]
+    else:
+        print(f"[WARN] No GeoTIFF manifests found for {product_type}: {source_root}", file=sys.stderr)
         return
 
-    with open(manifest, newline="") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            row["_manifest_file"] = manifest
-            row["_product_type"] = product_type
-            yield row
+    seen_files = set()
+    for manifest in manifests:
+        with open(manifest, newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                geotiff_file = os.path.abspath(row.get("geotiff_file", ""))
+                if not geotiff_file or geotiff_file in seen_files:
+                    continue
+                seen_files.add(geotiff_file)
+                row["_manifest_file"] = manifest
+                row["_product_type"] = product_type
+                yield row
 
 
 def staged_info_for_row(row, source_root):
@@ -397,6 +434,9 @@ def staged_info_for_row(row, source_root):
         return None
 
     abs_file = os.path.abspath(geotiff_file)
+    if not os.path.isfile(abs_file):
+        return None
+
     abs_root = os.path.abspath(source_root)
     try:
         rel_path = os.path.relpath(abs_file, abs_root)
@@ -579,10 +619,20 @@ echo "EXTENSIONS     : ${EXTENSIONS}"
 echo "DRY RUN        : ${DRY_RUN}"
 echo "OVERWRITE      : ${OVERWRITE}"
 echo "STAGE MANIFESTS: ${STAGE_MANIFESTS}"
+echo "CLEAN STAGE    : ${CLEAN_STAGE_ROOT}"
 echo "STAGE DEPTHS   : ${STAGE_DEPTHS}"
 echo "============================================================"
 
 if [[ "${DRY_RUN}" == "no" ]]; then
+  if [[ "${CLEAN_STAGE_ROOT}" == "yes" ]]; then
+    echo "[STEP] Cleaning staged product branches under: ${STAGE_ROOT}"
+    rm -rf \
+      "${STAGE_ROOT}/layers" \
+      "${STAGE_ROOT}/pelagic" \
+      "${STAGE_ROOT}/depths" \
+      "${STAGE_ROOT}/manifests"
+  fi
+
   mkdir -p "${STAGE_ROOT}/layers" "${STAGE_ROOT}/pelagic"
   if [[ "${STAGE_DEPTHS}" == "yes" ]]; then
     mkdir -p "${STAGE_ROOT}/depths"

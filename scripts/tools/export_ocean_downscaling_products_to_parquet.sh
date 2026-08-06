@@ -65,6 +65,8 @@ shopt -s nullglob
 #   FILE_INCLUDE_REGEX
 #                    : optional extended regex matched against paths relative
 #                      to IN_ROOT, useful for refreshing a subset of products
+#   RESOLUTIONS      : auto or space-separated resolution directory names to include
+#                      (default: auto)
 #   FUTURE_MODELS    : auto or space-separated future top-level branches to include
 #                      when IN_ROOT contains baseline/future
 #                      (default: auto)
@@ -83,8 +85,10 @@ NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-5}}"
 OVERWRITE="${OVERWRITE:-no}"
 FUTURE_UO_UVEL_CM_S_TO_M_S="${FUTURE_UO_UVEL_CM_S_TO_M_S:-yes}"
 FILE_INCLUDE_REGEX="${FILE_INCLUDE_REGEX:-}"
+RESOLUTIONS="${RESOLUTIONS:-auto}"
 FUTURE_MODELS="${FUTURE_MODELS:-auto}"
 EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS:-}"
+read -r -a RESOLUTION_LIST <<< "${RESOLUTIONS}"
 read -r -a FUTURE_MODEL_LIST <<< "${FUTURE_MODELS}"
 read -r -a EXCLUDE_FUTURE_MODEL_LIST <<< "${EXCLUDE_FUTURE_MODELS}"
 
@@ -122,6 +126,20 @@ include_relative_path() {
       return 0
       ;;
   esac
+}
+
+include_resolution_path() {
+  local rel_path="$1"
+  local part
+  local -a path_parts
+
+  [[ "${RESOLUTIONS}" == "auto" ]] && return 0
+
+  IFS='/' read -r -a path_parts <<< "${rel_path}"
+  for part in "${path_parts[@]}"; do
+    contains_word "${part}" "${RESOLUTION_LIST[@]}" && return 0
+  done
+  return 1
 }
 
 if [[ ! -d "${IN_ROOT}" ]]; then
@@ -381,13 +399,14 @@ echo "PARALLEL FILES  : ${NPROC}"
 echo "OVERWRITE       : ${OVERWRITE}"
 echo "FUTURE MODELS   : ${FUTURE_MODELS}"
 echo "EXCLUDE FUTURE  : ${EXCLUDE_FUTURE_MODELS:-<none>}"
+echo "RESOLUTIONS     : ${RESOLUTIONS}"
 echo "FILE FILTER     : ${FILE_INCLUDE_REGEX:-<none>}"
 echo "============================================================"
 
 mapfile -t files < <(
   while IFS= read -r file; do
     rel_file="${file#${IN_ROOT}/}"
-    include_relative_path "${rel_file}" && printf '%s\n' "${file}"
+    include_relative_path "${rel_file}" && include_resolution_path "${rel_file}" && printf '%s\n' "${file}"
   done < <(find "${IN_ROOT}" -type f -name "*.nc" | sort)
 )
 if [[ -n "${FILE_INCLUDE_REGEX}" ]]; then
@@ -424,7 +443,7 @@ except Exception as exc:
     )
 PY
 
-export IN_ROOT OUT_ROOT TMP_DIR DROP_MISSING PARQUET_PYTHON PARQUET_ENGINE OVERWRITE FUTURE_UO_UVEL_CM_S_TO_M_S FUTURE_MODELS EXCLUDE_FUTURE_MODELS
+export IN_ROOT OUT_ROOT TMP_DIR DROP_MISSING PARQUET_PYTHON PARQUET_ENGINE OVERWRITE FUTURE_UO_UVEL_CM_S_TO_M_S FUTURE_MODELS EXCLUDE_FUTURE_MODELS RESOLUTIONS
 export -f process_one_file
 
 printf '%s\0' "${files[@]}" \

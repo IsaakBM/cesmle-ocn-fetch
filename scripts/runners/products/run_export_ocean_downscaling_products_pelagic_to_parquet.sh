@@ -14,6 +14,7 @@ LOG_DIR="/home/sandbox-sparc/cesmle-ocn-fetch/logs"
 SOURCE_ROOT="${SOURCE_ROOT:-/home/SB5/ocean_downscaling_products_pelagic}"
 TARGET_ROOT="${TARGET_ROOT:-/home/SB5/ocean_downscaling_products_pelagic_parquet}"
 OVERWRITE="${OVERWRITE:-no}"
+RESOLUTIONS="${RESOLUTIONS:-auto}"
 FUTURE_MODELS="${FUTURE_MODELS:-auto}"
 EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS:-}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-${SBATCH_EXCLUDE:-}}"
@@ -148,6 +149,7 @@ echo "Submitting curated ocean product pelagic Parquet export jobs by subtree:"
 echo "SOURCE ROOT: ${SOURCE_ROOT}"
 echo "TARGET ROOT: ${TARGET_ROOT}"
 echo "OVERWRITE  : ${OVERWRITE}"
+echo "RESOLUTIONS : ${RESOLUTIONS}"
 echo "FUTURE MODELS : ${FUTURE_MODELS}"
 echo "EXCLUDE FUTURE: ${EXCLUDE_FUTURE_MODELS:-<none>}"
 echo "EXCLUDE NODES : ${EXCLUDE_NODES:-<none>}"
@@ -168,7 +170,7 @@ for subtree in "${SUBTREES[@]}"; do
       "${sbatch_args[@]}" \
       --output="${LOG_DIR}/parquet_pelagic_${job_tag}_%j.out" \
       --error="${LOG_DIR}/parquet_pelagic_${job_tag}_%j.err" \
-      --export=ALL,IN_ROOT="${subtree}",OUT_ROOT="${out_subtree}",OVERWRITE="${OVERWRITE}",FUTURE_MODELS="${FUTURE_MODELS}",EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS}" \
+      --export=ALL,IN_ROOT="${subtree}",OUT_ROOT="${out_subtree}",OVERWRITE="${OVERWRITE}",RESOLUTIONS="${RESOLUTIONS}",FUTURE_MODELS="${FUTURE_MODELS}",EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS}" \
       "${TOOL_SCRIPT}"
   )
   echo "  submitted SUBTREE=${rel_path} as jobid=${jid}"

@@ -30,6 +30,7 @@ WINDOW="${WINDOW:-}"
 RESOLUTION="${RESOLUTION:-}"
 MODELS="${MODELS:-auto}"
 EXCLUDE_MODELS="${EXCLUDE_MODELS:-cesm_f09_g16 legacy_downscaled_rcp85 ensemble}"
+EXCLUDE_ENSEMBLE_MODELS_BY_VARIABLE="${EXCLUDE_ENSEMBLE_MODELS_BY_VARIABLE:-}"
 MIN_MODELS="${MIN_MODELS:-2}"
 OVERWRITE="${OVERWRITE:-no}"
 FILE_INCLUDE_REGEX="${FILE_INCLUDE_REGEX:-}"
@@ -78,6 +79,23 @@ contains_word() {
 
 read -r -a MODEL_LIST <<< "${MODELS}"
 read -r -a EXCLUDE_MODEL_LIST <<< "${EXCLUDE_MODELS}"
+read -r -a VARIABLE_EXCLUDE_RULES <<< "${EXCLUDE_ENSEMBLE_MODELS_BY_VARIABLE}"
+
+variable_specific_excluded_models() {
+  local variable="$1"
+  local rule rule_var rule_models
+
+  for rule in "${VARIABLE_EXCLUDE_RULES[@]}"; do
+    [[ "${rule}" == *:* ]] || continue
+    rule_var="${rule%%:*}"
+    rule_models="${rule#*:}"
+    [[ "${rule_var}" == "${variable}" ]] || continue
+    echo "${rule_models//,/ }"
+  done
+}
+
+VARIABLE_SPECIFIC_EXCLUDE_MODELS="$(variable_specific_excluded_models "${VAR}")"
+read -r -a VARIABLE_SPECIFIC_EXCLUDE_MODEL_LIST <<< "${VARIABLE_SPECIFIC_EXCLUDE_MODELS}"
 
 declare -a INPUT_FILES=()
 declare -a SOURCE_LABELS=()
@@ -87,6 +105,9 @@ while IFS= read -r model_dir; do
   model="$(basename "${model_dir}")"
 
   contains_word "${model}" "${EXCLUDE_MODEL_LIST[@]}" && continue
+  if [[ -n "${VARIABLE_SPECIFIC_EXCLUDE_MODELS}" ]] && contains_word "${model}" "${VARIABLE_SPECIFIC_EXCLUDE_MODEL_LIST[@]}"; then
+    continue
+  fi
   if [[ "${MODELS}" != "auto" ]] && ! contains_word "${model}" "${MODEL_LIST[@]}"; then
     continue
   fi
@@ -202,6 +223,9 @@ fi
 
 echo "[START] SCENARIO=${SCENARIO} VAR=${VAR} WINDOW=${WINDOW} RESOLUTION=${RESOLUTION}"
 echo "[INFO ] Ensemble members (${#INPUT_FILES[@]}): ${SOURCE_LABELS[*]}"
+if [[ -n "${VARIABLE_SPECIFIC_EXCLUDE_MODELS}" ]]; then
+  echo "[INFO ] Variable-specific excluded models for ${VAR}: ${VARIABLE_SPECIFIC_EXCLUDE_MODELS}"
+fi
 
 cdo -O ensmean "${INPUT_FILES[@]}" "${mean_out}"
 cdo -O ensstd1 "${INPUT_FILES[@]}" "${sd_out}"
@@ -257,6 +281,7 @@ if command -v ncatted >/dev/null 2>&1; then
   members_text="${SOURCE_LABELS[*]}"
   source_files_text="${SOURCE_PATHS[*]}"
   excluded_text="${EXCLUDE_MODEL_LIST[*]}"
+  variable_excluded_text="${VARIABLE_SPECIFIC_EXCLUDE_MODEL_LIST[*]}"
 
   ncatted -O \
     -a title,global,o,c,"Ocean downscaling model ensemble product" \
@@ -269,6 +294,8 @@ if command -v ncatted >/dev/null 2>&1; then
     -a n_ensemble_members,global,o,c,"${#INPUT_FILES[@]}" \
     -a ensemble_members,global,o,c,"${members_text}" \
     -a excluded_models,global,o,c,"${excluded_text}" \
+    -a variable_specific_excluded_models,global,o,c,"${variable_excluded_text}" \
+    -a exclude_ensemble_models_by_variable,global,o,c,"${EXCLUDE_ENSEMBLE_MODELS_BY_VARIABLE}" \
     -a source_product_root,global,o,c,"${PRODUCT_ROOT}" \
     -a source_files,global,o,c,"${source_files_text}" \
     -a description,global,o,c,"Mean across available model products for this scenario, variable, window, and resolution." \
@@ -286,6 +313,8 @@ if command -v ncatted >/dev/null 2>&1; then
     -a n_ensemble_members,global,o,c,"${#INPUT_FILES[@]}" \
     -a ensemble_members,global,o,c,"${members_text}" \
     -a excluded_models,global,o,c,"${excluded_text}" \
+    -a variable_specific_excluded_models,global,o,c,"${variable_excluded_text}" \
+    -a exclude_ensemble_models_by_variable,global,o,c,"${EXCLUDE_ENSEMBLE_MODELS_BY_VARIABLE}" \
     -a source_product_root,global,o,c,"${PRODUCT_ROOT}" \
     -a source_files,global,o,c,"${source_files_text}" \
     -a description,global,o,c,"Sample standard deviation across available model products for this scenario, variable, window, and resolution." \

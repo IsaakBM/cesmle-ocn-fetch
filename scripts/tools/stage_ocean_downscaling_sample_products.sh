@@ -355,6 +355,7 @@ stage_manifests() {
     "${EXCLUDE_FUTURE_MODELS}" \
     "${EXCLUDE_FUTURE_SCENARIOS}" <<'PY'
 import csv
+import math
 import os
 import sys
 
@@ -388,27 +389,108 @@ def keep_future_product(model, scenario):
     return model not in exclude_future_models and scenario not in exclude_future_scenarios
 
 
-def geotiff_tags(path):
+def parse_float(value):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
+
+
+def geotiff_metadata(path):
     if rasterio is None or not os.path.isfile(path):
-        return {}
+        return {}, {}
 
     try:
         with rasterio.open(path) as src:
-            return src.tags()
+            return src.tags(), src.tags(1)
     except Exception as exc:
         print(f"[WARN] Could not read GeoTIFF tags for {path}: {exc}", file=sys.stderr)
-        return {}
+        return {}, {}
+
+
+def scale_factor_from_metadata(row, tags, band_tags):
+    variable = row.get("variable") or tags.get("variable") or band_tags.get("variable")
+    candidates = []
+
+    if variable:
+        candidates.extend(
+            [
+                tags.get(f"{variable}#scale_factor_for_app"),
+                band_tags.get(f"{variable}#scale_factor_for_app"),
+            ]
+        )
+
+    candidates.extend(
+        [
+            band_tags.get("scale_factor_for_app"),
+            tags.get("scale_factor_for_app"),
+            band_tags.get("scale_factor"),
+            tags.get("scale_factor"),
+            row.get("scale_factor"),
+        ]
+    )
+
+    for candidate in candidates:
+        scale_factor = parse_float(candidate)
+        if scale_factor is not None and scale_factor > 0:
+            return scale_factor
+    return None
+
+
+def encoded_stats_from_metadata(path, band_tags):
+    min_encoded = parse_float(band_tags.get("STATISTICS_MINIMUM"))
+    max_encoded = parse_float(band_tags.get("STATISTICS_MAXIMUM"))
+
+    if min_encoded is not None and max_encoded is not None:
+        return min_encoded, max_encoded
+
+    try:
+        with rasterio.open(path) as src:
+            data = src.read(1, masked=True)
+            if data.count() == 0:
+                return None, None
+            return float(data.min()), float(data.max())
+    except Exception as exc:
+        print(f"[WARN] Could not compute GeoTIFF stats for {path}: {exc}", file=sys.stderr)
+        return None, None
 
 
 def refresh_manifest_metadata(row):
     geotiff_file = row.get("geotiff_file", "")
-    tags = geotiff_tags(geotiff_file)
-    if not tags:
+    tags, band_tags = geotiff_metadata(geotiff_file)
+    if not tags and not band_tags:
         return
 
     for field in ("units", "scale_factor", "offset", "decode_formula"):
         if field in tags and str(tags[field]).strip():
             row[field] = tags[field]
+
+    variable = row.get("variable") or tags.get("variable") or band_tags.get("variable")
+    if variable:
+        for source in (tags, band_tags):
+            app_scale_key = f"{variable}#scale_factor_for_app"
+            if app_scale_key in source and str(source[app_scale_key]).strip():
+                row[app_scale_key] = source[app_scale_key]
+            if f"{variable}#decode_formula" in source and str(source[f"{variable}#decode_formula"]).strip():
+                row[f"{variable}#decode_formula"] = source[f"{variable}#decode_formula"]
+
+    scale_factor = scale_factor_from_metadata(row, tags, band_tags)
+    if scale_factor is None:
+        return
+
+    min_encoded, max_encoded = encoded_stats_from_metadata(geotiff_file, band_tags)
+    if min_encoded is None or max_encoded is None:
+        return
+
+    row["scale_factor"] = f"{scale_factor:g}"
+    row["decode_formula"] = "real_value = stored_value / scale_factor"
+    row["min_encoded"] = f"{min_encoded:g}"
+    row["max_encoded"] = f"{max_encoded:g}"
+    row["min_real"] = f"{min_encoded / scale_factor:.12g}"
+    row["max_real"] = f"{max_encoded / scale_factor:.12g}"
 
 
 def iter_manifest_rows(product_type, source_root):

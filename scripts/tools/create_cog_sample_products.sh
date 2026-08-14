@@ -167,12 +167,14 @@ if has_cog_driver; then
   USE_COG_DRIVER="yes"
 fi
 
-mkdir -p "${COG_ROOT}" "${TMP_DIR}"
 if [[ "${DRY_RUN}" == "no" ]]; then
+  mkdir -p "${COG_ROOT}" "${TMP_DIR}"
   mkdir -p "${COG_ROOT}/layers" "${COG_ROOT}/depths"
   if [[ "${WRITE_MANIFESTS}" == "yes" ]]; then
     mkdir -p "${COG_ROOT}/manifests"
   fi
+else
+  mkdir -p "${TMP_DIR}"
 fi
 
 include_source_file() {
@@ -417,6 +419,11 @@ validate_tree_and_manifests() {
 
   echo
   echo "[STEP] Validating COG product tree"
+  if [[ "${DRY_RUN}" == "yes" ]]; then
+    echo "[DRY-RUN] Would validate full COG tree under: ${COG_ROOT}"
+    return 0
+  fi
+
   "${PYTHON}" - \
     "${COG_ROOT}" \
     "${EXPECT_LAYERS_ROWS}" \

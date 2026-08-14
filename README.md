@@ -1768,6 +1768,55 @@ default is now to stage it from:
 /home/SB5/ocean_downscaling_products_depths_geotiff
 ```
 
+### Shiny-viewer sample COG staging tree
+
+Built with:
+
+- [create_cog_sample_products.sh](scripts/tools/create_cog_sample_products.sh)
+- [run_create_cog_sample_products.sh](scripts/runners/products/run_create_cog_sample_products.sh)
+
+Expected output root:
+
+```text
+/home/SB5/ocean_downscaling_sample_products_cog/
+├── depths/
+├── layers/
+└── manifests/
+```
+
+Notes:
+
+- this creates a parallel Cloud Optimized GeoTIFF tree for S3/tiler
+  performance testing
+- it reads from the staged GeoTIFF sample tree:
+  `/home/SB5/ocean_downscaling_sample_products_geotiff`
+- it mirrors only `layers/` and `depths/`; pelagic remains excluded
+- every source GeoTIFF is converted to the same relative path under the COG
+  root without decoding integer-scaled scientific values to float
+- the tool prefers the GDAL `COG` driver, uses internal tiling, writes internal
+  overviews, and preserves CRS, transform, nodata, datatype, compression, and
+  GeoTIFF metadata tags
+- manifests are copied/updated under `manifests/`, keep the staged GeoTIFF
+  fields, point staged paths at the COG tree, and add `storage_format=cog`
+- full-tree validation checks the top-level tree shape, manifest row counts,
+  excluded legacy/pelagic paths, ensemble `chl` depth bounds, a known `chl`
+  decoded max example, `gdalinfo`, `gdalinfo --json`, and `rio cogeo validate`
+  when `rio` is available
+
+Typical commands:
+
+```bash
+./scripts/runners/products/run_create_cog_sample_products.sh
+DRY_RUN=no ./scripts/runners/products/run_create_cog_sample_products.sh
+```
+
+The default runner submits conversion jobs by subtree and then a dependent
+manifest/full-tree validation job. To run everything in one Slurm job:
+
+```bash
+SUBMIT_MODE=single DRY_RUN=no ./scripts/runners/products/run_create_cog_sample_products.sh
+```
+
 ### Curated by-depth NetCDF and GeoTIFF trees
 
 Built with:

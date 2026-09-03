@@ -19,9 +19,9 @@ set -euo pipefail
 #   - Source vertical units are assumed to already be in meters.
 #   - Target levels are derived from a GLORYS reference file.
 #   - Expected input layout:
-#       /home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/<var>/parts/*.nc
+#       /home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25/<var>/parts/*.nc
 #   - Outputs are written to:
-#       /home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/<var>/on_glorys/
+#       /home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25/<var>/on_glorys/
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,8 +46,8 @@ VARS=(
 # Dataset-specific settings
 # ------------------------------------------------------------------------------
 DATASET_LABEL="global_ocean_biogeochemistry_hindcast"
-INROOT_BASE="/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25"
-TARGET_REF_FILE="/home/SB5/glorys12v1_monthly_0p05/thetao/parts/glorys12v1_thetao_200601.monmean.0p05.nc"
+INROOT_BASE="/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25"
+TARGET_REF_FILE="/home/SB5/reanalysis/glorys12v1/monthly_0p05/thetao/parts/glorys12v1_thetao_200601.monmean.0p05.nc"
 SHARED_TMP_DIR="/home/SB5/tmp"
 SOURCE_ZDIM_NAME="depth_below_sea"
 SOURCE_UNITS_IN="m"

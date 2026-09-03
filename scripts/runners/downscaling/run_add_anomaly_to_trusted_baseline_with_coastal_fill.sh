@@ -45,7 +45,7 @@ WINDOWS_DEFAULT=(
 read -r -a WINDOWS <<< "${WINDOWS:-${WINDOWS_DEFAULT[*]}}"
 
 DATASET_LABEL="${DATASET_LABEL:-anomaly_to_trusted_baseline}"
-BASELINE_ROOT="${BASELINE_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast}"
+BASELINE_ROOT="${BASELINE_ROOT:-/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast}"
 ANOMALY_ROOT="${ANOMALY_ROOT:-/home/SB5/ipcc_esgf/monthly_1deg}"
 OUTROOT="${OUTROOT:-/home/SB5/downscaled}"
 BASELINE_TAG="${BASELINE_TAG:-2006-2014}"
@@ -75,7 +75,7 @@ COASTAL_MASK_VAR="${COASTAL_MASK_VAR:-}"
 FILL_BASELINE_COASTAL_GAPS="${FILL_BASELINE_COASTAL_GAPS:-no}"
 
 REMAP_ANOMALY_TO_BASELINE="${REMAP_ANOMALY_TO_BASELINE:-yes}"
-ANOMALY_GRIDFILE="${ANOMALY_GRIDFILE:-/home/SB5/glorys12v1_monthly_0p05/grid_0p05_global.txt}"
+ANOMALY_GRIDFILE="${ANOMALY_GRIDFILE:-/home/SB5/reanalysis/glorys12v1/monthly_0p05/grid_0p05_global.txt}"
 ANOMALY_REGRID_METHOD="${ANOMALY_REGRID_METHOD:-auto}"
 ANOMALY_AUTO_METHOD_DEFAULT="${ANOMALY_AUTO_METHOD_DEFAULT:-remapbil}"
 ANOMALY_AUTO_METHOD_CURVILINEAR="${ANOMALY_AUTO_METHOD_CURVILINEAR:-remapdis}"
@@ -98,7 +98,7 @@ WRITE_FILLED_ANOM="${WRITE_FILLED_ANOM:-no}"
 
 REGRID_OUTPUT="${REGRID_OUTPUT:-yes}"
 REGRID_METHOD="${REGRID_METHOD:-remapdis}"
-REGRID_GRIDFILE="${REGRID_GRIDFILE:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/grid_0p25_global.txt}"
+REGRID_GRIDFILE="${REGRID_GRIDFILE:-/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25/grid_0p25_global.txt}"
 REGRID_SUFFIX="${REGRID_SUFFIX:-grid_0p25_global}"
 
 render_template() {

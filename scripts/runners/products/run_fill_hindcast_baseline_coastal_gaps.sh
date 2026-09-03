@@ -19,7 +19,7 @@ set -euo pipefail
 # hindcast baseline untouched.
 #
 # Default output:
-#   /home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_coastal_filled
+#   /home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_coastal_filled
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,10 +33,10 @@ CPUS_PER_TASK="${CPUS_PER_TASK:-1}"
 MEMORY="${MEMORY:-256G}"
 WALLTIME="${WALLTIME:-2-00:00:00}"
 
-IN_ROOT="${IN_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05}"
-OUT_ROOT="${OUT_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_coastal_filled}"
+IN_ROOT="${IN_ROOT:-/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05}"
+OUT_ROOT="${OUT_ROOT:-/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_coastal_filled}"
 VARS="${VARS:-chl o2 zos}"
-GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/glorys12v1_monthly_0p05}"
+GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/reanalysis/glorys12v1/monthly_0p05}"
 COASTAL_MASK_FILE="${COASTAL_MASK_FILE:-${GLORYS_ROOT}/thetao/clim_windows/glorys12v1_thetao_clim_2006-2014.nc}"
 COASTAL_MASK_VAR="${COASTAL_MASK_VAR:-thetao}"
 COASTAL_FILL_METHOD="${COASTAL_FILL_METHOD:-distance_weighted}"

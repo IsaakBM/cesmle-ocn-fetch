@@ -22,11 +22,11 @@ shopt -s nullglob
 # ==============================================================================
 # Optional env vars
 #   IN_ROOT                 : hindcast baseline root at 0.25
-#                             (default: /home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25)
+#                             (default: /home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25)
 #   OUT_ROOT                : derived hindcast baseline root at 0.05
-#                             (default: /home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05)
+#                             (default: /home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05)
 #   GRIDFILE                : target 0.05 grid description
-#                             (default: /home/SB5/glorys12v1_monthly_0p05/grid_0p05_global.txt)
+#                             (default: /home/SB5/reanalysis/glorys12v1/monthly_0p05/grid_0p05_global.txt)
 #   VARS                    : space-separated variable list
 #                             (default: auto-detect all variable directories
 #                             under IN_ROOT)
@@ -41,9 +41,9 @@ shopt -s nullglob
 #   NPROC                   : number of files to process in parallel
 #                             (default: 4)
 # ==============================================================================
-IN_ROOT="${IN_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25}"
-OUT_ROOT="${OUT_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05}"
-GRIDFILE="${GRIDFILE:-/home/SB5/glorys12v1_monthly_0p05/grid_0p05_global.txt}"
+IN_ROOT="${IN_ROOT:-/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25}"
+OUT_ROOT="${OUT_ROOT:-/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05}"
+GRIDFILE="${GRIDFILE:-/home/SB5/reanalysis/glorys12v1/monthly_0p05/grid_0p05_global.txt}"
 VARS="${VARS:-}"
 METHOD="${METHOD:-auto}"
 AUTO_METHOD_DEFAULT="${AUTO_METHOD_DEFAULT:-remapbil}"

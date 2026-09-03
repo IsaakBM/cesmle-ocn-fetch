@@ -16,11 +16,11 @@ shopt -s nullglob
 # ==============================================================================
 # Optional env vars
 #   IN_ROOT                   : hindcast baseline root at 0.25
-#                               (default: /home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25)
+#                               (default: /home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25)
 #   OUT_ROOT                  : derived 0.05 root with GLORYS coastline fill
-#                               (default: /home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast)
+#                               (default: /home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast)
 #   GRIDFILE                  : target 0.05 grid description
-#                               (default: /home/SB5/glorys12v1_monthly_0p05/grid_0p05_global.txt)
+#                               (default: /home/SB5/reanalysis/glorys12v1/monthly_0p05/grid_0p05_global.txt)
 #   VARS                      : space-separated variable list
 #                               (default: auto-detect all vars under IN_ROOT)
 #   METHOD                    : auto | cdo remap operator
@@ -58,14 +58,14 @@ shopt -s nullglob
 #   the output contains more valid coastal cells.
 # ==============================================================================
 
-IN_ROOT="${IN_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25}"
-OUT_ROOT="${OUT_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast}"
-GRIDFILE="${GRIDFILE:-/home/SB5/glorys12v1_monthly_0p05/grid_0p05_global.txt}"
+IN_ROOT="${IN_ROOT:-/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25}"
+OUT_ROOT="${OUT_ROOT:-/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast}"
+GRIDFILE="${GRIDFILE:-/home/SB5/reanalysis/glorys12v1/monthly_0p05/grid_0p05_global.txt}"
 VARS="${VARS:-}"
 METHOD="${METHOD:-auto}"
 AUTO_METHOD_DEFAULT="${AUTO_METHOD_DEFAULT:-remapbil}"
 AUTO_METHOD_CURVILINEAR="${AUTO_METHOD_CURVILINEAR:-remapdis}"
-COASTAL_MASK_FILE="${COASTAL_MASK_FILE:-/home/SB5/glorys12v1_monthly_0p05/thetao/clim_windows/glorys12v1_thetao_clim_2006-2014.nc}"
+COASTAL_MASK_FILE="${COASTAL_MASK_FILE:-/home/SB5/reanalysis/glorys12v1/monthly_0p05/thetao/clim_windows/glorys12v1_thetao_clim_2006-2014.nc}"
 COASTAL_MASK_VAR="${COASTAL_MASK_VAR:-thetao}"
 COASTAL_FILL_METHOD="${COASTAL_FILL_METHOD:-distance_weighted}"
 COASTAL_FILL_MAX_STEPS="${COASTAL_FILL_MAX_STEPS:-12}"

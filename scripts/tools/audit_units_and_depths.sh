@@ -27,9 +27,9 @@ shopt -s nullglob
 #   IPCC_ROOT      : CMIP/IPCC standardized monthly root
 #                    (default: /home/SB5/ipcc_esgf/monthly_1deg)
 #   GLORYS_ROOT    : GLORYS baseline root
-#                    (default: /home/SB5/glorys12v1_monthly_0p05)
+#                    (default: /home/SB5/reanalysis/glorys12v1/monthly_0p05)
 #   HINDCAST_ROOT  : hindcast baseline root on GLORYS coast
-#                    (default: /home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast)
+#                    (default: /home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast)
 #   BASELINE_TAG   : baseline climatology tag
 #                    (default: 2006-2014)
 #   OUT_FILE       : CSV audit report
@@ -48,8 +48,8 @@ shopt -s nullglob
 # ==============================================================================
 
 IPCC_ROOT="${IPCC_ROOT:-/home/SB5/ipcc_esgf/monthly_1deg}"
-GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/glorys12v1_monthly_0p05}"
-HINDCAST_ROOT="${HINDCAST_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast}"
+GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/reanalysis/glorys12v1/monthly_0p05}"
+HINDCAST_ROOT="${HINDCAST_ROOT:-/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast}"
 BASELINE_TAG="${BASELINE_TAG:-2006-2014}"
 OUT_FILE="${OUT_FILE:-data/manifests/unit_depth_audit.csv}"
 MODELS="${MODELS:-}"

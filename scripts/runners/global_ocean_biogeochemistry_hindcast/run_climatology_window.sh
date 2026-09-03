@@ -17,7 +17,7 @@ set -euo pipefail
 #   - This runner is intended for monthly files already harmonized to a common
 #     0.25 x 0.25 degree grid and vertically interpolated to GLORYS levels.
 #   - Expected input layout:
-#       /home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/<var>/on_glorys/*.nc
+#       /home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25/<var>/on_glorys/*.nc
 #   - This runner computes one climatology per variable over the requested
 #     monthly file window.
 # ==============================================================================
@@ -44,7 +44,7 @@ VARS=(
 # Dataset-specific settings
 # ------------------------------------------------------------------------------
 DATASET_LABEL="global_ocean_biogeochemistry_hindcast"
-INROOT_BASE="/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25"
+INROOT_BASE="/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25"
 WINDOW_START="200601"
 WINDOW_END="201412"
 EXPECTED_N=108

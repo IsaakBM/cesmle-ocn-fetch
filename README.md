@@ -404,9 +404,9 @@ packaging/export/organization steps than as reusable scientific operators.
 
 - [remap_hindcast_baseline_to_0p05.sh](scripts/tools/remap_hindcast_baseline_to_0p05.sh)
   - reads hindcast baseline climatologies from:
-    `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25`
+    `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25`
   - writes derived hindcast baseline climatologies to:
-    `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05`
+    `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05`
   - auto-detects variable directories by requiring a `clim_windows/`
     subdirectory under the hindcast root
   - remaps with `cdo`
@@ -419,12 +419,12 @@ packaging/export/organization steps than as reusable scientific operators.
 - [remap_hindcast_baseline_to_0p05_glorys_coast.sh](scripts/tools/remap_hindcast_baseline_to_0p05_glorys_coast.sh)
   - current preferred biogeochemistry baseline derivation for downscaling
   - reads hindcast baseline climatologies from:
-    `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25`
+    `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25`
   - remaps each variable to the GLORYS `0.05` grid
   - fills missing coastal cells inside the GLORYS wet mask, currently taken
     from the GLORYS `thetao` `2006-2014` climatology
   - writes a complete all-variable root:
-    `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast`
+    `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast`
   - keeps the same `<var>/clim_windows/` tree and
     `_grid_0p05_global.nc` filename suffix
   - uses only originally finite cells as donors during coastal interpolation;
@@ -531,7 +531,7 @@ Typical outputs live in `parts/`.
 Examples:
 
 - Hindcast monthly outputs:
-  `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/<var>/parts/*.nc`
+  `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25/<var>/parts/*.nc`
 - IPCC/ESGF regridded monthly time-series:
   `/home/SB5/ipcc_esgf/monthly_1deg/<model>/<member>/<scenario>/<var>/parts/*.nc`
 
@@ -558,7 +558,7 @@ Typical outputs live in `on_glorys/`.
 Examples:
 
 - Hindcast:
-  `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25/<var>/on_glorys/*.nc`
+  `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25/<var>/on_glorys/*.nc`
 - IPCC/ESGF 3D variables:
   `/home/SB5/ipcc_esgf/monthly_1deg/<model>/<member>/<scenario>/<var>/on_glorys/*.nc`
 
@@ -1088,7 +1088,7 @@ What this worker changes relative to the generic adder:
   or an external mask such as the GLORYS `thetao` wet mask
 - it can optionally fill baseline gaps before addition, but this is now off by
   default for IPCC/ESGF biogeochemistry because the baseline root is already
-  `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast`
+  `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast`
 - it now supports multiple anomaly-fill methods, including
   `distance_weighted`
 - it can optionally require complete anomaly coverage inside the allowed wet
@@ -1115,7 +1115,7 @@ Methodological note:
 - the current IPCC/ESGF biogeochemistry path applies GLORYS-mask coastal fill
   twice in separate steps:
   1. while building the full hindcast baseline root
-     `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast`
+     `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast`
   2. while repairing remapped IPCC/ESGF anomaly gaps before adding them to that
      baseline
 - the fill is applied to the baseline product and to the anomaly product, not
@@ -1269,7 +1269,7 @@ WINDOWS="2030-2040 2050-2060 2090-2100" \
 MODEL=CNRM-ESM2-1 \
 REALIZATION=r1i1p1f2 \
 SCENARIO=ssp585 \
-HINDCAST_0P05_ROOT=/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast \
+HINDCAST_0P05_ROOT=/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast \
 DOWNSCALED_ROOT=/home/SB5/downscaled \
 PRODUCT_ROOT=/home/SB5/ocean_downscaling_products \
 OVERWRITE=yes \
@@ -1432,7 +1432,7 @@ Built with:
 Expected output root:
 
 ```text
-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05/
+/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05/
 └── <var>/
     └── clim_windows/
 ```
@@ -1469,7 +1469,7 @@ Built with:
 Expected output root:
 
 ```text
-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast/
+/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast/
 └── <var>/
     └── clim_windows/
 ```
@@ -1480,7 +1480,7 @@ Notes:
   the existing `0.25 x 0.25` hindcast climatology tree
 - first remaps each variable to the GLORYS `0.05` grid with `cdo`
 - then fills missing coastal cells inside the GLORYS wet mask, currently using:
-  `/home/SB5/glorys12v1_monthly_0p05/thetao/clim_windows/glorys12v1_thetao_clim_2006-2014.nc`
+  `/home/SB5/reanalysis/glorys12v1/monthly_0p05/thetao/clim_windows/glorys12v1_thetao_clim_2006-2014.nc`
 - `COASTAL_FILL_REQUIRE_COMPLETE=yes` is now the default for this GLORYS-coast
   baseline builder. After the bounded nearest or distance-weighted fill, any
   remaining GLORYS-wet baseline gaps are locally propagated from neighboring
@@ -1989,10 +1989,10 @@ Common paths used in the current workflows include:
 
 - `/home/sandbox-sparc/cesmle-ocn-fetch`
 - `/home/sandbox-sparc/cesmle-ocn-fetch/bgc_monthly_0p25`
-- `/home/SB5/glorys12v1_monthly_0p05`
-- `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25`
-- `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05`
-- `/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p05_glorys_coast`
+- `/home/SB5/reanalysis/glorys12v1/monthly_0p05`
+- `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25`
+- `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05`
+- `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast`
 - `/home/SB5/ipcc_esgf/downloads`
 - `/home/SB5/ipcc_esgf/monthly_1deg`
 - `/home/SB5/ipcc_esgf/cmip5_rcp85`

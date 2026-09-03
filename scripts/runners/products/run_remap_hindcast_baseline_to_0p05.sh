@@ -16,7 +16,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOL_SCRIPT="${SCRIPT_DIR}/../../tools/remap_hindcast_baseline_to_0p05.sh"
 LOG_DIR="/home/sandbox-sparc/cesmle-ocn-fetch/logs"
-IN_ROOT="${IN_ROOT:-/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25}"
+IN_ROOT="${IN_ROOT:-/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25}"
 
 PARTITION="${PARTITION:-grit_nodes}"
 NODES="${NODES:-1}"

@@ -56,7 +56,7 @@ YEARS=(
 # ------------------------------------------------------------------------------
 DATASET_LABEL="global_ocean_biogeochemistry_hindcast"
 INROOT="/home/sandbox-sparc/cesmle-ocn-fetch/bgc_monthly_0p25"
-OUTROOT="/home/SB5/global_ocean_biogeochemistry_hindcast_monthly_0p25"
+OUTROOT="/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25"
 GRIDFILE="${OUTROOT}/grid_0p25_global.txt"
 METHOD="remapbil"
 FILE_GLOB="*.nc*"

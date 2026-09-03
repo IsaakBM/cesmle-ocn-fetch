@@ -81,6 +81,41 @@ where `<stage>` may include `parts`, `on_glorys`, `clim_windows`,
    new layout.
 5. Later, decide whether to move old data, leave it archived, or add symlinks.
 
+## Dry-Run Migration Assessment
+
+Before changing any legacy top-level roots, run the read-only assessment script
+on the cluster:
+
+```bash
+bash scripts/bash/assess_sb5_storage_migration.sh
+```
+
+The report compares each legacy root with its agreed target root by existence,
+size, shallow file counts, inode identity, top-level directory counts, sample
+files, and symlinks. It also writes a commented dry-run compatibility-action
+file. That file is intentionally not executable migration logic; it is a review
+aid for choosing whether each legacy path should remain as-is, become an alias,
+or eventually move into an archive namespace.
+
+Current assessment from the cluster shows that the major target roots are
+already populated as separate directories rather than identical inodes. Most
+pairs match by size and shallow file count. The GLORYS target has more files
+than the old root because it includes `siconc` and additional temporary files:
+
+```text
+/home/SB5/glorys12v1_monthly_0p05
+  variables: bottomT, mlotst, so, thetao, uo, vo, zos
+  files at maxdepth 4: 2276
+
+/home/SB5/reanalysis/glorys12v1/monthly_0p05
+  variables: bottomT, mlotst, siconc, so, thetao, uo, vo, zos
+  files at maxdepth 4: 2601
+```
+
+This means the next migration decision should be about compatibility policy,
+not moving bytes. Keep the legacy roots in place until at least one end-to-end
+workflow has been tested using only the new default paths.
+
 ## Non-Destructive Setup
 
 Run:

@@ -116,6 +116,33 @@ This means the next migration decision should be about compatibility policy,
 not moving bytes. Keep the legacy roots in place until at least one end-to-end
 workflow has been tested using only the new default paths.
 
+## New-Defaults Smoke Test
+
+After updating script defaults to the target roots, run one small workflow test
+from the cluster repo checkout. Start with the preflight check, which is
+read-only and submits no Slurm jobs:
+
+```bash
+STEP=preflight bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
+```
+
+For a one-variable test of the GLORYS-target branch:
+
+```bash
+SMOKE_VARS=thetao STEP=preflight bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
+SMOKE_VARS=thetao RUN=yes STEP=monthly bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
+SMOKE_VARS=thetao RUN=yes STEP=audit bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
+SMOKE_VARS=thetao RUN=yes STEP=vertical bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
+SMOKE_VARS=thetao RUN=yes STEP=climatology bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
+SMOKE_VARS=thetao RUN=yes STEP=delta bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
+SMOKE_VARS=thetao RUN=yes STEP=add bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
+```
+
+For a one-variable test of the hindcast-target branch, use `SMOKE_VARS=chl`
+with the same sequence. Wait for the Slurm jobs from each stage to finish before
+starting the next stage. Do not use `STEP=all` for migration validation unless
+all upstream stage outputs already exist.
+
 ## Non-Destructive Setup
 
 Run:

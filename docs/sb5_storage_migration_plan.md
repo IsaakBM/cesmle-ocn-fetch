@@ -153,6 +153,51 @@ Cluster validation completed on 2026-09-04:
   anomaly mode, wrote the expected `0p05` downscaled product, and wrote the
   expected final `0p25` regridded product under `/home/SB5/downscaled`.
 
+## Legacy Root Archive Policy
+
+After the new-default smoke tests pass, the preferred compatibility policy is
+to archive the old top-level roots and leave symlinks at the legacy paths. This
+keeps older notebooks or ad hoc commands working while making the new layout the
+canonical location.
+
+Run the archive script in dry-run mode first:
+
+```bash
+bash scripts/bash/archive_sb5_legacy_storage_roots.sh
+```
+
+If the dry run looks correct, run the real metadata-only archive step:
+
+```bash
+DRY_RUN=no bash scripts/bash/archive_sb5_legacy_storage_roots.sh
+```
+
+The script moves legacy roots into:
+
+```text
+/home/SB5/archive/storage_roots_<YYYYMMDD>/
+```
+
+and creates symlinks from the old paths back to the migrated target roots.
+
+This operation does not delete data and does not touch:
+
+```text
+/home/SB5/downscaled
+/home/SB5/ocean_downscaling_products*
+```
+
+It also does not archive the canonical target roots:
+
+```text
+/home/SB5/reanalysis
+/home/SB5/ipcc_esgf
+```
+
+Because the archived directories remain on disk, this is a compatibility and
+clarity step, not a storage-reclamation step. Storage cleanup should be a
+separate decision after a longer production soak period.
+
 ## Non-Destructive Setup
 
 Run:

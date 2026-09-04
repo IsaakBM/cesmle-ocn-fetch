@@ -156,9 +156,9 @@ Cluster validation completed on 2026-09-04:
 ## Legacy Root Archive Policy
 
 After the new-default smoke tests pass, the preferred compatibility policy is
-to archive the old top-level roots and leave symlinks at the legacy paths. This
-keeps older notebooks or ad hoc commands working while making the new layout the
-canonical location.
+to archive the old top-level roots without leaving visible legacy names in
+`/home/SB5`. This keeps the new layout obvious for collaborators and makes
+`/home/SB5/reanalysis` and `/home/SB5/ipcc_esgf` the canonical locations.
 
 Run the archive script in dry-run mode first:
 
@@ -172,13 +172,26 @@ If the dry run looks correct, run the real metadata-only archive step:
 DRY_RUN=no bash scripts/bash/archive_sb5_legacy_storage_roots.sh
 ```
 
+If temporary backwards compatibility is required for older notebooks or ad hoc
+commands, opt in explicitly:
+
+```bash
+CREATE_SYMLINKS=yes DRY_RUN=no bash scripts/bash/archive_sb5_legacy_storage_roots.sh
+```
+
 The script moves legacy roots into:
 
 ```text
 /home/SB5/archive/storage_roots_<YYYYMMDD>/
 ```
 
-and creates symlinks from the old paths back to the migrated target roots.
+By default it does not create symlinks from the old paths back to the migrated
+target roots. If symlinks were created during transition, move them under an
+archive folder such as:
+
+```text
+/home/SB5/archive/legacy_symlinks_<YYYYMMDD>/
+```
 
 This operation does not delete data and does not touch:
 

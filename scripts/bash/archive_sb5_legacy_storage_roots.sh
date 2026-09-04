@@ -8,12 +8,13 @@
 #
 #  Purpose:
 #    Archive old top-level /home/SB5 storage roots after the migrated target
-#    roots have been verified, then leave compatibility symlinks at the old
-#    paths so older notebooks/scripts can still resolve.
+#    roots have been verified. By default this removes the legacy names from
+#    the top-level /home/SB5 view so the canonical layout is unambiguous.
 #
 #  Notes:
 #    - Dry-run is the default.
 #    - This script never deletes data.
+#    - Compatibility symlinks can be created with CREATE_SYMLINKS=yes if needed.
 #    - It intentionally does not touch /home/SB5/downscaled or
 #      /home/SB5/ocean_downscaling_products*.
 # ==============================================================================
@@ -24,7 +25,7 @@ SB5_ROOT="${SB5_ROOT:-/home/SB5}"
 ARCHIVE_TAG="${ARCHIVE_TAG:-$(date +%Y%m%d)}"
 ARCHIVE_ROOT="${ARCHIVE_ROOT:-${SB5_ROOT}/archive/storage_roots_${ARCHIVE_TAG}}"
 DRY_RUN="${DRY_RUN:-yes}"
-CREATE_SYMLINKS="${CREATE_SYMLINKS:-yes}"
+CREATE_SYMLINKS="${CREATE_SYMLINKS:-no}"
 
 case "${DRY_RUN}" in
   yes|no) ;;

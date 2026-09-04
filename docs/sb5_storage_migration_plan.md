@@ -143,6 +143,16 @@ with the same sequence. Wait for the Slurm jobs from each stage to finish before
 starting the next stage. Do not use `STEP=all` for migration validation unless
 all upstream stage outputs already exist.
 
+Cluster validation completed on 2026-09-04:
+
+- `thetao` GLORYS-target add-stage smoke test passed with Slurm job `1095795`.
+  It read the new GLORYS and IPCC/ESGF roots and wrote the expected `0p05`
+  downscaled product under `/home/SB5/downscaled`.
+- `chl` hindcast-target add-stage smoke test passed with Slurm job `1095819`.
+  It read the new GLORYS, hindcast, and IPCC/ESGF roots, used `log_ratio`
+  anomaly mode, wrote the expected `0p05` downscaled product, and wrote the
+  expected final `0p25` regridded product under `/home/SB5/downscaled`.
+
 ## Non-Destructive Setup
 
 Run:

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# DEPRECATED (2026-09-12): historical reproduction only.
+# See legacy/deprecated/README.md for the supported replacement and limitations.
 # ==============================================================================
 #  Runner for filling hindcast baseline coastal gaps with a GLORYS wet mask
 #
@@ -6,11 +8,6 @@
 #  (ibrito@conservation.org)
 # ==============================================================================
 #
-# LEGACY CANDIDATE:
-#   This submits the patch-style baseline coastal-fill tool. It is likely to move
-#   to legacy after the planned all-variable 0.25 -> 0.05_glorys_coast
-#   remap-and-fill runner replaces this intermediate step.
-# ==============================================================================
 
 set -euo pipefail
 

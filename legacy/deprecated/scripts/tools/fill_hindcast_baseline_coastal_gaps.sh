@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# DEPRECATED (2026-09-12): historical reproduction only.
+# See legacy/deprecated/README.md for the supported replacement and limitations.
 # ==============================================================================
 #  Fill hindcast baseline coastal gaps using an external wet mask
 #
@@ -10,11 +12,6 @@
 #  Use at your own risk. Caveat emptor.
 # ==============================================================================
 #
-# LEGACY CANDIDATE:
-#   This patch-style tool fills coastal gaps after the 0.05 hindcast root already
-#   exists. It is likely to move to legacy after the planned all-variable
-#   0.25 -> 0.05_glorys_coast remap-and-fill workflow is implemented and tested.
-# ==============================================================================
 
 set -euo pipefail
 

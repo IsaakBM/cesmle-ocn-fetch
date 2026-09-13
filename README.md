@@ -174,6 +174,17 @@ The key point is that the newer code organization is based on:
 
 So the repository is not organized as “one custom script per dataset.”
 
+## Code lifecycle
+
+The [September 2026 code audit](docs/code_lifecycle_audit_2026-09-12.md) records
+script and function coverage, retirement decisions, and validation limits.
+Superseded non-coastal addition, patch-style hindcast coastal filling, and the
+local CESM download experiment are now under
+[legacy/deprecated](legacy/deprecated/README.md). Use the coastal-fill production
+workers and the direct `0p25 -> 0p05_glorys_coast` baseline workflow for new runs.
+CESM reproduction, the original unfilled `0p05` baseline, standalone audits,
+and delivery exporters remain available.
+
 ## Repository Layout
 
 ```text
@@ -187,6 +198,7 @@ cesmle-ocn-fetch/
 │   └── aws-cesm1-le.csv            # CESM-related reference table
 ├── legacy/                         # Archived outputs and pre-refactor workflow code
 │   ├── *.nc                        # Example downscaled/anomaly/climatology NetCDF files
+│   ├── deprecated/                  # Superseded scripts; see its README
 │   └── scripts/
 │       └── slurm/                  # Archived pre-refactor Slurm workflow scripts
 ├── logs/                           # Slurm stdout/stderr targets
@@ -196,15 +208,13 @@ cesmle-ocn-fetch/
 │   │   ├── download_GLORYS_parallel.sh
 │   │   ├── process_esgf_wget_scripts.sh
 │   │   ├── process_esgf_wget_scripts_run_example.txt
-│   │   ├── bgc_monthly_download.slurm.sh
-│   │   └── z_cesm1_temp.sh
+│   │   └── bgc_monthly_download.slurm.sh
 │   ├── core/                       # Reusable processing workers
 │   │   ├── temporal_aggregate_regrid.slurm.sh
 │   │   ├── vertical_interpolate_to_reference.slurm.sh
 │   │   ├── climatology_window_from_monthly_files.slurm.sh
 │   │   ├── climatology_window_from_timeseries.slurm.sh
 │   │   ├── delta_from_climatologies.slurm.sh
-│   │   ├── add_anomaly_to_baseline.slurm.sh
 │   │   ├── add_anomaly_to_baseline_with_coastal_fill.slurm.sh
 │   │   └── add_cesm_members_to_glorys_with_coastal_fill.slurm.sh
 │   ├── lib/                        # Shared runner helpers
@@ -226,7 +236,6 @@ cesmle-ocn-fetch/
 │   │   │   ├── run_vertical_interpolate_to_reference.sh
 │   │   │   ├── run_climatology_window.sh
 │   │   │   ├── run_delta_from_climatologies.sh
-│   │   │   ├── run_add_anomaly_to_baseline.sh
 │   │   │   └── run_add_anomaly_to_baseline_with_coastal_fill.sh
 │   │   ├── downscaling/
 │   │   │   └── run_add_anomaly_to_trusted_baseline_with_coastal_fill.sh
@@ -314,17 +323,6 @@ Reusable worker scripts. These do the actual processing.
   - can optionally regrid the resulting delta to a target grid
   - keeps the subtraction logic generic while runners decide when regridding
     is part of the dataset workflow
-
-- [add_anomaly_to_baseline.slurm.sh](scripts/core/add_anomaly_to_baseline.slurm.sh)
-  - legacy/simple final addition worker without horizontal coastal repair
-  - kept for the non-coastal path and for comparison against the
-    coastal-fill variant
-  - reads one baseline climatology and one anomaly/delta file
-  - first computes baseline plus anomaly
-  - then dynamically fills missing top layers in the final output, using the
-    first deeper level that contains valid values
-  - writes the native output
-  - can optionally regrid the final downscaled product to another grid
 
 - [add_anomaly_to_baseline_with_coastal_fill.slurm.sh](scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh)
   - current production final addition/downscaling worker
@@ -619,7 +617,7 @@ In the newer generalized structure, those later-stage operations are now
 represented by:
 
 - [delta_from_climatologies.slurm.sh](scripts/core/delta_from_climatologies.slurm.sh)
-- [add_anomaly_to_baseline.slurm.sh](scripts/core/add_anomaly_to_baseline.slurm.sh)
+- [add_anomaly_to_baseline_with_coastal_fill.slurm.sh](scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh)
 
 The original CESM-to-GLORYS production scripts for these later stages are still
 kept in [legacy/scripts/slurm](legacy/scripts/slurm),
@@ -666,7 +664,11 @@ Important notes:
 - it now follows the same lightweight-runner plus generic-core structure as the
   other dataset families
 
-### CESM
+### CESM (retained reproduction workflow)
+
+CESM/RCP85 is excluded from the current CMIP6 ensemble and sample defaults.
+These preprocessing and coastal-fill runners remain available for reproduction.
+The superseded non-coastal runner is archived under `legacy/deprecated/`.
 
 Typical older logic:
 
@@ -686,8 +688,8 @@ Closest modern abstraction:
   [climatology_window_from_timeseries.slurm.sh](scripts/core/climatology_window_from_timeseries.slurm.sh)
 - delta from climatologies:
   [delta_from_climatologies.slurm.sh](scripts/core/delta_from_climatologies.slurm.sh)
-- baseline plus anomaly:
-  [add_anomaly_to_baseline.slurm.sh](scripts/core/add_anomaly_to_baseline.slurm.sh)
+- historical non-coastal baseline plus anomaly (deprecated):
+  [add_anomaly_to_baseline.slurm.sh](legacy/deprecated/scripts/core/add_anomaly_to_baseline.slurm.sh)
 - baseline plus anomaly with coastal fill on a target wet mask, currently the
   GLORYS wet mask for IPCC/ESGF biogeochemistry:
   [add_anomaly_to_baseline_with_coastal_fill.slurm.sh](scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh)
@@ -698,7 +700,6 @@ Modern CESM runners now live in:
 - [run_vertical_interpolate_to_reference.sh](scripts/runners/cesm_to_glorys/run_vertical_interpolate_to_reference.sh)
 - [run_climatology_window.sh](scripts/runners/cesm_to_glorys/run_climatology_window.sh)
 - [run_delta_from_climatologies.sh](scripts/runners/cesm_to_glorys/run_delta_from_climatologies.sh)
-- [run_add_anomaly_to_baseline.sh](scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline.sh)
 - [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline_with_coastal_fill.sh)
 
 Current CESM logic in the new runner architecture:
@@ -2191,10 +2192,9 @@ To avoid confusion:
 - `delta_from_climatologies.slurm.sh` computes model-derived change-field
   products; it does not add them to a baseline.
 
-- `add_anomaly_to_baseline.slurm.sh` and
-  `add_anomaly_to_baseline_with_coastal_fill.slurm.sh` are the final
-  addition/downscaling workers.
-  They combine a baseline climatology with an anomaly/delta field. In the
+- `add_anomaly_to_baseline_with_coastal_fill.slurm.sh` is the production final
+  addition/downscaling worker; the older non-coastal worker is deprecated.
+  It combines a baseline climatology with an anomaly/delta field. In the
   current IPCC/ESGF biogeochemistry path, the coastal-fill variant reads the
   GLORYS-coast-filled hindcast baseline and repairs missing remapped anomaly
   cells inside the GLORYS wet mask plus any baseline-valid cells before

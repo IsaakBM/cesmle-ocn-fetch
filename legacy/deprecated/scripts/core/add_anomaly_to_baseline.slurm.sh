@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# DEPRECATED (2026-09-12): historical reproduction only.
+# See legacy/deprecated/README.md for the supported replacement and limitations.
 # ==============================================================================
 #  Generic baseline + anomaly adder
 #
@@ -20,11 +22,6 @@
 #  Intended to be run on Slurm-based HPC systems.
 # ==============================================================================
 #
-# LEGACY CANDIDATE:
-#   This is the no-coastal-fill anomaly adder. The main future/downscaling path
-#   is expected to use add_anomaly_to_baseline_with_coastal_fill.slurm.sh when
-#   GLORYS-coast products become the trusted workflow.
-# ==============================================================================
 
 #SBATCH -p grit_nodes
 #SBATCH --job-name=add_anom

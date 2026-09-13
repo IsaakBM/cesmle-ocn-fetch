@@ -1,4 +1,6 @@
 #!/bin/bash
+# DEPRECATED (2026-09-12): historical reproduction only.
+# See legacy/deprecated/README.md for the supported replacement and limitations.
 set -euo pipefail
 
 # Folder to save files

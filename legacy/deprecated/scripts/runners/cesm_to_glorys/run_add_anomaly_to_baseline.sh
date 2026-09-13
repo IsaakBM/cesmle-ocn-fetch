@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# DEPRECATED (2026-09-12): historical reproduction only.
+# See legacy/deprecated/README.md for the supported replacement and limitations.
 # ==============================================================================
 #  CESM runner for generic baseline + anomaly adder
 #
@@ -6,11 +8,6 @@
 #  (ibrito@conservation.org)
 # ==============================================================================
 #
-# LEGACY CANDIDATE:
-#   This runner uses the no-coastal-fill anomaly adder. Keep for historical CESM
-#   reproduction until the coastal-fill workflow is confirmed as the only trusted
-#   downscaling path.
-# ==============================================================================
 
 set -euo pipefail
 

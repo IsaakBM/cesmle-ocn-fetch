@@ -6,9 +6,9 @@
 #  (ibrito@conservation.org)
 # ==============================================================================
 #
-# POSSIBLE LEGACY CANDIDATE:
-#   This submits the original 0.25 -> 0.05 remap without GLORYS-coast filling.
-#   Keep it until the all-variable 0.25 -> 0.05_glorys_coast runner is proven.
+# RETAINED FOR REPRODUCTION:
+#   Builds the distinct original 0.05 baseline without GLORYS-coast filling.
+#   Production coastal baselines use run_remap_hindcast_baseline_to_0p05_glorys_coast.sh.
 # ==============================================================================
 
 set -euo pipefail

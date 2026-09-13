@@ -128,15 +128,6 @@ checksum_file() {
   esac
 }
 
-mtime_file() {
-  local file="$1"
-  if stat -c %Y "$file" >/dev/null 2>&1; then
-    stat -c %Y "$file"
-  else
-    stat -f %m "$file"
-  fi
-}
-
 append_script_entries() {
   local script="$1"
   local tmp_entries="$2"

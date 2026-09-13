@@ -10,10 +10,9 @@
 #  Use at your own risk. Caveat emptor.
 # ==============================================================================
 #
-# POSSIBLE LEGACY CANDIDATE:
-#   This creates the original 0.05 hindcast root without GLORYS-coast filling.
-#   Keep it until the planned all-variable 0.25 -> 0.05_glorys_coast
-#   remap-and-fill workflow is implemented, tested, and accepted.
+# RETAINED FOR REPRODUCTION:
+#   Creates the distinct original 0.05 hindcast product without coastal filling.
+#   Production coastal baselines use remap_hindcast_baseline_to_0p05_glorys_coast.sh.
 # ==============================================================================
 
 set -euo pipefail

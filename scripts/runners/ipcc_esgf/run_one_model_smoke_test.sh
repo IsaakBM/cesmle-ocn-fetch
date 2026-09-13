@@ -12,10 +12,9 @@
 #    - Keep each stage separate so jobs can finish before the next stage starts
 #
 #  Intended use:
-#    Run STEP=preflight first on the cluster. Then run STEP=... one stage at a
-#    time. Do not use STEP=all unless the previous stage outputs already exist,
-#    because the underlying runners submit Slurm jobs but do not wait for job
-#    completion.
+#    Run STEP=preflight after downloading the selected inputs. Run processing
+#    stages one at a time, setting PREVIOUS_JOB_IDS for dependent stages.
+#    RUN=yes STEP=all is rejected because submissions are asynchronous.
 # ==============================================================================
 
 set -euo pipefail
@@ -113,6 +112,117 @@ find_first_dir() {
   find "$root" -path "$pattern" -type d 2>/dev/null | head -n 1
 }
 
+# ------------------------------------------------------------------------------
+# New-model input preflight: inspect metadata/timestamps, never alter source data.
+# Historical and future files must provide the same selected realization. Units
+# are reported and checked for consistency; this does not convert any values.
+# ------------------------------------------------------------------------------
+input_preflight() {
+  python3 - "${IPCC_ESGF_ROOT}/downloads" "${SMOKE_MODEL}" "${SMOKE_SCENARIO}" "${SMOKE_MEMBER}" "${SMOKE_VARS}" "${SMOKE_WINDOWS}" <<'PY_INPUT_PREFLIGHT'
+import collections
+from pathlib import Path
+import re
+import sys
+import numpy as np
+import xarray as xr
+
+root, model, scenario, requested_member, variables, windows = sys.argv[1:]
+root = Path(root) / model
+if not variables.split() or not windows.split():
+    raise SystemExit("ERROR: SMOKE_VARS and SMOKE_WINDOWS must not be empty")
+errors = []
+for variable in variables.split():
+    selected = {}
+    units = {}
+    for experiment in ("historical", scenario):
+        groups = collections.defaultdict(list)
+        for path in sorted(root.rglob(f"{variable}_*.nc")):
+            parts = path.name.split("_")
+            if len(parts) >= 7 and parts[2] == model and parts[3] == experiment:
+                groups[parts[4]].append(path)
+        if requested_member == "auto":
+            if len(groups) != 1:
+                errors.append(f"{variable}/{experiment}: expected one member, found {sorted(groups)}; select SMOKE_MEMBER explicitly")
+                continue
+            member = next(iter(groups))
+        else:
+            member = requested_member
+        paths = groups.get(member, [])
+        if not paths:
+            errors.append(f"{variable}/{experiment}: no files for {member}")
+            continue
+        selected[experiment] = member
+        counts = collections.Counter()
+        unit_set = set()
+        for path in paths:
+            try:
+                with xr.open_dataset(path) as ds:
+                    if variable not in ds or "time" not in ds[variable].dims:
+                        raise ValueError("missing requested variable or its time dimension")
+                    unit = ds[variable].attrs.get("units", "")
+                    if not unit:
+                        raise ValueError("variable units are missing")
+                    unit_set.add(unit)
+                    if variable in {"thetao", "so", "ph", "o2", "chl", "uo", "vo", "zooc"}:
+                        if "lev" not in ds[variable].dims or "lev" not in ds.coords:
+                            raise ValueError("current IPCC vertical runner requires lev coordinates")
+                        if ds.lev.attrs.get("units", "").lower() not in {"m", "meter", "meters", "metre", "metres"}:
+                            raise ValueError("current IPCC vertical runner assumes depth in metres; review this model")
+                        levels = np.asarray(ds.lev.values)
+                        if (not np.all(np.isfinite(levels)) or not np.all(np.diff(levels) > 0)
+                                or np.any(levels < 0) or ds.lev.attrs.get("positive", "down").lower() != "down"):
+                            raise ValueError("depth must be finite, nonnegative, positive-down and strictly increasing; no automatic correction")
+                    years, months = ds.time.dt.year.values, ds.time.dt.month.values
+                    counts.update(int(y) * 12 + int(m) - 1 for y, m in zip(years, months))
+            except Exception as exc:
+                errors.append(f"{path}: {exc}")
+        units[experiment] = unit_set
+        for window in (["2006-2014"] if experiment == "historical" else windows.split()):
+            match = re.fullmatch(r"(\d{4})-(\d{4})", window)
+            if not match or int(match[1]) > int(match[2]):
+                errors.append(f"Invalid window: {window}")
+                continue
+            expected = range(int(match[1]) * 12, (int(match[2]) + 1) * 12)
+            problems = [f"{month // 12:04d}-{month % 12 + 1:02d}={counts[month]}" for month in expected if counts[month] != 1]
+            if problems:
+                errors.append(f"{variable}/{experiment}/{member}/{window}: monthly counts must equal 1: " + ", ".join(problems))
+        print(f"INPUT: {variable} {experiment} {member}: {len(paths)} files; units={sorted(unit_set)}")
+    if len(selected) == 2 and len(set(selected.values())) != 1:
+        errors.append(f"{variable}: historical/future members differ: {selected}")
+    if len(units) == 2 and (any(len(value) != 1 for value in units.values()) or units["historical"] != units[scenario]):
+        errors.append(f"{variable}: source units differ across chunks/experiments: {units}")
+if errors:
+    raise SystemExit("INPUT PREFLIGHT FAILED:\n" + "\n".join(errors))
+print("INPUT PREFLIGHT: PASS (coverage, member pairing, source units, depth assumptions)")
+PY_INPUT_PREFLIGHT
+}
+
+# ------------------------------------------------------------------------------
+# Verify explicit predecessor jobs before submitting a dependent stage.
+# sacct completion proves job success, not numerical validity; worker checks still run.
+# ------------------------------------------------------------------------------
+verify_previous_jobs() {
+  if [[ ! "${PREVIOUS_JOB_IDS:-}" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+    echo "ERROR: Set PREVIOUS_JOB_IDS to the comma-separated jobs from the preceding stage." >&2
+    return 1
+  fi
+  local accounting
+  accounting="$(sacct -n -X -P -j "${PREVIOUS_JOB_IDS}" --format=JobIDRaw,State,ExitCode)" || return 1
+  python3 - "${PREVIOUS_JOB_IDS}" "${accounting}" <<'PY_JOB_STATUS'
+import sys
+requested = set(sys.argv[1].split(","))
+rows = {}
+for line in sys.argv[2].splitlines():
+    fields = line.strip().split("|")
+    if len(fields) >= 3 and fields[0] in requested:
+        rows[fields[0]] = fields[1:3]
+failed = [job for job in sorted(requested) if rows.get(job) != ["COMPLETED", "0:0"]]
+if failed:
+    raise SystemExit("ERROR: Predecessor jobs are missing, incomplete, or failed: " + ", ".join(f"{job}={rows.get(job)}" for job in failed))
+print("PREDECESSOR JOBS: PASS")
+PY_JOB_STATUS
+}
+
 preflight_step() {
   local failed=0
   local ipcc_root="${IPCC_ESGF_ROOT}/monthly_1deg"
@@ -199,12 +309,14 @@ preflight_step() {
     return 1
   fi
 
-  echo "Preflight passed for required migrated roots. Warnings are expected before later pipeline stages have run."
+  input_preflight || return 1
+  echo "Preflight passed for required roots and downloaded inputs. Later-stage warnings are expected before processing."
 }
 
 monthly_step() {
   run_or_print "monthly standardize/regrid: historical + ${SMOKE_SCENARIO}" \
     env \
+    IPCC_ESGF_ROOT="${IPCC_ESGF_ROOT}" \
     MODELS="${SMOKE_MODEL}" \
     SCENARIOS="historical ${SMOKE_SCENARIO}" \
     VARS="${SMOKE_VARS}" \
@@ -215,6 +327,7 @@ monthly_step() {
 audit_step() {
   run_or_print "unit/depth audit on standardized monthly parts" \
     env \
+    IPCC_ESGF_ROOT="${IPCC_ESGF_ROOT}" \
     MODELS="${SMOKE_MODEL}" \
     SCENARIOS="historical ${SMOKE_SCENARIO}" \
     VARS="${SMOKE_VARS}" \
@@ -231,6 +344,7 @@ audit_step() {
 vertical_step() {
   run_or_print "vertical interpolation for 3D variables only" \
     env \
+    IPCC_ESGF_ROOT="${IPCC_ESGF_ROOT}" \
     MODELS="${SMOKE_MODEL}" \
     SCENARIOS="historical ${SMOKE_SCENARIO}" \
     VARS="${SMOKE_VARS}" \
@@ -242,6 +356,7 @@ vertical_step() {
 climatology_step() {
   run_or_print "climatology windows: baseline + ${SMOKE_WINDOWS}" \
     env \
+    IPCC_ESGF_ROOT="${IPCC_ESGF_ROOT}" \
     MODELS="${SMOKE_MODEL}" \
     SCENARIOS="historical ${SMOKE_SCENARIO}" \
     VARS="${SMOKE_VARS}" \
@@ -253,6 +368,7 @@ climatology_step() {
 delta_step() {
   run_or_print "future-minus-historical deltas: ${SMOKE_WINDOWS}" \
     env \
+    IPCC_ESGF_ROOT="${IPCC_ESGF_ROOT}" \
     MODELS="${SMOKE_MODEL}" \
     SCENARIOS="${SMOKE_SCENARIO}" \
     VARS="${SMOKE_VARS}" \
@@ -264,6 +380,7 @@ delta_step() {
 add_step() {
   run_or_print "add deltas to trusted baselines: ${SMOKE_WINDOWS}" \
     env \
+    IPCC_ESGF_ROOT="${IPCC_ESGF_ROOT}" \
     MODELS="${SMOKE_MODEL}" \
     SCENARIOS="${SMOKE_SCENARIO}" \
     VARS="${SMOKE_VARS}" \
@@ -292,18 +409,35 @@ Run one step at a time, waiting for Slurm jobs from each step to finish:
   STEP=preflight    bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
   RUN=yes STEP=monthly      bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
   RUN=yes STEP=audit        bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
-  RUN=yes STEP=vertical     bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
-  RUN=yes STEP=climatology  bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
-  RUN=yes STEP=delta        bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
-  RUN=yes STEP=add          bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
+  PREVIOUS_JOB_IDS=<monthly-job-ids> RUN=yes STEP=vertical     bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
+  PREVIOUS_JOB_IDS=<preparation-job-ids> RUN=yes STEP=climatology  bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
+  PREVIOUS_JOB_IDS=<climatology-job-ids> RUN=yes STEP=delta        bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
+  PREVIOUS_JOB_IDS=<delta-job-ids> RUN=yes STEP=add          bash scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh
 
 Use RUN=no, the default, to print the command without running it.
 EOF
 }
 
+# A sequence of submissions is not a dependency chain. Keep explicit stage runs.
+if [[ "${RUN}" == "yes" ]]; then
+  case "${STEP}" in
+    all)
+      echo "ERROR: RUN=yes STEP=all is unsafe: stages submit asynchronous Slurm jobs. Run one stage at a time." >&2
+      exit 1 ;;
+    monthly) preflight_step ;;
+    vertical|climatology|delta|add) verify_previous_jobs ;;
+  esac
+fi
+
 case "${STEP}" in
   plan)
     print_plan
+    ;;
+  inputs)
+    input_preflight
+    ;;
+  verify_jobs)
+    verify_previous_jobs
     ;;
   preflight)
     preflight_step
@@ -336,7 +470,7 @@ case "${STEP}" in
     add_step
     ;;
   *)
-    echo "ERROR: STEP must be one of: plan, preflight, monthly, audit, vertical, climatology, delta, add, all"
+    echo "ERROR: STEP must be one of: plan, inputs, preflight, verify_jobs, monthly, audit, vertical, climatology, delta, add, all"
     exit 1
     ;;
 esac

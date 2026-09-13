@@ -16,12 +16,16 @@ RESOLUTIONS="${RESOLUTIONS:-auto}"
 INCLUDE_BASELINE="${INCLUDE_BASELINE:-yes}"
 INCLUDE_FUTURE="${INCLUDE_FUTURE:-yes}"
 COMPUTE_STATS="${COMPUTE_STATS:-no}"
-FAIL_ON_ISSUE="${FAIL_ON_ISSUE:-no}"
+FAIL_ON_ISSUE="${FAIL_ON_ISSUE:-yes}"
 
+# Optional operator-reviewed list: one product path relative to PRODUCT_ROOT per line.
+# Completeness cannot be inferred from existing files alone.
+export EXPECTED_FILES="${EXPECTED_FILES:-}"
 mkdir -p "$(dirname "${OUT_FILE}")"
 
 python3 - <<'PY' "${PRODUCT_ROOT}" "${OUT_FILE}" "${FUTURE_MODELS}" "${EXCLUDE_FUTURE_MODELS}" "${SCENARIOS}" "${VARS}" "${WINDOWS}" "${RESOLUTIONS}" "${INCLUDE_BASELINE}" "${INCLUDE_FUTURE}" "${COMPUTE_STATS}" "${FAIL_ON_ISSUE}"
 import csv
+import os
 import math
 import re
 import sys
@@ -140,6 +144,9 @@ def audit_one(path, record):
 
             if "time" in ds:
                 years = numeric_years(ds["time"].values)
+                if time_size != 1 or not years:
+                    status = "invalid_climatology_time"
+                    notes.append("expected one decodable climatology timestep")
                 time_values = "|".join(str(v) for v in np.ravel(ds["time"].values)[:6])
                 if years:
                     time_min_year = min(years)
@@ -278,6 +285,22 @@ if include_future:
                 "resolution": resolution,
             }))
 
+# Compare the selected audit records with an independently supplied release list.
+# Missing files and existing files excluded by filters are both explicit failures.
+expected_file = os.environ.get("EXPECTED_FILES", "")
+if expected_file:
+    audited = {str(Path(row["file"]).resolve()) for row in records}
+    for line in Path(expected_file).read_text().splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        path = (root / line.strip()).resolve()
+        if not path.is_relative_to(root.resolve()):
+            raise SystemExit(f"ERROR: Expected path escapes PRODUCT_ROOT: {line}")
+        if str(path) not in audited:
+            records.append({"file": str(path), "filename": path.name,
+                            "status": "missing_product" if not path.is_file() else "excluded_expected_product",
+                            "notes": "Expected release artifact was not inspected"})
+
 fieldnames = [
     "scope", "model", "member_or_stat", "scenario", "var", "window", "resolution",
     "file", "filename", "main_var", "dims", "time_size", "time_values",
@@ -298,6 +321,8 @@ for row in records:
 for status, count in sorted(counts.items()):
     print(f"{status}: {count}")
 
-if fail_on_issue and any(row["status"] in {"time_outside_window", "content_mismatch", "filename_mismatch", "read_error"} for row in records):
+# Empty selection is not a successfully validated release. Every reported issue
+# is blocking in strict mode, including absent or inconsistent time bounds.
+if fail_on_issue and (not records or any(row["status"] != "ok" for row in records)):
     sys.exit(2)
 PY

@@ -22,7 +22,8 @@
 #    - If a selected ESGF endpoint fails, the fetcher can try alternate replica
 #      URLs from the full discovered files manifest when available.
 #    - By default, failed files are reported and the fetch continues so one
-#      offline ESGF endpoint does not block all other downloads.
+#      offline ESGF endpoint does not block all other downloads. The process
+#      returns failure after reporting incomplete downloads (FAIL_ON_ERROR=yes).
 # ==============================================================================
 
 options(stringsAsFactors = FALSE)
@@ -59,7 +60,7 @@ wget_tries <- env_value("WGET_TRIES", "3")
 wget_connect_timeout <- env_value("WGET_CONNECT_TIMEOUT", "60")
 wget_read_timeout <- env_value("WGET_READ_TIMEOUT", "900")
 continue_on_error <- tolower(env_value("CONTINUE_ON_ERROR", "yes")) %in% c("yes", "true", "1")
-fail_on_error <- tolower(env_value("FAIL_ON_ERROR", "no")) %in% c("yes", "true", "1")
+fail_on_error <- tolower(env_value("FAIL_ON_ERROR", "yes")) %in% c("yes", "true", "1")
 failed_plan <- env_value(
   "FAILED_PLAN",
   file.path(out_root, "failed_downloads", paste0("ipcc_esgf_failed_downloads_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".csv"))
@@ -124,6 +125,15 @@ if (download) {
 }
 
 manifest_rows <- read.csv(manifest, stringsAsFactors = FALSE, check.names = FALSE)
+# ------------------------------------------------------------------------------
+# Validate the manifest schema before filters can silently select no work.
+# Conflicting destination/checksum pairs are checked after the requested filters.
+# ------------------------------------------------------------------------------
+required_columns <- c("source_id", "member_id", "experiment_id", "variable_id",
+                      "filename", "url", "checksum_type", "checksum")
+missing_columns <- setdiff(required_columns, names(manifest_rows))
+if (length(missing_columns)) stop("Manifest missing columns: ", paste(missing_columns, collapse = ", "))
+
 replica_rows <- NULL
 
 keep <- rep(TRUE, nrow(manifest_rows))
@@ -140,6 +150,21 @@ if (time_filter && nrow(selected) > 0) {
     logical(1)
   )
   selected <- selected[keep_time, , drop = FALSE]
+}
+
+# A destination must identify one byte sequence, even when multiple replicas exist.
+# Check before LIMIT so a smoke download cannot hide a conflicting later row.
+if (nrow(selected) > 0) {
+  for (column in required_columns) {
+    if (any(is.na(selected[[column]]) | !nzchar(trimws(selected[[column]])))) {
+      stop("Selected manifest has empty values in: ", column)
+    }
+  }
+  destination_key <- do.call(paste, c(selected[c("source_id", "member_id", "experiment_id", "variable_id", "filename")], sep = "/"))
+  checksum_key <- paste(tolower(selected$checksum_type), tolower(selected$checksum), sep = ":")
+  conflicts <- names(Filter(function(values) length(unique(values)) > 1L,
+                            split(checksum_key, destination_key)))
+  if (length(conflicts)) stop("Conflicting checksums for selected destinations; review dataset versions before downloading:\n", paste(conflicts, collapse = "\n"))
 }
 
 if (!is.na(limit) && limit > 0 && nrow(selected) > limit) {
@@ -286,7 +311,7 @@ download_one <- function(row) {
       next
     }
 
-    file.rename(tmp, target)
+    if (!file.rename(tmp, target)) stop("Could not promote verified download: ", target)
     return("downloaded")
   }
 
@@ -298,8 +323,7 @@ download_one <- function(row) {
 }
 
 if (nrow(selected) == 0) {
-  message("No manifest rows matched the requested filters.")
-  quit(status = 0)
+  stop("No manifest rows matched the requested filters/window; no download was completed.")
 }
 
 if (nzchar(write_plan)) {

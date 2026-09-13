@@ -166,8 +166,57 @@ echo "============================================================"
 DELTA_FILE="${OUT_DIR}/${OUT_PREFIX}_delta_${FUTURE_TAG}_minus_${BASELINE_TAG}.nc"
 TMP_DELTA="${TMP_DIR}/${OUT_PREFIX}_delta_${FUTURE_TAG}_minus_${BASELINE_TAG}.tmp.nc"
 
-echo "[STEP1] Removing old outputs if present"
-rm -f "${DELTA_FILE}" "${TMP_DELTA}"
+# ------------------------------------------------------------------------------
+# Validate spatial identity for both additive and log-ratio calculations.
+# Historical/future climatology dates intentionally differ; spatial positions must
+# match exactly. Validate before replacing any accepted delta output.
+# ------------------------------------------------------------------------------
+python3 - "${BASELINE_FILE}" "${FUTURE_FILE}" "${VAR}" <<'PY_SPATIAL_CHECK'
+import sys
+import numpy as np
+import xarray as xr
+
+def validate_spatial_coordinates(reference, candidate, label, allow_broadcast=False):
+    """Check locations before positional arithmetic; climatology time may differ."""
+    ref_dims = set(reference.dims) - {"time"}
+    other_dims = set(candidate.dims) - {"time"}
+    if other_dims - ref_dims or (not allow_broadcast and ref_dims != other_dims):
+        raise ValueError(f"{label}: spatial dimensions differ: {reference.dims} vs {candidate.dims}")
+    for dim in other_dims:
+        if reference.sizes[dim] != candidate.sizes[dim]:
+            raise ValueError(f"{label}: size mismatch for {dim}")
+        if dim not in reference.coords or dim not in candidate.coords:
+            raise ValueError(f"{label}: missing coordinate for spatial dimension {dim}")
+    # Compare dimension coordinates and auxiliary latitude/longitude coordinates.
+    # Restrict a broadcast mask to the dimensions it actually supplies.
+    names = {name for array in (reference, candidate) for name, coord in array.coords.items()
+             if coord.dims and "time" not in coord.dims and set(coord.dims) <= other_dims}
+    for name in sorted(names):
+        if name not in reference.coords or name not in candidate.coords:
+            raise ValueError(f"{label}: spatial coordinate {name} is missing in one input")
+        left, right = reference.coords[name], candidate.coords[name]
+        if set(left.dims) != set(right.dims):
+            raise ValueError(f"{label}: coordinate dimensions differ for {name}")
+        right = right.transpose(*left.dims)
+        if not np.array_equal(left.values, right.values):
+            raise ValueError(f"{label}: coordinate values/order differ for {name}; verify the prepared grids")
+        for attribute in ("units", "positive"):
+            if left.attrs.get(attribute, "") != right.attrs.get(attribute, ""):
+                raise ValueError(f"{label}: {attribute} differs for {name}; no automatic conversion is performed")
+    for array in (reference, candidate):
+        if "time" in array.dims and array.sizes["time"] != 1:
+            raise ValueError(f"{label}: expected singleton climatology time")
+
+with xr.open_dataset(sys.argv[1]) as baseline, xr.open_dataset(sys.argv[2]) as future:
+    variable = sys.argv[3]
+    if variable not in baseline or variable not in future:
+        raise SystemExit(f"ERROR: Requested variable {variable} missing from a delta input")
+    validate_spatial_coordinates(baseline[variable], future[variable], "baseline/future")
+print("SPATIAL CHECK: PASS (baseline/future)")
+PY_SPATIAL_CHECK
+
+echo "[STEP1] Clearing temporary delta; retaining existing output until replacement succeeds"
+rm -f "${TMP_DELTA}"
 
 echo "[STEP2] Computing delta with mode: ${DELTA_MODE}"
 if [[ "$DELTA_MODE" == "additive" ]]; then
@@ -276,7 +325,7 @@ if [[ "$REGRID_DELTA" == "yes" ]]; then
   REGRID_FILE="${REGRID_OUT_DIR}/${OUT_PREFIX}_delta_${FUTURE_TAG}_minus_${BASELINE_TAG}_${REGRID_SUFFIX}.nc"
   TMP_REGRID="${TMP_DIR}/${OUT_PREFIX}_delta_${FUTURE_TAG}_minus_${BASELINE_TAG}_${REGRID_SUFFIX}.tmp.nc"
 
-  rm -f "${REGRID_FILE}" "${TMP_REGRID}"
+  rm -f "${TMP_REGRID}"
 
   echo "[STEP3] Regridding delta"
   cdo -L -O ${METHOD},"${GRIDFILE}" "${DELTA_FILE}" "${TMP_REGRID}"

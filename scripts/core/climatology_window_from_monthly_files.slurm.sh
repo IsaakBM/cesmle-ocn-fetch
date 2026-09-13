@@ -155,8 +155,79 @@ echo "Found ${#VALID_FILES[@]} monthly files in requested window."
 
 if [[ -n "${EXPECTED_N}" && "${#VALID_FILES[@]}" -ne "${EXPECTED_N}" ]]; then
   echo "WARN: Expected ${EXPECTED_N} monthly files, found ${#VALID_FILES[@]}"
-  echo "      Proceeding anyway."
+  echo "      Actual timestamp coverage will be checked before processing."
 fi
+
+COVERAGE_INPUTS=( "${VALID_FILES[@]}" )
+# ------------------------------------------------------------------------------
+# Validate actual monthly timestamps before merging or replacing any output.
+# CDO decodes the source calendar; Python counts year/month pairs without forcing
+# 360-day or no-leap dates into the Gregorian calendar. Check files separately so
+# overlapping chunks cannot hide duplicate months during a later merge.
+# ------------------------------------------------------------------------------
+python3 - "${WINDOW_START}" "${WINDOW_END}" monthly "${COVERAGE_INPUTS[@]}" <<'PY_MONTHLY_COVERAGE'
+import collections
+import re
+import subprocess
+import sys
+
+start, end, mode, *paths = sys.argv[1:]
+
+def window_date(value, last=False):
+    pattern = r"(\d{4})(\d{2})" if mode == "monthly" else r"(\d{4})-(\d{2})-(\d{2})"
+    match = re.fullmatch(pattern, value)
+    if not match:
+        raise ValueError(f"Invalid window date: {value}")
+    parts = tuple(map(int, match.groups()))
+    year, month = parts[:2]
+    day = parts[2] if len(parts) == 3 else (31 if last else 1)
+    if year < 1 or not 1 <= month <= 12 or not 1 <= day <= 31:
+        raise ValueError(f"Invalid window date: {value}")
+    return year, month, day
+
+try:
+    first, last = window_date(start), window_date(end, last=True)
+    if first > last:
+        raise ValueError("WINDOW_START is after WINDOW_END")
+    # Integer month indices work for all supported source calendars.
+    expected = set(range(first[0] * 12 + first[1] - 1,
+                         last[0] * 12 + last[1]))
+    occurrences = collections.defaultdict(list)
+    for path in paths:
+        result = subprocess.run(["cdo", "-s", "showtimestamp", path],
+                                capture_output=True, text=True, check=True)
+        stamps = result.stdout.split()
+        if not stamps:
+            raise ValueError(f"No decoded timestamps in {path}")
+        for stamp in stamps:
+            match = re.fullmatch(r"(\d{4,})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d+)?", stamp)
+            if not match:
+                raise ValueError(f"Unrecognized timestamp {stamp!r} in {path}")
+            date = tuple(map(int, match.groups()))
+            if not 1 <= date[1] <= 12 or not 1 <= date[2] <= 31:
+                raise ValueError(f"Invalid timestamp {stamp!r} in {path}")
+            if first <= date <= last:
+                occurrences[date[0] * 12 + date[1] - 1].append(f"{path} ({stamp})")
+            elif mode == "monthly":
+                # This worker averages entire selected files, so outside-window
+                # timesteps must fail rather than enter the mean unnoticed.
+                raise ValueError(f"Timestamp outside requested window: {path} ({stamp})")
+    label = lambda month: f"{month // 12:04d}-{month % 12 + 1:02d}"
+    missing = sorted(expected - occurrences.keys())
+    duplicates = sorted(month for month, sources in occurrences.items() if len(sources) > 1)
+    if missing or duplicates:
+        if missing:
+            print("ERROR: Missing months: " + ", ".join(map(label, missing)), file=sys.stderr)
+        for month in duplicates:
+            print(f"ERROR: Duplicate month {label(month)}: " + "; ".join(occurrences[month]), file=sys.stderr)
+        raise ValueError("Monthly coverage failed; existing climatology output was not replaced")
+    print(f"MONTHLY COVERAGE: PASS ({len(expected)} months, exactly one timestep per month)")
+except (ValueError, OSError, subprocess.CalledProcessError) as exc:
+    print(f"ERROR: Monthly coverage validation: {exc}", file=sys.stderr)
+    if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
+        print(exc.stderr.strip(), file=sys.stderr)
+    sys.exit(1)
+PY_MONTHLY_COVERAGE
 
 # ------------------------------------------------------------------------------
 # Output names
@@ -168,8 +239,8 @@ TMP_FILLED="${TMP_DIR}/${OUT_PREFIX}_clim_${WINDOW_START:0:4}-${WINDOW_END:0:4}.
 # ------------------------------------------------------------------------------
 # Processing
 # ------------------------------------------------------------------------------
-echo "[STEP1] Removing old output if present"
-rm -f "${OUTFILE}" "${TMP_OUT}" "${TMP_FILLED}"
+echo "[STEP1] Clearing temporary files; retaining existing output until replacement succeeds"
+rm -f "${TMP_OUT}" "${TMP_FILLED}"
 
 echo "[STEP2] Computing climatological mean directly from monthly files"
 cdo -L -O timmean -mergetime "${VALID_FILES[@]}" "${TMP_OUT}"

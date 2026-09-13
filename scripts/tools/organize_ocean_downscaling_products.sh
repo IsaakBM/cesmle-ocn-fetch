@@ -30,6 +30,13 @@ FUTURE_VARS="${FUTURE_VARS:-thetao so ph o2 chl uo vo zooc zos mlotst siconc}"
 WINDOWS="${WINDOWS:-2030-2040 2050-2060 2090-2100}"
 NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-4}}"
 OVERWRITE="${OVERWRITE:-no}"
+# Missing requested inputs are errors; optional exploratory inventories can opt out.
+STRICT_INPUTS="${STRICT_INPUTS:-yes}"
+case "${STRICT_INPUTS}" in yes|no) ;; *) echo "ERROR: STRICT_INPUTS must be yes or no" >&2; exit 1 ;; esac
+missing_input() {
+  echo "[MISSING] $*" >&2
+  [[ "${STRICT_INPUTS}" == "no" ]]
+}
 USE_COASTAL_FILLED_BASELINE="${USE_COASTAL_FILLED_BASELINE:-no}"
 COASTAL_FILLED_BASELINE_VARS="${COASTAL_FILLED_BASELINE_VARS:-chl o2}"
 
@@ -68,26 +75,32 @@ copy_one() {
   local dest_file
 
   if [[ ! -f "${src}" ]]; then
-    echo "[WARN] Missing source file: ${src}" >&2
-    return 0
+    missing_input "Missing source file: ${src}"
+    return $?
   fi
 
   dest_file="${dest_dir}/$(basename "${src}")"
   mkdir -p "${dest_dir}"
 
   if [[ -f "${dest_file}" && "${OVERWRITE}" != "yes" ]]; then
-    echo "[SKIP] ${dest_file} exists (OVERWRITE=${OVERWRITE})"
-    return 0
+    # A partial/different copy must not masquerade as a completed artifact.
+    if cmp -s "${src}" "${dest_file}"; then
+      echo "[SKIP] Verified identical copy: ${dest_file}"
+      return 0
+    fi
+    echo "ERROR: Existing destination differs: ${dest_file}; review before OVERWRITE=yes" >&2
+    return 1
   fi
 
-  cp -p "${src}" "${dest_dir}/"
+  # Copy to a unique file beside the destination, then promote only a full copy.
+  local temporary
+  temporary="$(mktemp "${dest_file}.part.XXXXXX")" || return 1
+  if ! cp -p "${src}" "${temporary}" || ! cmp -s "${src}" "${temporary}"; then
+    rm -f "${temporary}"
+    return 1
+  fi
+  mv -f "${temporary}" "${dest_file}" || { rm -f "${temporary}"; return 1; }
   echo "[COPY] ${src} -> ${dest_dir}/"
-}
-
-dest_has_netcdf_files() {
-  local dest_dir="$1"
-
-  [[ -d "${dest_dir}" ]] && find "${dest_dir}" -maxdepth 1 -type f -name '*.nc' -print -quit | grep -q .
 }
 
 copy_all_from_dir_parallel() {
@@ -96,28 +109,26 @@ copy_all_from_dir_parallel() {
   local mode_label="${3:-copy}"
 
   if [[ ! -d "${src_dir}" ]]; then
-    echo "[WARN] Missing source directory: ${src_dir}" >&2
-    return 0
+    missing_input "Missing source directory: ${src_dir}"
+    return $?
   fi
 
   mkdir -p "${dest_dir}"
-
-  if dest_has_netcdf_files "${dest_dir}" && [[ "${OVERWRITE}" != "yes" ]]; then
-    echo "[SKIP] ${mode_label}: ${dest_dir} already has NetCDF files (OVERWRITE=${OVERWRITE})"
-    return 0
-  fi
 
   shopt -s nullglob
   local files=("${src_dir}"/*.nc)
   shopt -u nullglob
 
   if (( ${#files[@]} == 0 )); then
-    echo "[WARN] No NetCDF files found in: ${src_dir}" >&2
-    return 0
+    missing_input "No NetCDF files found in: ${src_dir}"
+    return $?
   fi
 
+  # Resume per file, preserving the existing parallel copy limit.
+  export -f copy_one missing_input
+  export OVERWRITE STRICT_INPUTS
   printf '%s\0' "${files[@]}" \
-    | xargs -0 -I{} -P "${NPROC}" cp -p "{}" "${dest_dir}/"
+    | xargs -0 -I{} -P "${NPROC}" bash -c 'copy_one "$1" "$2"' _ "{}" "${dest_dir}" || return 1
   echo "[COPY] ${mode_label}: ${src_dir}/*.nc -> ${dest_dir}/ (files=${#files[@]} parallel=${NPROC})"
 }
 
@@ -173,12 +184,12 @@ copy_future_products() {
 
   local legacy_root="${CESM_LEGACY_DOWNSCALED_ROOT}/${var}"
   local legacy_window="${legacy_root}/${window}"
-  if [[ -d "${legacy_window}" ]]; then
+  if [[ -d "${legacy_window}" ]] && { [[ "${MODELS}" == "auto" ]] || contains_word "legacy_downscaled_rcp85" "${MODEL_LIST[@]}"; }; then
     copy_all_from_dir_parallel "${legacy_window}" "${FUTURE_DIR}/legacy_downscaled_rcp85/legacy_member/rcp85/${var}/${window}/native" "future-legacy-${var}-${window}"
     return 0
   fi
 
-  echo "[WARN] No recognized future layout for var=${var}, window=${window}" >&2
+  missing_input "No recognized future layout for var=${var}, window=${window}"
 }
 
 copy_baseline_product() {
@@ -308,6 +319,10 @@ organize_all_baselines() {
 organize_one_future_var_window() {
   local var="$1"
   local window="$2"
+  if [[ "${var}" == "zooc" ]] && [[ -z "$(find_downscaled_var_roots "${var}")" ]]; then
+    echo "[SKIP] zooc is diagnostic-only: no trusted add baseline configured"
+    return 0
+  fi
   copy_future_products "${var}" "${window}"
 }
 

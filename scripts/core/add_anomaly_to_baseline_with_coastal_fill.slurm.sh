@@ -338,13 +338,10 @@ if [[ "$REGRID_OUTPUT" == "yes" ]]; then
 fi
 echo "============================================================"
 
-echo "[STEP1] Removing old outputs if present"
-rm -f "${TMP_NATIVE}" "${NATIVE_FILE}" "${TMP_ANOM_TARGET}"
-if [[ "$WRITE_FILLED_ANOM" == "yes" ]]; then
-  rm -f "${FILLED_ANOM_FILE}"
-fi
+echo "[STEP1] Clearing temporary files; retaining existing products until replacement succeeds"
+rm -f "${TMP_NATIVE}" "${TMP_ANOM_TARGET}"
 if [[ "$REGRID_OUTPUT" == "yes" ]]; then
-  rm -f "${TMP_REGRID}" "${REGRID_FILE}"
+  rm -f "${TMP_REGRID}"
 fi
 
 ANOMALY_FOR_PYTHON="${ANOMALY_FILE}"
@@ -502,7 +499,40 @@ def infer_xy_dims(da):
         raise ValueError(f"Expected at least two dims to infer horizontal axes: {da.dims}")
     return da.dims[-2], da.dims[-1]
 
+def validate_spatial_coordinates(reference, candidate, label, allow_broadcast=False):
+    """Check locations before positional arithmetic; climatology time may differ."""
+    ref_dims = set(reference.dims) - {"time"}
+    other_dims = set(candidate.dims) - {"time"}
+    if other_dims - ref_dims or (not allow_broadcast and ref_dims != other_dims):
+        raise ValueError(f"{label}: spatial dimensions differ: {reference.dims} vs {candidate.dims}")
+    for dim in other_dims:
+        if reference.sizes[dim] != candidate.sizes[dim]:
+            raise ValueError(f"{label}: size mismatch for {dim}")
+        if dim not in reference.coords or dim not in candidate.coords:
+            raise ValueError(f"{label}: missing coordinate for spatial dimension {dim}")
+    # Compare dimension coordinates and auxiliary latitude/longitude coordinates.
+    # Restrict a broadcast mask to the dimensions it actually supplies.
+    names = {name for array in (reference, candidate) for name, coord in array.coords.items()
+             if coord.dims and "time" not in coord.dims and set(coord.dims) <= other_dims}
+    for name in sorted(names):
+        if name not in reference.coords or name not in candidate.coords:
+            raise ValueError(f"{label}: spatial coordinate {name} is missing in one input")
+        left, right = reference.coords[name], candidate.coords[name]
+        if set(left.dims) != set(right.dims):
+            raise ValueError(f"{label}: coordinate dimensions differ for {name}")
+        right = right.transpose(*left.dims)
+        if not np.array_equal(left.values, right.values):
+            raise ValueError(f"{label}: coordinate values/order differ for {name}; verify the prepared grids")
+        for attribute in ("units", "positive"):
+            if left.attrs.get(attribute, "") != right.attrs.get(attribute, ""):
+                raise ValueError(f"{label}: {attribute} differs for {name}; no automatic conversion is performed")
+    for array in (reference, candidate):
+        if "time" in array.dims and array.sizes["time"] != 1:
+            raise ValueError(f"{label}: expected singleton climatology time")
+
 def align_to_base_dims(da, da_base, label):
+    # A 2D external mask may broadcast over depth; supplied locations must match.
+    validate_spatial_coordinates(da_base, da, label, allow_broadcast=True)
     aligned = da.copy()
     extra_dims = [d for d in aligned.dims if d not in da_base.dims]
     for dim in extra_dims:
@@ -762,6 +792,9 @@ if ds_mask is not None:
     mask_var = pick_main_var(ds_mask, coastal_mask_var or None)
     da_mask = align_to_base_dims(ds_mask[mask_var], da_base, "coastal mask")
 
+# Check the remapped anomaly before assigning the baseline climatology time.
+# This must not conceal reversed coordinates or a different depth grid.
+validate_spatial_coordinates(da_base, da_anom, "baseline/anomaly")
 da_anom_aligned = da_anom.copy()
 for dim in da_base.dims:
     if dim in da_anom_aligned.dims and dim in da_base.coords:

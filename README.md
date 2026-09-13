@@ -174,6 +174,39 @@ The key point is that the newer code organization is based on:
 
 So the repository is not organized as “one custom script per dataset.”
 
+## Validation and release safeguards
+
+See [Pipeline validation and release procedure](docs/pipeline_validation_and_release.md)
+for spatial checks, strict download/copy/audit failures, new-model preflight,
+predecessor-job verification, tests, and release provenance. The directory layout
+and scientific methods remain unchanged. The smoke helper now requires completed
+`PREVIOUS_JOB_IDS` for dependent submissions and rejects `RUN=yes STEP=all`.
+
+## Monthly coverage validation before climatology
+
+Both climatology workers require exactly one actual timestep per requested month.
+They read the NetCDF timestamps with `cdo showtimestamp` before merging inputs or
+removing an existing climatology. Missing months and duplicate months stop the job
+with an explicit diagnostic; duplicate diagnostics include source filenames.
+Filename selection alone and `EXPECTED_N` are not proof of complete coverage.
+
+The time-series worker checks only timestamps inside `WINDOW_START`/`WINDOW_END`
+and follows the existing `MERGE_INPUTS` selection. The monthly-file worker checks
+all timestamps in the selected files and rejects any outside the requested window,
+because its existing calculation averages entire files. Gregorian, no-leap, and
+360-day dates are counted as year/month pairs without changing their calendars.
+
+For a coverage failure, correct the selected inputs (download missing months or
+resolve overlapping chunks) and rerun that stage. The guard does not fill missing
+months, choose between duplicate records, or change `timmean`, grids, or filling
+settings. Passing coverage does not by itself validate field values or spatial grids.
+
+Run the focused tests with Python 3, CDO, and `ncgen` available:
+
+```bash
+python3 scripts/tools/test_climatology_monthly_coverage.py
+```
+
 ## Code lifecycle
 
 The [September 2026 code audit](docs/code_lifecycle_audit_2026-09-12.md) records

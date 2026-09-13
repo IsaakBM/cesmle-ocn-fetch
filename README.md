@@ -47,6 +47,8 @@ If you only need the current logic, focus first on:
 - [Common Processing Stages](#common-processing-stages)
 - [Current Workflow Families](#current-workflow-families)
 - [Curated Product Pipeline](#curated-product-pipeline)
+- [Validation and release safeguards](#validation-and-release-safeguards)
+- [Pipeline validation and release procedure](docs/pipeline_validation_and_release.md)
 
 ## Current End-To-End Workflow Map
 
@@ -176,11 +178,76 @@ So the repository is not organized as “one custom script per dataset.”
 
 ## Validation and release safeguards
 
-See [Pipeline validation and release procedure](docs/pipeline_validation_and_release.md)
-for spatial checks, strict download/copy/audit failures, new-model preflight,
-predecessor-job verification, tests, and release provenance. The directory layout
-and scientific methods remain unchanged. The smoke helper now requires completed
-`PREVIOUS_JOB_IDS` for dependent submissions and rejects `RUN=yes STEP=all`.
+The existing `scripts/core`, `scripts/tools`, and `scripts/runners` layout and
+scientific settings are retained. The [detailed runbook](docs/pipeline_validation_and_release.md)
+provides commands and acceptance checks for a new model and a release.
+
+| Safeguard | Current behavior | What it does not establish |
+| --- | --- | --- |
+| Monthly coverage | Climatology workers reject missing or duplicate actual months before calculation. | Correct field values or scientific suitability. |
+| Spatial compatibility | Delta and coastal-add workers compare dimension sizes, coordinate values/order, units, and vertical-direction metadata. | Equivalent grids through automatic conversion; mismatches require investigation. |
+| Download validation | Selected manifest conflicts and empty selections fail; `FAIL_ON_ERROR=yes` by default. | Completeness of a release beyond the selected manifest. |
+| Product organization | `STRICT_INPUTS=yes`; identical copies skip, missing files resume, differing copies fail unless `OVERWRITE=yes`. | Whether the selected source is scientifically correct. |
+| Product integrity | `FAIL_ON_ISSUE=yes`; empty selections and reported issues fail. | Missing products outside an independently supplied `EXPECTED_FILES` list. |
+| Stage coordination | Smoke-helper dependent submissions require successful completed `PREVIOUS_JOB_IDS`; `RUN=yes STEP=all` is rejected. | That operator-supplied IDs belong to the correct inputs; direct runners bypass this coordination. |
+| Output preservation | Existing climatology/delta/native-add finals remain until replacement is ready. | A transaction covering every output of a multi-file run. |
+| Provenance | The release recorder hashes supplied files and working scripts and records settings/software versions. | A validation certificate or recovery of settings that were never recorded. |
+
+Stricter checks can stop a run that previously continued. A failure needs inspection;
+it is not evidence by itself that existing products are incorrect. Do not resolve a
+failure by silently filling months, switching members, or converting scientific units.
+
+### Operational order for a new model
+
+1. Discover and download historical and scenario inputs using the existing ESGF
+   tools. Keep the selected version/member/checksum manifest.
+2. Set explicit `SMOKE_MODEL`, `SMOKE_SCENARIO`, `SMOKE_VARS`, and `SMOKE_WINDOWS`.
+   Run `STEP=inputs` with `scripts/runners/ipcc_esgf/run_one_model_smoke_test.sh`
+   for raw-input checks, or `STEP=preflight` to include baseline/root checks.
+   These inspect actual months, historical/future member pairing, source-unit
+   consistency, and the current `lev` in metres convention for 3D inputs.
+3. Submit `RUN=yes STEP=monthly`, retain all job IDs, and wait for completion.
+   Verify those IDs and run `STEP=audit` before vertical processing.
+4. Submit `vertical`, `climatology`, `delta`, and `add` separately. Before each
+   dependent submission, wait and update `PREVIOUS_JOB_IDS` to its actual
+   prerequisites. For mixed selections, climatology needs monthly jobs for 2D
+   fields and vertical jobs for 3D fields. `zooc` currently stops at delta.
+5. Organize the accepted products; derive per-model current speed before its
+   ensemble, then generate required depth/layer/pelagic and delivery products.
+6. Validate the release and record its provenance as described below.
+
+The helper defaults to `RUN=no` for submission commands. The runbook contains a
+worked example; stages must not be submitted as an unattended consecutive block.
+Passing preflight does not approve an unfamiliar model's scientific conventions.
+
+### Release evidence for the data paper
+
+Prepare an independently reviewed file list with one path relative to
+`PRODUCT_ROOT` per line. Supply it as `EXPECTED_FILES` to
+`scripts/tools/audit_ocean_downscaling_product_integrity.sh`, alongside `OUT_FILE`
+for the report. A list made only from present files cannot identify absent products.
+The list must match audit filters; excluded expected files are also reported.
+
+Run the value, unit/depth, and delivery checks applicable to the release. Compare
+representative decoded GeoTIFF/COG values, scaling, nodata, grids, and masks with
+source NetCDF. Record actual effective settings in a JSON object, then run:
+
+```bash
+SETTINGS_FILE=/path/to/effective_settings.json \
+OUT_FILE=/path/to/release_provenance.json \
+bash scripts/tools/record_ocean_pipeline_release.sh \
+  /path/to/source_manifest.csv \
+  /path/to/reviewed_expected_products.txt \
+  /path/to/release_integrity.csv \
+  /path/to/selected_release_products
+```
+
+The output report must be new. Include the actual release inputs/reports/products;
+directories are hashed recursively. Local synthetic regression checks support the
+safeguards, but a representative physical and BGC run on the production cluster,
+comparison with accepted outputs, and review of real release reports remain
+required acceptance work. Scientific choices such as ensemble weighting, filling,
+calendars, and bounds remain separate review decisions.
 
 ## Monthly coverage validation before climatology
 
@@ -207,6 +274,13 @@ Run the focused tests with Python 3, CDO, and `ncgen` available:
 python3 scripts/tools/test_climatology_monthly_coverage.py
 ```
 
+For the broader safeguards, also install `numpy`, `xarray`, `netCDF4`/`cftime`
+and provide Rscript, then run:
+
+```bash
+python3 scripts/tools/test_pipeline_safeguards.py
+```
+
 ## Code lifecycle
 
 The [September 2026 code audit](docs/code_lifecycle_audit_2026-09-12.md) records
@@ -220,86 +294,105 @@ and delivery exporters remain available.
 
 ## Repository Layout
 
+Selected top-level entries and the current script inventory (no directory changes):
+
 ```text
 cesmle-ocn-fetch/
-├── data/                           # Tracked lightweight data layout for fetch workflows
-│   ├── ipcc_esgf_wget/             # ESGF/IPCC-generated wget shell scripts
-│   ├── manifests/                  # Parsed CSV manifests from wget scripts
-│   └── downloads/                  # Download destination for fetched files
-├── docs/                           # Reference files used during setup/planning
-│   ├── CMIP6_MIP_tables.xlsx       # Variable/table reference workbook
-│   └── aws-cesm1-le.csv            # CESM-related reference table
-├── legacy/                         # Archived outputs and pre-refactor workflow code
-│   ├── *.nc                        # Example downscaled/anomaly/climatology NetCDF files
-│   ├── deprecated/                  # Superseded scripts; see its README
-│   └── scripts/
-│       └── slurm/                  # Archived pre-refactor Slurm workflow scripts
-├── logs/                           # Slurm stdout/stderr targets
+├── data/                           # Lightweight manifests/layout; large data live externally
+├── docs/                           # Runbooks, audit records, and reference material
+├── legacy/deprecated/              # Previously archived workflows
 ├── scripts/
-│   ├── bash/                       # Download, fetch, and utility shell scripts
-│   │   ├── download_cesmle*.sh
+│   ├── R/
+│   │   ├── audit_pipeline_path_assumptions.R
+│   │   ├── discover_ipcc_esgf_nci_cmip6.R
+│   │   └── fetch_ipcc_esgf_cmip6_manifest.R
+│   ├── bash/
+│   │   ├── archive_sb5_legacy_storage_roots.sh
+│   │   ├── assess_sb5_storage_migration.sh
+│   │   ├── bgc_monthly_download.slurm.sh
 │   │   ├── download_GLORYS_parallel.sh
-│   │   ├── process_esgf_wget_scripts.sh
-│   │   ├── process_esgf_wget_scripts_run_example.txt
-│   │   └── bgc_monthly_download.slurm.sh
-│   ├── core/                       # Reusable processing workers
-│   │   ├── temporal_aggregate_regrid.slurm.sh
-│   │   ├── vertical_interpolate_to_reference.slurm.sh
+│   │   ├── download_cesmle.sh
+│   │   ├── download_cesmle_list_and_get.sh
+│   │   ├── download_cesmle_list_parallel-hist.sh
+│   │   ├── download_cesmle_list_parallel-proj.sh
+│   │   ├── download_cesmle_list_parallel.sh
+│   │   ├── prepare_sb5_storage_layout.sh
+│   │   └── process_esgf_wget_scripts.sh
+│   ├── core/
+│   │   ├── add_anomaly_to_baseline_with_coastal_fill.slurm.sh
+│   │   ├── add_cesm_members_to_glorys_with_coastal_fill.slurm.sh
 │   │   ├── climatology_window_from_monthly_files.slurm.sh
 │   │   ├── climatology_window_from_timeseries.slurm.sh
 │   │   ├── delta_from_climatologies.slurm.sh
-│   │   ├── add_anomaly_to_baseline_with_coastal_fill.slurm.sh
-│   │   └── add_cesm_members_to_glorys_with_coastal_fill.slurm.sh
-│   ├── lib/                        # Shared runner helpers
+│   │   ├── temporal_aggregate_regrid.slurm.sh
+│   │   └── vertical_interpolate_to_reference.slurm.sh
+│   ├── lib/
 │   │   └── ipcc_esgf_discovery.sh
-│   ├── runners/                    # Dataset-specific job submitters
-│   │   ├── global_ocean_biogeochemistry_hindcast/
-│   │   │   ├── run_temporal_aggregate_regrid.sh
-│   │   │   ├── run_vertical_interpolate_to_reference.sh
-│   │   │   └── run_climatology_window.sh
-│   │   ├── ipcc_esgf/
-│   │   │   ├── run_temporal_aggregate_regrid.sh
-│   │   │   ├── run_vertical_interpolate_to_reference.sh
-│   │   │   ├── run_climatology_window.sh
-│   │   │   └── run_delta_from_climatologies.sh
-│   │   ├── ipcc_esgf_to_hindcast/
-│   │   │   └── run_add_anomaly_to_baseline_with_coastal_fill.sh
+│   ├── runners/
 │   │   ├── cesm_to_glorys/
-│   │   │   ├── run_temporal_aggregate_regrid.sh
-│   │   │   ├── run_vertical_interpolate_to_reference.sh
+│   │   │   ├── run_add_anomaly_to_baseline_with_coastal_fill.sh
 │   │   │   ├── run_climatology_window.sh
 │   │   │   ├── run_delta_from_climatologies.sh
-│   │   │   └── run_add_anomaly_to_baseline_with_coastal_fill.sh
+│   │   │   ├── run_temporal_aggregate_regrid.sh
+│   │   │   └── run_vertical_interpolate_to_reference.sh
 │   │   ├── downscaling/
 │   │   │   └── run_add_anomaly_to_trusted_baseline_with_coastal_fill.sh
-│   │   ├── products/
-│   │   │   ├── run_organize_ocean_downscaling_products.sh
-│   │   │   ├── run_remap_hindcast_baseline_to_0p05.sh
-│   │   │   ├── run_remap_hindcast_baseline_to_0p05_glorys_coast.sh
-│   │   │   ├── run_aggregate_ocean_downscaling_products_fine_layers.sh
-│   │   │   ├── run_aggregate_ocean_downscaling_products_pelagic_layers.sh
-│   │   │   ├── run_split_ocean_downscaling_products_by_depth.sh
-│   │   │   ├── run_export_ocean_downscaling_products_bydepth_to_csv.sh
-│   │   │   ├── run_export_ocean_downscaling_products_layers_to_parquet.sh
-│   │   │   ├── run_export_ocean_downscaling_products_pelagic_to_parquet.sh
-│   │   │   ├── run_export_ocean_downscaling_products_depths_to_parquet.sh
-│   │   │   ├── run_export_ocean_downscaling_products_layers_to_geotiff.sh
-│   │   │   └── run_export_ocean_downscaling_products_pelagic_to_geotiff.sh
-│   │   ├── glorys/
+│   │   ├── global_ocean_biogeochemistry_hindcast/
+│   │   │   ├── run_climatology_window.sh
 │   │   │   ├── run_temporal_aggregate_regrid.sh
-│   │   │   └── run_climatology_window.sh
-│   │   └── other_model/
-│   ├── tools/                      # Packaging/export/organization utilities
-│   │   ├── organize_ocean_downscaling_products.sh
-│   │   ├── remap_hindcast_baseline_to_0p05.sh
-│   │   ├── remap_hindcast_baseline_to_0p05_glorys_coast.sh
-│   │   ├── aggregate_ocean_downscaling_products_by_depth_bins.sh
-│   │   ├── split_ocean_downscaling_products_by_depth.sh
-│   │   ├── export_ocean_downscaling_products_bydepth_to_csv.sh
-│   │   ├── export_ocean_downscaling_products_to_parquet.sh
-│   │   └── export_ocean_downscaling_products_to_geotiff.sh
-├── .gitignore
-├── LICENSE
+│   │   │   └── run_vertical_interpolate_to_reference.sh
+│   │   ├── glorys/
+│   │   │   ├── run_climatology_window.sh
+│   │   │   └── run_temporal_aggregate_regrid.sh
+│   │   ├── ipcc_esgf/
+│   │   │   ├── run_climatology_window.sh
+│   │   │   ├── run_delta_from_climatologies.sh
+│   │   │   ├── run_fetch_cmip6_manifest.slurm.sh
+│   │   │   ├── run_one_model_smoke_test.sh
+│   │   │   ├── run_temporal_aggregate_regrid.sh
+│   │   │   └── run_vertical_interpolate_to_reference.sh
+│   │   ├── ipcc_esgf_to_hindcast/
+│   │   │   └── run_add_anomaly_to_baseline_with_coastal_fill.sh
+│   │   ├── other_model/
+│   │   └── products/
+│   │       ├── run_aggregate_ocean_downscaling_products_fine_layers.sh
+│   │       ├── run_aggregate_ocean_downscaling_products_pelagic_layers.sh
+│   │       ├── run_audit_ocean_downscaling_product_integrity.sh
+│   │       ├── run_audit_ocean_downscaling_product_values.sh
+│   │       ├── run_build_ocean_downscaling_ensemble_products.sh
+│   │       ├── run_create_cog_sample_products.sh
+│   │       ├── run_derive_current_speed_products.sh
+│   │       ├── run_export_ocean_downscaling_products_bydepth_to_csv.sh
+│   │       ├── run_export_ocean_downscaling_products_depths_to_parquet.sh
+│   │       ├── run_export_ocean_downscaling_products_layers_to_geotiff.sh
+│   │       ├── run_export_ocean_downscaling_products_layers_to_parquet.sh
+│   │       ├── run_export_ocean_downscaling_products_pelagic_to_geotiff.sh
+│   │       ├── run_export_ocean_downscaling_products_pelagic_to_parquet.sh
+│   │       ├── run_organize_ocean_downscaling_products.sh
+│   │       ├── run_remap_hindcast_baseline_to_0p05.sh
+│   │       ├── run_remap_hindcast_baseline_to_0p05_glorys_coast.sh
+│   │       ├── run_split_ocean_downscaling_products_by_depth.sh
+│   │       └── run_stage_ocean_downscaling_sample_products.sh
+│   └── tools/
+│       ├── aggregate_ocean_downscaling_products_by_depth_bins.sh
+│       ├── audit_downscaled_products.sh
+│       ├── audit_ocean_downscaling_product_integrity.sh
+│       ├── audit_ocean_downscaling_product_values.sh
+│       ├── audit_units_and_depths.sh
+│       ├── build_ocean_downscaling_ensemble_products.sh
+│       ├── create_cog_sample_products.sh
+│       ├── derive_current_speed_products.sh
+│       ├── export_ocean_downscaling_products_bydepth_to_csv.sh
+│       ├── export_ocean_downscaling_products_to_geotiff.sh
+│       ├── export_ocean_downscaling_products_to_parquet.sh
+│       ├── organize_ocean_downscaling_products.sh
+│       ├── record_ocean_pipeline_release.sh
+│       ├── remap_hindcast_baseline_to_0p05.sh
+│       ├── remap_hindcast_baseline_to_0p05_glorys_coast.sh
+│       ├── split_ocean_downscaling_products_by_depth.sh
+│       ├── stage_ocean_downscaling_sample_products.sh
+│       ├── test_climatology_monthly_coverage.py
+│       └── test_pipeline_safeguards.py
 └── README.md
 ```
 
@@ -896,12 +989,20 @@ To test or restrict the scan to candidate models:
 
 ```bash
 SOURCE_IDS="CNRM-ESM2-1 IPSL-CM6A-LR" \
-VARS="thetao so o2 chl siconc" \
+VARS="thetao so o2 chl" TABLE_ID=Omon OUT_PREFIX=candidate_ocean \
+Rscript scripts/R/discover_ipcc_esgf_nci_cmip6.R
+
+SOURCE_IDS="CNRM-ESM2-1 IPSL-CM6A-LR" \
+VARS=siconc TABLE_ID=SImon OUT_PREFIX=candidate_seaice \
 Rscript scripts/R/discover_ipcc_esgf_nci_cmip6.R
 ```
 
 Outputs are written under `data/manifests/`, including selected first-member
-file URLs and model-level coverage summaries.
+file URLs and model-level coverage summaries. Distinct prefixes keep these scans
+separate; they do not automatically replace or merge into the combined manifest.
+Without `SOURCE_IDS`, discovery scans available models rather than only the five
+production selections listed above. Coverage tables report file overlap with a
+window, not complete monthly coverage; the climatology guard checks actual months.
 
 The R fetch helper is dry-run by default:
 
@@ -981,7 +1082,7 @@ GLORYS-target variables follow the CESM-to-GLORYS anomaly/add logic:
    variables
 6. write only the native downscaled output at `0.05 x 0.05`
 
-Two GLORYS-target variables need explicit final-stage handling:
+Three GLORYS-target variables need explicit final-stage handling:
 
 - `siconc`: GLORYS stores sea-ice concentration as a fraction (`0-1`), while
   the CMIP/IPCC `siconc` climatologies and deltas are in percent
@@ -1316,9 +1417,10 @@ For one CESM member:
 MODEL=cesm_f09_g16 REALIZATION=002 SCENARIO=rcp85 ./scripts/runners/products/run_organize_ocean_downscaling_products.sh
 ```
 
-The organizer is incremental by default. If a destination folder or baseline
-file already contains NetCDF output, it is skipped. To refresh existing curated
-products, run with:
+The organizer is incremental by default and compares each existing file with its
+source. Identical files are skipped; missing files in partial directories are
+copied. Differing files fail unless `OVERWRITE=yes`. Missing requested inputs fail
+with the default `STRICT_INPUTS=yes`. To refresh differing curated products, run with:
 
 ```bash
 OVERWRITE=yes ./scripts/runners/products/run_organize_ocean_downscaling_products.sh
@@ -1413,8 +1515,8 @@ Notes:
   the configured window. This prevents future climatology products from
   inheriting the 2006-2014 trusted-baseline time coordinate.
 - audit the curated tree for filename/path/time consistency with:
-  `run_audit_ocean_downscaling_product_integrity.sh`; set
-  `FAIL_ON_ISSUE=yes` when the audit should fail the job on mismatches
+  `run_audit_ocean_downscaling_product_integrity.sh`; `FAIL_ON_ISSUE=yes`
+  is the default. `FAIL_ON_ISSUE=no` is an exploratory reporting override
 - `baseline/` stores curated climatological reference products
 - baseline products are now organized by resolution when available
 - biogeochemistry variables can include both `0p25` and derived `0p05`
@@ -1428,8 +1530,9 @@ Notes:
 - default future variables are:
   `thetao`, `so`, `ph`, `o2`, `chl`, `uo`, `vo`, `zooc`, `zos`, `mlotst`,
   and `siconc`
-- `zooc` is future-only in the current product workflow; it is not included in
-  the default baseline set
+- `zooc` has no configured trusted baseline and normally stops at delta. Its
+  presence in the future filter allows custom products to be discovered; absent
+  diagnostic-only outputs are skipped, and it is not a baseline default
 - `future/` stores curated future/downscaled products
 - future products preserve model, realization/member-or-statistic, scenario,
   variable, window, and resolution
@@ -1451,7 +1554,8 @@ Notes:
     left as `auto`
 - within each submitted job, the tool can copy multiple NetCDF files in
   parallel using the allocated CPUs
-- existing destination NetCDF files are skipped unless `OVERWRITE=yes`
+- identical destination NetCDF files are skipped; differing files fail unless
+  `OVERWRITE=yes`
 - future branches preserve both `0p25` and `0p05` products
   under each future window when that layout exists
 - the tool copies files; it does not move or delete the original workflow trees
@@ -1681,6 +1785,9 @@ Notes:
 - the runners submit one job per main subtree:
   - `baseline/<var>`
   - `future/<model>`
+- layer and pelagic runners additionally split ensemble statistics by default
+  (`SPLIT_ENSEMBLE_STATS=yes`); scenario splitting is optional
+  (`SPLIT_FUTURE_SCENARIOS=no` by default)
 - within each submitted job, the tool parallelizes over files and is
   configured to use `5` CPUs per Slurm task
 - `OVERWRITE=no` by default skips existing Parquet products; set
@@ -1723,7 +1830,7 @@ Notes:
 - downstream apps recover real values with:
   `real_value = stored_value / scale_factor`
 - default scale factors are variable-aware:
-  - `thetao`, `TEMP`, `so`, `SALT`, `uo`, `UVEL`: `100`
+  - `thetao`, `TEMP`, `so`, `SALT`, `uo`, `UVEL`, `vo`, `current_speed`: `100`
   - `o2`, `O2`: `1000`
   - `chl`, `CHL`: `10000`
 - `ENCODE_DTYPE=auto` writes `Int16` when encoded values fit safely and
@@ -2043,15 +2150,26 @@ system requires path updates.
 
 ## Software Assumptions
 
-The scripts assume the cluster environment provides:
+Dependencies depend on the selected stage; Python is used by active workers,
+not only the standalone test files. Provide:
 
-- `bash`
-- `sbatch`, `squeue`
-- `cdo`
-- `curl`
-- `find`, `grep`, `awk`, `sed`, `xargs`
-- `python3` for some older scripts
-- NetCDF support compatible with CDO
+- Bash 4+ and standard Unix tools; Slurm `sbatch`, `squeue`, and `sacct` for
+  submission and predecessor verification.
+- CDO with compatible NetCDF support; check worker paths because some use
+  `/usr/bin/cdo` explicitly. NCO tools such as `ncks` and `ncatted` are used by
+  relevant processing/metadata branches.
+- Python 3 with NumPy, xarray, and NetCDF support (`netCDF4`/`cftime`) for active
+  numerical and validation branches. SciPy is required for the final complete
+  coastal-fill fallback when enabled.
+- Rscript and `jsonlite` for ESGF discovery; `wget` and checksum utilities for
+  fetching, and `curl` for workflows that use it.
+- pandas/PyArrow for Parquet exports; the GDAL/rasterio tooling used by the
+  selected GeoTIFF/COG path, including COG support where requested.
+- `ncgen` for local regression fixtures and Git for repository provenance.
+
+These are stage requirements, not a pinned production environment. Record actual
+software versions with each release and verify the selected branches on the
+production toolchain before a full run.
 
 ## Methodological Assumptions
 

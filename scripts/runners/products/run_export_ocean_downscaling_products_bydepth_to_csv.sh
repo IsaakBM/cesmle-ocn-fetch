@@ -23,7 +23,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOL_SCRIPT="${SCRIPT_DIR}/../../tools/export_ocean_downscaling_products_bydepth_to_csv.sh"
 FUTURE_MODELS="${FUTURE_MODELS:-auto}"
-EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS:-}"
+# Production selection: omit retired branches; retain discovery of new models.
+EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS-cesm_f09_g16 legacy_downscaled_rcp85}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-${SBATCH_EXCLUDE:-}}"
 
 if [[ ! -x "${TOOL_SCRIPT}" ]]; then

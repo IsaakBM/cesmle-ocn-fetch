@@ -57,7 +57,7 @@ shopt -s nullglob
 #                   (default: auto)
 #   EXCLUDE_FUTURE_MODELS
 #                 : space-separated future top-level branches to exclude
-#                   (default: none)
+#                   (default: cesm_f09_g16 legacy_downscaled_rcp85; empty clears)
 # ==============================================================================
 IN_ROOT="${IN_ROOT:-/home/SB5/ocean_downscaling_products}"
 MAX_DEPTH_M="${MAX_DEPTH_M:-}"
@@ -74,7 +74,8 @@ MIN_DECIMALS="${MIN_DECIMALS:-3}"
 INTEGER_WIDTH="${INTEGER_WIDTH:-4}"
 COPY_2D_FILES="${COPY_2D_FILES:-yes}"
 FUTURE_MODELS="${FUTURE_MODELS:-auto}"
-EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS:-}"
+# Production selection: omit retired branches; retain discovery of new models.
+EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS-cesm_f09_g16 legacy_downscaled_rcp85}"
 NPROC="${SLURM_CPUS_PER_TASK:-6}"
 read -r -a FUTURE_MODEL_LIST <<< "${FUTURE_MODELS}"
 read -r -a EXCLUDE_FUTURE_MODEL_LIST <<< "${EXCLUDE_FUTURE_MODELS}"
@@ -93,6 +94,14 @@ contains_word() {
 include_relative_path() {
   local rel_path="$1"
   local model
+
+  # Recover the model component when IN_ROOT is already inside a future subtree.
+  # Keep rel_path used for output layout unchanged outside this filter.
+  local selection_path="${MODEL_SELECTION_ROOT}/${rel_path}"
+  case "${selection_path}" in
+    */future/*) rel_path="future/${selection_path##*/future/}" ;;
+    */baseline/*) rel_path="baseline/${selection_path##*/baseline/}" ;;
+  esac
 
   case "${rel_path}" in
     baseline/*)
@@ -119,6 +128,8 @@ if [[ ! -d "${IN_ROOT}" ]]; then
   echo "ERROR: IN_ROOT does not exist: ${IN_ROOT}"
   exit 1
 fi
+# Resolve a relative input root once, including direct subtree invocations.
+MODEL_SELECTION_ROOT="$(cd "${IN_ROOT}" && pwd -P)"
 
 if [[ "${COPY_2D_FILES}" != "yes" && "${COPY_2D_FILES}" != "no" ]]; then
   echo "ERROR: COPY_2D_FILES must be yes or no"

@@ -134,6 +134,117 @@ class SafeguardTests(unittest.TestCase):
         result = self.run_script(tool, **env)
         self.assertNotEqual(result.returncode, 0); self.assertEqual((target/'one.nc').read_bytes(), b'partial')
 
+    def test_delivery_selection_for_roots_and_subtrees(self):
+        names = ('aggregate_ocean_downscaling_products_by_depth_bins.sh',
+                 'split_ocean_downscaling_products_by_depth.sh',
+                 'export_ocean_downscaling_products_to_parquet.sh',
+                 'export_ocean_downscaling_products_to_geotiff.sh',
+                 'export_ocean_downscaling_products_bydepth_to_csv.sh')
+        for name in names:
+            source = (ROOT/'scripts/tools'/name).read_text()
+            start = source.index('contains_word() {')
+            end = source.index('\n}', source.index('include_relative_path() {')) + 2
+            definitions = '\n'.join(line for line in source.splitlines()
+                                    if line.startswith(('FUTURE_MODELS=', 'EXCLUDE_FUTURE_MODELS=',
+                                                        'read -r -a FUTURE_MODEL_LIST',
+                                                        'read -r -a EXCLUDE_FUTURE_MODEL_LIST')))
+            # Exercise the production selector without invoking scientific tools.
+            shell = definitions + '\n' + source[start:end] + '\ninclude_relative_path "$CASE_PATH"'
+            cases = [('baseline/thetao/file.nc', True),
+                     ('future/New-CMIP6/r1/file.nc', True),
+                     ('future/ensemble/model_mean/file.nc', True),
+                     ('future/cesm_f09_g16/001/file.nc', False),
+                     ('future/legacy_downscaled_rcp85/legacy/file.nc', False)]
+            for relative, accepted in cases:
+                for subtree in (False, True):
+                    parts = relative.split('/')
+                    root = '/products/' + '/'.join(parts[:2]) if subtree else '/products'
+                    tail = '/'.join(parts[2:]) if subtree else relative
+                    result = subprocess.run(['bash', '-c', shell], env=dict(
+                        self.env, FUTURE_MODELS='auto', MODEL_SELECTION_ROOT=root,
+                        CASE_PATH=tail), capture_output=True, text=True)
+                    self.assertEqual(result.returncode == 0, accepted, (name, relative, subtree, result.stderr))
+            result = subprocess.run(['bash', '-c', shell], env=dict(
+                self.env, FUTURE_MODELS='Selected', MODEL_SELECTION_ROOT='/products',
+                CASE_PATH='future/New-CMIP6/r1/file.nc'), capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            for model, exclude, accepted in [('Selected', 'cesm_f09_g16 legacy_downscaled_rcp85', True),
+                                             ('cesm_f09_g16', 'cesm_f09_g16 legacy_downscaled_rcp85', False),
+                                             ('cesm_f09_g16', '', True)]:
+                result = subprocess.run(['bash', '-c', shell], env=dict(
+                    self.env, FUTURE_MODELS=model, EXCLUDE_FUTURE_MODELS=exclude,
+                    MODEL_SELECTION_ROOT='/products', CASE_PATH=f'future/{model}/r1/file.nc'),
+                    capture_output=True)
+                self.assertEqual(result.returncode == 0, accepted, (name, model, exclude))
+
+    def test_organizer_default_excludes_retired_models_and_fallback(self):
+        downscaled = self.root/'downscaled'
+        for model in ('New-CMIP6', 'cesm_f09_g16'):
+            source = downscaled/model/'r1/ssp585/thetao/0p05/2050-2060'
+            source.mkdir(parents=True); (source/'one.nc').write_bytes(model.encode())
+        legacy = self.root/'legacy/thetao/2050-2060'
+        legacy.mkdir(parents=True); (legacy/'old.nc').write_bytes(b'legacy')
+        products = self.root/'products'
+        env = dict(PRODUCT_ROOT=str(products), DOWNSCALED_ROOT=str(downscaled),
+                   CESM_LEGACY_DOWNSCALED_ROOT=str(self.root/'legacy'),
+                   ORGANIZE_SCOPE='future', VAR='thetao', WINDOW='2050-2060', MODELS='auto', NPROC='1')
+        tool = ROOT/'scripts/tools/organize_ocean_downscaling_products.sh'
+        result = self.run_script(tool, **env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(list((products/'future').iterdir()), [products/'future/New-CMIP6'])
+        self.assertEqual(next(products.rglob('one.nc')).read_bytes(), b'New-CMIP6')
+        # With no accepted modern source, the existing legacy fallback stays excluded.
+        result = self.run_script(tool, **dict(env, DOWNSCALED_ROOT=str(self.root/'absent')))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((products/'future/legacy_downscaled_rcp85').exists())
+
+    def test_product_runners_forward_default_exclusions(self):
+        bindir = self.root/'bin'; bindir.mkdir()
+        # No cluster directories or jobs are created: intercept only runner setup/submission.
+        for name, body in [('mkdir', 'exit 0'), ('sbatch', 'printf "%s\\n" "$@" >> "$CAPTURE"; echo 12345')]:
+            stub = bindir/name; stub.write_text('#!/bin/bash\n' + body + '\n'); stub.chmod(0o755)
+        # macOS Bash 3 lacks mapfile. Supply only the -t array-reading operation
+        # for this submission harness; production still requires Bash 4+.
+        startup = self.root/'bash_env'
+        startup.write_text(r"""if ! type mapfile >/dev/null 2>&1; then
+mapfile() {
+    [[ "$1" == "-t" && "$#" == 2 ]] || return 2
+    local destination="$2" item index=0
+    unset "$destination"
+    while IFS= read -r item; do
+        eval "$destination[$index]=\"\$item\""
+        index=$((index + 1))
+    done
+    return 0
+}
+fi
+""")
+        runners = [p for p in (ROOT/'scripts/runners/products').glob('*.sh')
+                   if 'EXCLUDE_FUTURE_MODELS-cesm_f09_g16' in p.read_text()]
+        self.assertEqual(len(runners), 10)
+        source = self.root/'products'
+        (source/'baseline/thetao').mkdir(parents=True)
+        (source/'future/New-CMIP6').mkdir(parents=True)
+        (source/'future/cesm_f09_g16').mkdir(parents=True)
+        bash_major = int(subprocess.check_output(['bash', '-c', 'echo "${BASH_VERSINFO[0]}"'], text=True))
+        for runner in runners:
+            if bash_major < 4 and '${MAX_DEPTH_M,,}' in runner.read_text():
+                # Lowercase expansion cannot be emulated by a function in Bash 3.
+                # These two runners are fully exercised on the production Bash 4+.
+                with self.subTest(runner=runner.name):
+                    self.skipTest('Full runner requires Bash 4+ lowercase expansion')
+                continue
+            capture = self.root/'submission.txt'
+            if capture.exists(): capture.unlink()
+            result = self.run_script(runner, PATH=str(bindir)+os.pathsep+self.env['PATH'],
+                CAPTURE=str(capture), BASH_ENV=str(startup), SOURCE_ROOT=str(source), IN_ROOT=str(source),
+                PRODUCT_ROOT=str(source), FUTURE_MODELS='auto', MODELS='auto',
+                VARS='thetao', WINDOWS='2050-2060', EXCLUDE_NODES='fixture-node')
+            self.assertEqual(result.returncode, 0, (runner.name, result.stdout, result.stderr))
+            submitted = capture.read_text()
+            self.assertIn('EXCLUDE_FUTURE_MODELS', submitted, runner.name)
+            self.assertIn('cesm_f09_g16 legacy_downscaled_rcp85', submitted, runner.name)
+
     def test_all_cannot_submit_and_predecessors_checked(self):
         result = self.run_script(SMOKE, RUN='yes', STEP='all')
         self.assertNotEqual(result.returncode, 0); self.assertIn('unsafe', result.stderr)

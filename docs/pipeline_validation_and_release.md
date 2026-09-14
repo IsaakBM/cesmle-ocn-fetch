@@ -28,6 +28,9 @@ select conflicting dataset versions, or change members to bypass a failure.
 
 Use Python 3 with `numpy`, `xarray`, `netCDF4`/`cftime`, plus CDO, `ncgen`, and Rscript.
 The tests create only temporary fixtures; no downloads or Slurm submissions occur.
+Use Bash 4+ on PATH for full runner coverage. On macOS Bash 3, the submission
+harness emulates `mapfile -t` and skips two runners that require lowercase
+expansion; these still need the full Bash 4+ check.
 The fetch-failure test replaces wget with a local failing stub.
 
 ```bash
@@ -105,6 +108,16 @@ both files, so verification adds I/O. The existing parallelism setting is retain
 The configured diagnostic-only `zooc` branch may be absent; existing custom zooc
 products remain discoverable. Retired legacy fallback is not used for an unrelated
 explicit model selection.
+
+Organization and layer/depth/CSV/Parquet/GeoTIFF delivery default to excluding
+`cesm_f09_g16` and `legacy_downscaled_rcp85`, including direct model-subtree inputs
+and organizer legacy fallback. New models remain discoverable under `auto`; use
+explicit reviewed model lists for releases. Exclusions win over inclusion lists.
+These scripts accept a replacement `EXCLUDE_FUTURE_MODELS` list, including an
+explicit empty value to clear exclusions. This does not change existing audit or
+sample-staging override semantics. Existing historical products are not deleted.
+Downstream ensemble exports remain supported; ensemble construction and current-speed
+policies remain unchanged.
 
 Prepare an independently reviewed expected-file list for the release: one path
 relative to the curated product root per line. Do not derive this list solely from

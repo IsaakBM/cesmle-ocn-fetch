@@ -14,6 +14,8 @@ HINDCAST_0P05_COASTAL_FILLED_ROOT="${HINDCAST_0P05_COASTAL_FILLED_ROOT:-/home/SB
 GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/reanalysis/glorys12v1/monthly_0p05}"
 DOWNSCALED_ROOT="${DOWNSCALED_ROOT:-${IPCC_DOWNSCALED_ROOT:-/home/SB5/downscaled}}"
 CESM_LEGACY_DOWNSCALED_ROOT="${CESM_LEGACY_DOWNSCALED_ROOT:-${CESM_DOWNSCALED_ROOT:-/home/SB5/downscaled_rcp85}}"
+# Production selection applies to both model discovery and legacy fallback.
+EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS-cesm_f09_g16 legacy_downscaled_rcp85}"
 MODEL="${MODEL:-auto}"
 if [[ -n "${MODELS+x}" && -n "${MODELS}" ]]; then
   MODEL="auto"
@@ -41,6 +43,8 @@ USE_COASTAL_FILLED_BASELINE="${USE_COASTAL_FILLED_BASELINE:-no}"
 COASTAL_FILLED_BASELINE_VARS="${COASTAL_FILLED_BASELINE_VARS:-chl o2}"
 
 read -r -a MODEL_LIST <<< "${MODELS}"
+read -r -a EXCLUDE_FUTURE_MODEL_LIST <<< "${EXCLUDE_FUTURE_MODELS}"
+echo "MODELS: ${MODELS}; EXCLUDE FUTURE: ${EXCLUDE_FUTURE_MODELS:-<none>}"
 
 contains_word() {
   local needle="$1"
@@ -147,6 +151,7 @@ find_downscaled_var_roots() {
     realization="$(basename "$(dirname "$(dirname "${candidate}")")")"
     scenario="$(basename "$(dirname "${candidate}")")"
 
+    contains_word "${model}" "${EXCLUDE_FUTURE_MODEL_LIST[@]}" && continue
     [[ "${MODELS}" != "auto" ]] && ! contains_word "${model}" "${MODEL_LIST[@]}" && continue
     [[ "${REALIZATION}" != "auto" && "${REALIZATION}" != "${realization}" ]] && continue
     [[ "${SCENARIO}" != "auto" && "${SCENARIO}" != "${scenario}" ]] && continue
@@ -184,7 +189,7 @@ copy_future_products() {
 
   local legacy_root="${CESM_LEGACY_DOWNSCALED_ROOT}/${var}"
   local legacy_window="${legacy_root}/${window}"
-  if [[ -d "${legacy_window}" ]] && { [[ "${MODELS}" == "auto" ]] || contains_word "legacy_downscaled_rcp85" "${MODEL_LIST[@]}"; }; then
+  if ! contains_word "legacy_downscaled_rcp85" "${EXCLUDE_FUTURE_MODEL_LIST[@]}" && [[ -d "${legacy_window}" ]] && { [[ "${MODELS}" == "auto" ]] || contains_word "legacy_downscaled_rcp85" "${MODEL_LIST[@]}"; }; then
     copy_all_from_dir_parallel "${legacy_window}" "${FUTURE_DIR}/legacy_downscaled_rcp85/legacy_member/rcp85/${var}/${window}/native" "future-legacy-${var}-${window}"
     return 0
   fi

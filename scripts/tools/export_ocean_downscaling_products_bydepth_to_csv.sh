@@ -50,19 +50,20 @@ shopt -s nullglob
 #                      no  -> keep rows with empty CSV values
 #                      (default: yes)
 #   FUTURE_MODELS    : auto or space-separated future top-level branches to include
-#                      when IN_ROOT contains baseline/future
+#                      including IN_ROOT inside a future/model subtree
 #                      (default: auto)
 #   EXCLUDE_FUTURE_MODELS
 #                    : space-separated future top-level branches to exclude
-#                      when IN_ROOT contains baseline/future
-#                      (default: none)
+#                      including IN_ROOT inside a future/model subtree
+#                      (default: cesm_f09_g16 legacy_downscaled_rcp85; empty clears)
 # ==============================================================================
 IN_ROOT="${IN_ROOT:-/home/SB5/ocean_downscaling_products_bydepth}"
 OUT_ROOT="${OUT_ROOT:-/home/SB5/ocean_downscaling_products_bydepth_txt}"
 TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_export_csv}"
 DROP_MISSING="${DROP_MISSING:-yes}"
 FUTURE_MODELS="${FUTURE_MODELS:-auto}"
-EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS:-}"
+# Production selection: omit retired branches; retain discovery of new models.
+EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS-cesm_f09_g16 legacy_downscaled_rcp85}"
 NPROC="${SLURM_CPUS_PER_TASK:-6}"
 read -r -a FUTURE_MODEL_LIST <<< "${FUTURE_MODELS}"
 read -r -a EXCLUDE_FUTURE_MODEL_LIST <<< "${EXCLUDE_FUTURE_MODELS}"
@@ -81,6 +82,14 @@ contains_word() {
 include_relative_path() {
   local rel_path="$1"
   local model
+
+  # Recover the model component when IN_ROOT is already inside a future subtree.
+  # Keep rel_path used for output layout unchanged outside this filter.
+  local selection_path="${MODEL_SELECTION_ROOT}/${rel_path}"
+  case "${selection_path}" in
+    */future/*) rel_path="future/${selection_path##*/future/}" ;;
+    */baseline/*) rel_path="baseline/${selection_path##*/baseline/}" ;;
+  esac
 
   case "${rel_path}" in
     baseline/*)
@@ -107,6 +116,8 @@ if [[ ! -d "${IN_ROOT}" ]]; then
   echo "ERROR: IN_ROOT does not exist: ${IN_ROOT}"
   exit 1
 fi
+# Resolve a relative input root once, including direct subtree invocations.
+MODEL_SELECTION_ROOT="$(cd "${IN_ROOT}" && pwd -P)"
 
 if [[ "${DROP_MISSING}" != "yes" && "${DROP_MISSING}" != "no" ]]; then
   echo "ERROR: DROP_MISSING must be yes or no"

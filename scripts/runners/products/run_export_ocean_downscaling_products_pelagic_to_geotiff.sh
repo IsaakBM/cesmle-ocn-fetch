@@ -16,7 +16,8 @@ TARGET_ROOT="${TARGET_ROOT:-/home/SB5/ocean_downscaling_products_pelagic_geotiff
 OVERWRITE="${OVERWRITE:-no}"
 RESOLUTIONS="${RESOLUTIONS:-auto}"
 FUTURE_MODELS="${FUTURE_MODELS:-auto}"
-EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS:-}"
+# Production selection: omit retired branches; retain discovery of new models.
+EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS-cesm_f09_g16 legacy_downscaled_rcp85}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-${SBATCH_EXCLUDE:-}}"
 INCLUDE_BASELINE="${INCLUDE_BASELINE:-yes}"
 SPLIT_ENSEMBLE_STATS="${SPLIT_ENSEMBLE_STATS:-yes}"

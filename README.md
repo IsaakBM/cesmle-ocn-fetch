@@ -197,6 +197,25 @@ Stricter checks can stop a run that previously continued. A failure needs inspec
 it is not evidence by itself that existing products are incorrect. Do not resolve a
 failure by silently filling months, switching members, or converting scientific units.
 
+### Current-model selection in product processing
+
+Organization, layer/depth generation, and CSV/Parquet/GeoTIFF exports now exclude
+`cesm_f09_g16` and `legacy_downscaled_rcp85` by default. The exclusions apply in
+both runners and tools, including direct inputs inside a `future/<model>` subtree.
+Organization also applies them to its old-layout fallback. Existing files are
+neither removed nor relocated by this selection change.
+
+`MODELS=auto` (organization) and `FUTURE_MODELS=auto` (delivery) still discover new
+models. Use explicit model lists for a reviewed release. Exclusions take precedence
+when a model is also explicitly selected. In these organization/delivery scripts,
+`EXCLUDE_FUTURE_MODELS` can supply a replacement list; explicitly setting it empty
+clears the default exclusions for a deliberate historical operation. Existing audit
+and sample-staging interfaces retain their own override semantics.
+
+Baseline products remain selectable; downstream delivery can include `ensemble`.
+Ensemble construction and current-speed derivation retain their existing exclusions
+and scientific calculations. Job logs report the effective selection settings.
+
 ### Operational order for a new model
 
 1. Discover and download historical and scenario inputs using the existing ESGF
@@ -1414,7 +1433,7 @@ bash scripts/runners/products/run_organize_ocean_downscaling_products.sh
 For one CESM member:
 
 ```bash
-MODEL=cesm_f09_g16 REALIZATION=002 SCENARIO=rcp85 ./scripts/runners/products/run_organize_ocean_downscaling_products.sh
+EXCLUDE_FUTURE_MODELS="" MODEL=cesm_f09_g16 REALIZATION=002 SCENARIO=rcp85 ./scripts/runners/products/run_organize_ocean_downscaling_products.sh
 ```
 
 The organizer is incremental by default and compares each existing file with its

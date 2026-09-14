@@ -200,6 +200,57 @@ import os
 import sys
 import xarray as xr
 
+# Atomic publication owns only its lock and private workspace. A pre-existing
+# lock is never removed automatically; interrupted writers require inspection.
+from contextlib import contextmanager
+import os
+import shutil
+import signal
+import tempfile
+
+@contextmanager
+def atomic_product(final, overwrite=True):
+    os.makedirs(os.path.dirname(final), exist_ok=True)
+    lock = final + ".lock"
+    try:
+        os.mkdir(lock)
+    except FileExistsError:
+        raise RuntimeError(f"Output locked by another writer (or stale lock): {final}")
+    work = None
+    previous = signal.getsignal(signal.SIGTERM)
+    def interrupted(signum, frame):
+        raise SystemExit(128 + signum)
+    try:
+        signal.signal(signal.SIGTERM, interrupted)
+        if os.path.exists(final) and not overwrite:
+            print(f"[SKIP] Existing output retained; freshness not verified: {final}")
+            yield None
+            return
+        work = tempfile.mkdtemp(prefix="." + os.path.basename(final) + ".work.",
+                                dir=os.path.dirname(final))
+        candidate = os.path.join(work, os.path.basename(final))
+        yield candidate
+        if not os.path.isfile(candidate) or os.path.getsize(candidate) == 0:
+            raise RuntimeError(f"Writer did not create a nonempty candidate: {final}")
+        os.replace(candidate, final)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        if work is not None:
+            shutil.rmtree(work)
+        os.rmdir(lock)
+
+def publish_netcdf(dataset, final, overwrite=True):
+    with atomic_product(final, overwrite) as candidate:
+        if candidate is None:
+            return
+        dataset.to_netcdf(candidate)
+        # Read every field back before replacing the accepted file.
+        with xr.open_dataset(candidate) as check:
+            check.load()
+            xr.testing.assert_identical(check, dataset)
+            if dict(check.sizes) != dict(dataset.sizes) or set(check.variables) != set(dataset.variables):
+                raise ValueError(f"Replacement structure differs: {final}")
+
 infile, out_dir, base, zdim = sys.argv[1:5]
 min_decimals = int(sys.argv[5])
 integer_width = int(sys.argv[6])
@@ -242,12 +293,10 @@ with xr.open_dataset(infile) as ds:
 
     for idx, depth_value, token in selected:
         outfile = os.path.join(out_dir, f"{base}_depth_{token}.nc")
-        if os.path.exists(outfile):
-          os.remove(outfile)
         # Keep the selected vertical coordinate as a scalar coordinate so later
         # export steps can recover the exact depth directly from the file.
         out = ds.isel({zdim: idx}, drop=False)
-        out.to_netcdf(outfile)
+        publish_netcdf(out, outfile)
         print(f"[DONE ] {outfile} depth_m={depth_value:.10g}")
         exported += 1
 
@@ -256,7 +305,62 @@ with xr.open_dataset(infile) as ds:
 PY
 }
 
-process_one_file() {
+copy_2d_atomically() {
+  python3 - "$1" "$2" <<'PY_COPY_ATOMIC'
+import sys
+import filecmp
+import xarray as xr
+# Atomic publication owns only its lock and private workspace. A pre-existing
+# lock is never removed automatically; interrupted writers require inspection.
+from contextlib import contextmanager
+import os
+import shutil
+import signal
+import tempfile
+
+@contextmanager
+def atomic_product(final, overwrite=True):
+    os.makedirs(os.path.dirname(final), exist_ok=True)
+    lock = final + ".lock"
+    try:
+        os.mkdir(lock)
+    except FileExistsError:
+        raise RuntimeError(f"Output locked by another writer (or stale lock): {final}")
+    work = None
+    previous = signal.getsignal(signal.SIGTERM)
+    def interrupted(signum, frame):
+        raise SystemExit(128 + signum)
+    try:
+        signal.signal(signal.SIGTERM, interrupted)
+        if os.path.exists(final) and not overwrite:
+            print(f"[SKIP] Existing output retained; freshness not verified: {final}")
+            yield None
+            return
+        work = tempfile.mkdtemp(prefix="." + os.path.basename(final) + ".work.",
+                                dir=os.path.dirname(final))
+        candidate = os.path.join(work, os.path.basename(final))
+        yield candidate
+        if not os.path.isfile(candidate) or os.path.getsize(candidate) == 0:
+            raise RuntimeError(f"Writer did not create a nonempty candidate: {final}")
+        os.replace(candidate, final)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        if work is not None:
+            shutil.rmtree(work)
+        os.rmdir(lock)
+
+source, final = sys.argv[1:]
+with atomic_product(final) as candidate:
+    shutil.copy2(source, candidate)
+    if not filecmp.cmp(source, candidate, shallow=False):
+        raise ValueError("Copied NetCDF differs from source")
+    with xr.open_dataset(candidate) as check:
+        check.load()
+PY_COPY_ATOMIC
+}
+
+process_one_file() (
+  set -euo pipefail
   local infile="$1"
   local rel_path rel_dir base out_dir zdim levels idx level_value level_token outfile
 
@@ -268,14 +372,14 @@ process_one_file() {
   mkdir -p "${out_dir}"
 
   if [[ ! -f "${infile}" ]]; then
-    echo "[WARN] Source file disappeared before processing: ${rel_path}"
-    return 0
+    echo "[ERROR] Source file disappeared before processing: ${rel_path}" >&2
+    return 1
   fi
 
   zdim="$(find_vertical_dim "${infile}")"
   if [[ -z "${zdim}" ]]; then
     if [[ "${COPY_2D_FILES}" == "yes" ]]; then
-      cp -p "${infile}" "${out_dir}/"
+      copy_2d_atomically "${infile}" "${out_dir}/$(basename "$infile")"
       echo "[COPY] 2D/no-z file copied unchanged: ${rel_path}"
     else
       echo "[SKIP] No recognized vertical axis: ${rel_path}"
@@ -287,7 +391,7 @@ process_one_file() {
   if [[ -z "${nlevels}" || "${nlevels}" == "0" ]]; then
     echo "[WARN] No levels returned by cdo showlevel for: ${rel_path}"
     if [[ "${COPY_2D_FILES}" == "yes" ]]; then
-      cp -p "${infile}" "${out_dir}/"
+      copy_2d_atomically "${infile}" "${out_dir}/$(basename "$infile")"
       echo "[COPY] Falling back to unchanged copy: ${rel_path}"
     fi
     return 0
@@ -297,7 +401,7 @@ process_one_file() {
   echo "[START] ${rel_path}"
   echo "        zdim=${zdim} nlevels=${nlevels}"
   extract_all_levels "${infile}" "${out_dir}" "${base}" "${zdim}"
-}
+)
 
 echo "============================================================"
 echo "Starting curated ocean product split by depth"
@@ -329,7 +433,7 @@ for infile in "${files[@]}"; do
 done
 
 export IN_ROOT OUT_ROOT TMP_DIR MAX_DEPTH_M MIN_DECIMALS INTEGER_WIDTH COPY_2D_FILES
-export -f find_vertical_dim depth_token_from_value extract_all_levels process_one_file
+export -f copy_2d_atomically find_vertical_dim depth_token_from_value extract_all_levels process_one_file
 
 printf '%s\0' "${files[@]}" \
   | xargs -0 -n 1 -P "${NPROC}" bash -c 'process_one_file "$1"' _

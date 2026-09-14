@@ -126,7 +126,8 @@ fi
 
 mkdir -p "${OUT_ROOT}" "${TMP_DIR}"
 
-process_one_file() {
+process_one_file() (
+  set -euo pipefail
   local infile="$1"
   local rel_path rel_dir base outfile
 
@@ -136,7 +137,6 @@ process_one_file() {
   outfile="${OUT_ROOT}/${rel_dir}/${base}.csv"
 
   mkdir -p "$(dirname "${outfile}")"
-  rm -f "${outfile}"
 
   echo
   echo "[START] ${rel_path}"
@@ -147,6 +147,45 @@ import re
 import numpy as np
 import pandas as pd
 import xarray as xr
+
+# Atomic publication owns only its lock and private workspace. A pre-existing
+# lock is never removed automatically; interrupted writers require inspection.
+from contextlib import contextmanager
+import os
+import shutil
+import signal
+import tempfile
+
+@contextmanager
+def atomic_product(final, overwrite=True):
+    os.makedirs(os.path.dirname(final), exist_ok=True)
+    lock = final + ".lock"
+    try:
+        os.mkdir(lock)
+    except FileExistsError:
+        raise RuntimeError(f"Output locked by another writer (or stale lock): {final}")
+    work = None
+    previous = signal.getsignal(signal.SIGTERM)
+    def interrupted(signum, frame):
+        raise SystemExit(128 + signum)
+    try:
+        signal.signal(signal.SIGTERM, interrupted)
+        if os.path.exists(final) and not overwrite:
+            print(f"[SKIP] Existing output retained; freshness not verified: {final}")
+            yield None
+            return
+        work = tempfile.mkdtemp(prefix="." + os.path.basename(final) + ".work.",
+                                dir=os.path.dirname(final))
+        candidate = os.path.join(work, os.path.basename(final))
+        yield candidate
+        if not os.path.isfile(candidate) or os.path.getsize(candidate) == 0:
+            raise RuntimeError(f"Writer did not create a nonempty candidate: {final}")
+        os.replace(candidate, final)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        if work is not None:
+            shutil.rmtree(work)
+        os.rmdir(lock)
 
 infile, outfile, drop_missing_flag = sys.argv[1], sys.argv[2], sys.argv[3]
 drop_missing = drop_missing_flag == "yes"
@@ -257,11 +296,15 @@ with xr.open_dataset(infile) as ds:
     if drop_missing:
         df = df[df[value_column].notna()]
 
-    df.to_csv(outfile, index=False)
+    with atomic_product(outfile) as candidate:
+        df.to_csv(candidate, index=False)
+        check = pd.read_csv(candidate, float_precision="round_trip")
+        pd.testing.assert_frame_equal(check, df.reset_index(drop=True),
+                                      check_dtype=False, check_exact=False, rtol=1e-12, atol=1e-12)
 PY
 
   echo "[DONE ] ${outfile}"
-}
+)
 
 echo "============================================================"
 echo "Starting by-depth NetCDF to CSV export"

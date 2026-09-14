@@ -150,7 +150,8 @@ fi
 
 mkdir -p "${OUT_ROOT}" "${TMP_DIR}"
 
-process_one_file() {
+process_one_file() (
+  set -euo pipefail
   local infile="$1"
   local rel_path rel_dir out_dir
 
@@ -161,8 +162,8 @@ process_one_file() {
   mkdir -p "${out_dir}"
 
   if [[ ! -f "${infile}" ]]; then
-    echo "[WARN] Source file disappeared before processing: ${rel_path}"
-    return 0
+    echo "[ERROR] Source file disappeared before processing: ${rel_path}" >&2
+    return 1
   fi
 
   echo
@@ -173,6 +174,57 @@ import os
 import sys
 import numpy as np
 import xarray as xr
+
+# Atomic publication owns only its lock and private workspace. A pre-existing
+# lock is never removed automatically; interrupted writers require inspection.
+from contextlib import contextmanager
+import os
+import shutil
+import signal
+import tempfile
+
+@contextmanager
+def atomic_product(final, overwrite=True):
+    os.makedirs(os.path.dirname(final), exist_ok=True)
+    lock = final + ".lock"
+    try:
+        os.mkdir(lock)
+    except FileExistsError:
+        raise RuntimeError(f"Output locked by another writer (or stale lock): {final}")
+    work = None
+    previous = signal.getsignal(signal.SIGTERM)
+    def interrupted(signum, frame):
+        raise SystemExit(128 + signum)
+    try:
+        signal.signal(signal.SIGTERM, interrupted)
+        if os.path.exists(final) and not overwrite:
+            print(f"[SKIP] Existing output retained; freshness not verified: {final}")
+            yield None
+            return
+        work = tempfile.mkdtemp(prefix="." + os.path.basename(final) + ".work.",
+                                dir=os.path.dirname(final))
+        candidate = os.path.join(work, os.path.basename(final))
+        yield candidate
+        if not os.path.isfile(candidate) or os.path.getsize(candidate) == 0:
+            raise RuntimeError(f"Writer did not create a nonempty candidate: {final}")
+        os.replace(candidate, final)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        if work is not None:
+            shutil.rmtree(work)
+        os.rmdir(lock)
+
+def publish_netcdf(dataset, final, overwrite=True):
+    with atomic_product(final, overwrite) as candidate:
+        if candidate is None:
+            return
+        dataset.to_netcdf(candidate)
+        # Read every field back before replacing the accepted file.
+        with xr.open_dataset(candidate) as check:
+            check.load()
+            xr.testing.assert_identical(check, dataset)
+            if dict(check.sizes) != dict(dataset.sizes) or set(check.variables) != set(dataset.variables):
+                raise ValueError(f"Replacement structure differs: {final}")
 
 infile, out_dir, bin_set, copy_2d_flag, overwrite_flag = sys.argv[1:6]
 copy_2d = copy_2d_flag == "yes"
@@ -319,11 +371,7 @@ with xr.open_dataset(infile) as ds:
     if zdim is None:
         rel_copy = os.path.join(out_dir, os.path.basename(infile))
         if copy_2d:
-            if overwrite and os.path.exists(rel_copy):
-                os.remove(rel_copy)
-            if overwrite or not os.path.exists(rel_copy):
-                ds.load()
-                ds.to_netcdf(rel_copy)
+            publish_netcdf(ds, rel_copy, overwrite)
             print(f"[COPY] 2D/no-z file copied unchanged: {infile}")
         else:
             print(f"[SKIP] No recognized vertical axis: {infile}")
@@ -361,12 +409,6 @@ with xr.open_dataset(infile) as ds:
             continue
 
         outfile = os.path.join(out_dir, f"{base}_{prefix}_{slug}.nc")
-        if os.path.exists(outfile) and not overwrite:
-            print(f"[KEEP] {outfile}")
-            continue
-        if os.path.exists(outfile):
-            os.remove(outfile)
-
         if idx.size == 1:
             out = ds[[main_var]].isel({zdim: idx[0]}, drop=True)
             method = "single_level"
@@ -409,13 +451,13 @@ with xr.open_dataset(infile) as ds:
             )
 
         out = preserve_referenced_auxiliary_vars(out, ds, zdim)
-        out.to_netcdf(outfile)
+        publish_netcdf(out, outfile, overwrite)
         print(
             f"[DONE ] {outfile} "
             f"(levels={idx.size} method={method} range=[{lower}, {upper}))"
         )
 PY
-}
+)
 
 echo "============================================================"
 echo "Starting curated ocean product aggregation by depth bins"

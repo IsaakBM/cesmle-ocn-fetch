@@ -198,8 +198,21 @@ case "${FUTURE_UO_UVEL_CM_S_TO_M_S}" in
     ;;
 esac
 
-mkdir -p "${OUT_ROOT}" "${TMP_DIR}" "${TMP_DIR}/manifest_parts"
-rm -f "${TMP_DIR}/manifest_parts"/*.csv
+mkdir -p "${OUT_ROOT}" "${TMP_DIR}"
+# Serialize runs sharing a manifest, while retaining parallel file workers.
+MANIFEST_LOCK="${OUT_ROOT}/geotiff_manifest.csv.lock"
+mkdir "$MANIFEST_LOCK" 2>/dev/null || { echo "ERROR: GeoTIFF manifest locked: $MANIFEST_LOCK" >&2; exit 1; }
+RUN_TMP=""
+cleanup_manifest_run() {
+  [[ -z "$RUN_TMP" ]] || rm -rf -- "$RUN_TMP"
+  rmdir -- "$MANIFEST_LOCK"
+}
+trap cleanup_manifest_run EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+RUN_TMP="$(mktemp -d "${OUT_ROOT}/.geotiff_run.XXXXXX")"
+TMP_DIR="$RUN_TMP"
+mkdir -p "${TMP_DIR}/manifest_parts"
 
 "${GEOTIFF_PYTHON}" - <<'PY'
 import importlib
@@ -230,13 +243,13 @@ except Exception as exc:
     writer_errors.append(f"osgeo.gdal/osgeo.osr: {exc}")
 
 gdal_translate = os.environ.get("GDAL_TRANSLATE", "gdal_translate")
-if shutil.which(gdal_translate):
+if shutil.which(gdal_translate) and shutil.which("gdalinfo"):
     writer_ok = True
 else:
-    writer_errors.append(f"{gdal_translate}: executable not found")
+    writer_errors.append(f"CLI backend requires both {gdal_translate} and gdalinfo")
 
 if not writer_ok:
-    missing.append("Need rasterio, GDAL Python bindings, or gdal_translate:\n" + "\n".join(writer_errors))
+    missing.append("Need rasterio, GDAL Python bindings, or gdal_translate plus gdalinfo:\n" + "\n".join(writer_errors))
 
 backend_ok = False
 for backend in ["netCDF4", "h5netcdf"]:
@@ -254,7 +267,8 @@ if missing:
     raise SystemExit("Missing Python dependencies for GeoTIFF export:\n" + "\n".join(missing))
 PY
 
-process_one_file() {
+process_one_file() (
+  set -euo pipefail
   local infile="$1"
   local rel_path rel_dir base outfile manifest_key manifest_part
 
@@ -263,7 +277,7 @@ process_one_file() {
   base="$(basename "${infile}" .nc)"
   outfile="${OUT_ROOT}/${rel_dir}/${base}.tif"
   manifest_key="$(echo "${rel_path}" | tr '/' '_' | tr -cd '[:alnum:]_.-')"
-  manifest_part="${TMP_DIR}/manifest_parts/${manifest_key}.$$.csv"
+  manifest_part="$(mktemp "${TMP_DIR}/manifest_parts/part.XXXXXX.csv")"
 
   echo
   echo "[START] ${rel_path}"
@@ -288,6 +302,97 @@ import subprocess
 import sys
 import numpy as np
 import xarray as xr
+
+# Atomic publication owns only its lock and private workspace. A pre-existing
+# lock is never removed automatically; interrupted writers require inspection.
+from contextlib import contextmanager
+import os
+import shutil
+import signal
+import tempfile
+
+@contextmanager
+def atomic_product(final, overwrite=True):
+    os.makedirs(os.path.dirname(final), exist_ok=True)
+    lock = final + ".lock"
+    try:
+        os.mkdir(lock)
+    except FileExistsError:
+        raise RuntimeError(f"Output locked by another writer (or stale lock): {final}")
+    work = None
+    previous = signal.getsignal(signal.SIGTERM)
+    def interrupted(signum, frame):
+        raise SystemExit(128 + signum)
+    try:
+        signal.signal(signal.SIGTERM, interrupted)
+        if os.path.exists(final) and not overwrite:
+            print(f"[SKIP] Existing output retained; freshness not verified: {final}")
+            yield None
+            return
+        work = tempfile.mkdtemp(prefix="." + os.path.basename(final) + ".work.",
+                                dir=os.path.dirname(final))
+        candidate = os.path.join(work, os.path.basename(final))
+        yield candidate
+        if not os.path.isfile(candidate) or os.path.getsize(candidate) == 0:
+            raise RuntimeError(f"Writer did not create a nonempty candidate: {final}")
+        os.replace(candidate, final)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        if work is not None:
+            shutil.rmtree(work)
+        os.rmdir(lock)
+
+def validate_geotiff(path, expected, dtype, nodata, transform, crs, scale, variable):
+    # Read every encoded pixel; metadata checks prevent publishing a readable
+    # raster with the wrong grid, encoding, or missing-value convention.
+    if rasterio is not None:
+        with rasterio.open(path) as check:
+            if check.count != 1 or check.shape != expected.shape or check.dtypes[0] != dtype or check.nodata != nodata:
+                raise ValueError("GeoTIFF shape/dtype/nodata mismatch")
+            np.testing.assert_allclose(check.transform.to_gdal(), transform, rtol=0, atol=1e-9)
+            if crs and check.crs != rasterio.crs.CRS.from_string(crs):
+                raise ValueError("GeoTIFF CRS mismatch")
+            metadata = check.tags()
+            for row in range(expected.shape[0]):
+                np.testing.assert_array_equal(check.read(1, window=((row, row + 1), (0, expected.shape[1])))[0], expected[row])
+    elif gdal is not None:
+        check = gdal.Open(path)
+        if check is None or check.RasterCount != 1:
+            raise ValueError("Unreadable GeoTIFF")
+        band = check.GetRasterBand(1)
+        if (check.RasterYSize, check.RasterXSize) != expected.shape or gdal.GetDataTypeName(band.DataType).lower() != dtype or band.GetNoDataValue() != nodata:
+            raise ValueError("GeoTIFF shape/dtype/nodata mismatch")
+        np.testing.assert_allclose(check.GetGeoTransform(), transform, rtol=0, atol=1e-9)
+        if crs:
+            wanted = osr.SpatialReference(); wanted.SetFromUserInput(crs)
+            actual = osr.SpatialReference(); actual.ImportFromWkt(check.GetProjection())
+            if not actual.IsSame(wanted):
+                raise ValueError("GeoTIFF CRS mismatch")
+        metadata = check.GetMetadata()
+        for row in range(expected.shape[0]):
+            np.testing.assert_array_equal(band.ReadAsArray(0, row, expected.shape[1], 1)[0], expected[row])
+        band = None; check = None
+    else:
+        import json
+        info = json.loads(subprocess.check_output(["gdalinfo", "-json", path], text=True))
+        bands = info.get("bands", [])
+        if len(bands) != 1 or tuple(reversed(info["size"])) != expected.shape or bands[0]["type"].lower() != dtype or bands[0].get("noDataValue") != nodata:
+            raise ValueError("GeoTIFF shape/dtype/nodata mismatch")
+        np.testing.assert_allclose(info["geoTransform"], transform, rtol=0, atol=1e-9)
+        if crs == "EPSG:4326" and '4326' not in info.get('coordinateSystem', {}).get('wkt', ''):
+            raise ValueError("GeoTIFF CRS mismatch")
+        metadata = info.get("metadata", {}).get("", {})
+        # ENVI provides a bounded-memory pixel readback using the installed CLI.
+        binary = path + ".verify.bin"
+        subprocess.run([gdal_translate, '-q', '-of', 'ENVI', path, binary], check=True)
+        header = open(binary.rsplit('.', 1)[0] + '.hdr').read()
+        order = '>' if re.search(r'byte order\s*=\s*1', header) else '<'
+        pixels = np.memmap(binary, dtype=np.dtype(dtype).newbyteorder(order), mode='r', shape=expected.shape)
+        for row in range(expected.shape[0]):
+            np.testing.assert_array_equal(pixels[row], expected[row])
+        del pixels
+    if metadata.get("variable") != variable or float(metadata.get("scale_factor", "nan")) != scale or float(metadata.get("offset", "nan")) != 0:
+        raise ValueError("GeoTIFF variable/scale/offset metadata mismatch")
 
 try:
     import rasterio
@@ -494,155 +599,160 @@ with xr.open_dataset(infile) as ds:
     if x_name.lower() in {"lon", "longitude"} and y_name.lower() in {"lat", "latitude"}:
         crs = "EPSG:4326"
 
-    os.makedirs(os.path.dirname(outfile), exist_ok=True)
-    skip_existing = os.path.exists(outfile) and overwrite == "no"
-    if skip_existing:
-        print(f"[SKIP ] {outfile} exists (OVERWRITE=no)")
-    elif rasterio is not None:
-        profile = {
-            "driver": "GTiff",
-            "height": out_array.shape[0],
-            "width": out_array.shape[1],
-            "count": 1,
-            "dtype": dtype_name,
-            "crs": crs,
-            "transform": rasterio_transform,
-            "nodata": nodata,
-            "compress": compress,
-            "predictor": 2,
-            "tiled": True,
-            "blockxsize": 256,
-            "blockysize": 256,
-            "BIGTIFF": "IF_SAFER",
-        }
-        with rasterio.open(outfile, "w", **profile) as dst:
-            dst.write(out_array, 1)
-            dst.update_tags(
-                variable=main_var,
-                units=units,
-                scale_factor=str(scale_factor),
-                offset="0",
-                decode_formula="real_value = stored_value / scale_factor",
-                source_netcdf=os.path.abspath(infile),
-            )
-            dst.update_tags(
-                1,
-                variable=main_var,
-                units=units,
-                scale_factor=str(scale_factor),
-                offset="0",
-            )
-    else:
-        if gdal is not None:
-            gdal_dtype_by_name = {
-                "int16": gdal.GDT_Int16,
-                "int32": gdal.GDT_Int32,
-            }
-            driver = gdal.GetDriverByName("GTiff")
-            options = [
-                f"COMPRESS={compress}",
-                "PREDICTOR=2",
-                "TILED=YES",
-                "BLOCKXSIZE=256",
-                "BLOCKYSIZE=256",
-                "BIGTIFF=IF_SAFER",
-            ]
-            dataset = driver.Create(
-                outfile,
-                out_array.shape[1],
-                out_array.shape[0],
-                1,
-                gdal_dtype_by_name[dtype_name],
-                options=options,
-            )
-            if dataset is None:
-                raise SystemExit(f"Could not create GeoTIFF: {outfile}")
-
-            dataset.SetGeoTransform(geotransform)
-            if crs == "EPSG:4326":
-                srs = osr.SpatialReference()
-                srs.ImportFromEPSG(4326)
-                dataset.SetProjection(srs.ExportToWkt())
-
-            dataset.SetMetadata(
-                {
-                    "variable": main_var,
-                    "units": units,
-                    "scale_factor": str(scale_factor),
-                    "offset": "0",
-                    "decode_formula": "real_value = stored_value / scale_factor",
-                    "source_netcdf": os.path.abspath(infile),
+    final_outfile = outfile
+    with atomic_product(final_outfile, overwrite == "yes") as candidate:
+        skip_existing = candidate is None
+        if candidate is not None:
+            outfile = candidate
+            if rasterio is not None:
+                profile = {
+                    "driver": "GTiff",
+                    "height": out_array.shape[0],
+                    "width": out_array.shape[1],
+                    "count": 1,
+                    "dtype": dtype_name,
+                    "crs": crs,
+                    "transform": rasterio_transform,
+                    "nodata": nodata,
+                    "compress": compress,
+                    "predictor": 2,
+                    "tiled": True,
+                    "blockxsize": 256,
+                    "blockysize": 256,
+                    "BIGTIFF": "IF_SAFER",
                 }
-            )
-            band = dataset.GetRasterBand(1)
-            band.SetNoDataValue(nodata)
-            band.SetMetadata({"variable": main_var, "units": units, "scale_factor": str(scale_factor), "offset": "0"})
-            band.WriteArray(out_array)
-            band.FlushCache()
-            dataset.FlushCache()
-            dataset = None
-        else:
-            tmp_da = xr.DataArray(
-                out_array,
-                dims=(y_name, x_name),
-                coords={y_name: y, x_name: x},
-                name=main_var,
-                attrs={
-                    "units": units,
-                    "scale_factor_for_app": scale_factor,
-                    "decode_formula": "real_value = stored_value / scale_factor",
-                },
-            )
-            tmp_ds = tmp_da.to_dataset()
-            tmp_ds.attrs["source_netcdf"] = os.path.abspath(infile)
-            tmp_ds.attrs["crs"] = crs or ""
-            encoding = {main_var: {"dtype": dtype_name, "_FillValue": nodata}}
-            os.makedirs(os.path.dirname(tmp_encoded_nc), exist_ok=True)
-            tmp_ds.to_netcdf(tmp_encoded_nc, encoding=encoding)
+                with rasterio.open(outfile, "w", **profile) as dst:
+                    dst.write(out_array, 1)
+                    dst.update_tags(
+                        variable=main_var,
+                        units=units,
+                        scale_factor=str(scale_factor),
+                        offset="0",
+                        decode_formula="real_value = stored_value / scale_factor",
+                        source_netcdf=os.path.abspath(infile),
+                    )
+                    dst.update_tags(
+                        1,
+                        variable=main_var,
+                        units=units,
+                        scale_factor=str(scale_factor),
+                        offset="0",
+                    )
+            else:
+                if gdal is not None:
+                    gdal_dtype_by_name = {
+                        "int16": gdal.GDT_Int16,
+                        "int32": gdal.GDT_Int32,
+                    }
+                    driver = gdal.GetDriverByName("GTiff")
+                    options = [
+                        f"COMPRESS={compress}",
+                        "PREDICTOR=2",
+                        "TILED=YES",
+                        "BLOCKXSIZE=256",
+                        "BLOCKYSIZE=256",
+                        "BIGTIFF=IF_SAFER",
+                    ]
+                    dataset = driver.Create(
+                        outfile,
+                        out_array.shape[1],
+                        out_array.shape[0],
+                        1,
+                        gdal_dtype_by_name[dtype_name],
+                        options=options,
+                    )
+                    if dataset is None:
+                        raise SystemExit(f"Could not create GeoTIFF: {outfile}")
 
-            src = f'NETCDF:"{tmp_encoded_nc}":{main_var}'
-            cmd = [
-                gdal_translate,
-                "-of",
-                "GTiff",
-                "-a_nodata",
-                str(nodata),
-                "-mo",
-                f"variable={main_var}",
-                "-mo",
-                f"units={units}",
-                "-mo",
-                f"scale_factor={scale_factor}",
-                "-mo",
-                "offset=0",
-                "-mo",
-                "decode_formula=real_value = stored_value / scale_factor",
-                "-mo",
-                f"source_netcdf={os.path.abspath(infile)}",
-                "-co",
-                f"COMPRESS={compress}",
-                "-co",
-                "PREDICTOR=2",
-                "-co",
-                "TILED=YES",
-                "-co",
-                "BLOCKXSIZE=256",
-                "-co",
-                "BLOCKYSIZE=256",
-                "-co",
-                "BIGTIFF=IF_SAFER",
-                src,
-                outfile,
-            ]
-            if crs == "EPSG:4326":
-                cmd[1:1] = ["-a_srs", "EPSG:4326"]
-            subprocess.run(cmd, check=True)
-            try:
-                os.remove(tmp_encoded_nc)
-            except OSError:
-                pass
+                    dataset.SetGeoTransform(geotransform)
+                    if crs == "EPSG:4326":
+                        srs = osr.SpatialReference()
+                        srs.ImportFromEPSG(4326)
+                        dataset.SetProjection(srs.ExportToWkt())
+
+                    dataset.SetMetadata(
+                        {
+                            "variable": main_var,
+                            "units": units,
+                            "scale_factor": str(scale_factor),
+                            "offset": "0",
+                            "decode_formula": "real_value = stored_value / scale_factor",
+                            "source_netcdf": os.path.abspath(infile),
+                        }
+                    )
+                    band = dataset.GetRasterBand(1)
+                    band.SetNoDataValue(nodata)
+                    band.SetMetadata({"variable": main_var, "units": units, "scale_factor": str(scale_factor), "offset": "0"})
+                    band.WriteArray(out_array)
+                    band.FlushCache()
+                    dataset.FlushCache()
+                    dataset = None
+                else:
+                    tmp_da = xr.DataArray(
+                        out_array,
+                        dims=(y_name, x_name),
+                        coords={y_name: y, x_name: x},
+                        name=main_var,
+                        attrs={
+                            "units": units,
+                            "scale_factor_for_app": scale_factor,
+                            "decode_formula": "real_value = stored_value / scale_factor",
+                        },
+                    )
+                    tmp_ds = tmp_da.to_dataset()
+                    tmp_ds.attrs["source_netcdf"] = os.path.abspath(infile)
+                    tmp_ds.attrs["crs"] = crs or ""
+                    encoding = {main_var: {"dtype": dtype_name, "_FillValue": nodata}}
+                    os.makedirs(os.path.dirname(tmp_encoded_nc), exist_ok=True)
+                    tmp_ds.to_netcdf(tmp_encoded_nc, encoding=encoding)
+
+                    src = f'NETCDF:"{tmp_encoded_nc}":{main_var}'
+                    cmd = [
+                        gdal_translate,
+                        "-of",
+                        "GTiff",
+                        "-a_nodata",
+                        str(nodata),
+                        "-mo",
+                        f"variable={main_var}",
+                        "-mo",
+                        f"units={units}",
+                        "-mo",
+                        f"scale_factor={scale_factor}",
+                        "-mo",
+                        "offset=0",
+                        "-mo",
+                        "decode_formula=real_value = stored_value / scale_factor",
+                        "-mo",
+                        f"source_netcdf={os.path.abspath(infile)}",
+                        "-co",
+                        f"COMPRESS={compress}",
+                        "-co",
+                        "PREDICTOR=2",
+                        "-co",
+                        "TILED=YES",
+                        "-co",
+                        "BLOCKXSIZE=256",
+                        "-co",
+                        "BLOCKYSIZE=256",
+                        "-co",
+                        "BIGTIFF=IF_SAFER",
+                        src,
+                        outfile,
+                    ]
+                    if crs == "EPSG:4326":
+                        cmd[1:1] = ["-a_srs", "EPSG:4326"]
+                    subprocess.run(cmd, check=True)
+                    try:
+                        os.remove(tmp_encoded_nc)
+                    except OSError:
+                        pass
+
+            validate_geotiff(candidate, out_array, dtype_name, nodata, geotransform, crs, scale_factor, main_var)
+    outfile = final_outfile
 
     row = {
+        "publication_status": "existing_unverified" if skip_existing else "validated_replacement",
         "source_file": os.path.abspath(infile),
         "relative_path": rel_path,
         "geotiff_file": os.path.abspath(outfile),
@@ -662,6 +772,21 @@ with xr.open_dataset(infile) as ds:
         "unit_conversion": unit_conversion,
     }
 
+    if skip_existing:
+        # A skip does not establish that current settings describe the old TIFF.
+        # Retain its previous recorded metadata, or leave unknown fields blank.
+        recorded = None
+        previous_manifest = os.path.join(os.environ.get("OUT_ROOT", os.path.dirname(outfile)), "geotiff_manifest.csv")
+        if os.path.isfile(previous_manifest):
+            with open(previous_manifest, newline="") as previous:
+                for old_row in csv.DictReader(previous):
+                    if old_row.get("relative_path") == rel_path:
+                        recorded = old_row
+                        break
+        row = {key: (recorded or {}).get(key, "") for key in row}
+        row.update(relative_path=rel_path, geotiff_file=os.path.abspath(outfile),
+                   publication_status="existing_unverified")
+
     with open(manifest_part, "w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(row.keys()))
         writer.writeheader()
@@ -679,11 +804,11 @@ PY
   fi
 
   if [[ -f "${outfile}" && "${OVERWRITE}" == "no" ]]; then
-    echo "[DONE ] manifest refreshed for existing ${outfile}"
+    echo "[KEEP ] Existing ${outfile}; manifest row marked existing_unverified"
   else
     echo "[DONE ] ${outfile}"
   fi
-}
+)
 
 echo "============================================================"
 echo "Starting NetCDF to integer-scaled GeoTIFF export"
@@ -744,6 +869,7 @@ except Exception as exc:
     )
 PY
 
+export FUTURE_UO_UVEL_CM_S_TO_M_S
 export IN_ROOT OUT_ROOT TMP_DIR GEOTIFF_PYTHON GDAL_TRANSLATE SCALE_FACTORS DEFAULT_SCALE ENCODE_DTYPE COMPRESS OVERWRITE RESOLUTIONS
 export -f process_one_file
 
@@ -755,13 +881,12 @@ set -e
 
 mapfile -t manifest_parts < <(find "${TMP_DIR}/manifest_parts" -type f -name "*.csv" | sort)
 if (( xargs_status != 0 )); then
-  echo "[WARN] Parallel export command returned status ${xargs_status}."
-  echo "[WARN] Expected files: ${#files[@]}; manifest parts created: ${#manifest_parts[@]}"
-  if (( ${#manifest_parts[@]} != ${#files[@]} )); then
-    echo "ERROR: GeoTIFF export did not create one manifest part per input file."
-    exit "${xargs_status}"
-  fi
-  echo "[WARN] All expected manifest parts exist, so continuing to manifest assembly."
+  echo "ERROR: GeoTIFF workers failed; the existing manifest is retained." >&2
+  exit "$xargs_status"
+fi
+if (( ${#manifest_parts[@]} != ${#files[@]} )); then
+  echo "ERROR: Missing GeoTIFF manifest rows; existing manifest retained." >&2
+  exit 1
 fi
 
 manifest="${OUT_ROOT}/geotiff_manifest.csv"
@@ -776,6 +901,19 @@ head -n 1 "${first_part}" > "${new_manifest}"
 for part in "${manifest_parts[@]}"; do
   tail -n +2 "${part}" >> "${new_manifest}"
 done
+
+"${GEOTIFF_PYTHON}" - "$new_manifest" <<'PY_VALIDATE_MANIFEST'
+import csv
+import os
+import sys
+with open(sys.argv[1], newline="") as handle:
+    rows = list(csv.DictReader(handle))
+keys = [row["relative_path"] for row in rows]
+if not rows or len(keys) != len(set(keys)):
+    raise SystemExit("ERROR: Empty or duplicate manifest rows")
+if any(not os.path.isfile(row["geotiff_file"]) for row in rows):
+    raise SystemExit("ERROR: Manifest references missing GeoTIFF")
+PY_VALIDATE_MANIFEST
 
 if [[ -n "${FILE_INCLUDE_REGEX}" && -f "${manifest}" ]]; then
   echo "Merging filtered manifest refresh into existing manifest: ${manifest}"

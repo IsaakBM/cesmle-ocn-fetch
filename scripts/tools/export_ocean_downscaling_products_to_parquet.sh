@@ -206,7 +206,8 @@ if missing:
     raise SystemExit("Missing Python dependencies for Parquet export:\n" + "\n".join(missing))
 PY
 
-process_one_file() {
+process_one_file() (
+  set -euo pipefail
   local infile="$1"
   local rel_path rel_dir base outfile
 
@@ -216,11 +217,6 @@ process_one_file() {
   outfile="${OUT_ROOT}/${rel_dir}/${base}.parquet"
 
   mkdir -p "$(dirname "${outfile}")"
-  if [[ -f "${outfile}" && "${OVERWRITE}" == "no" ]]; then
-    echo "[SKIP ] ${outfile} exists (OVERWRITE=no)"
-    return 0
-  fi
-  rm -f "${outfile}"
 
   echo
   echo "[START] ${rel_path}"
@@ -232,6 +228,45 @@ import sys
 import numpy as np
 import pandas as pd
 import xarray as xr
+
+# Atomic publication owns only its lock and private workspace. A pre-existing
+# lock is never removed automatically; interrupted writers require inspection.
+from contextlib import contextmanager
+import os
+import shutil
+import signal
+import tempfile
+
+@contextmanager
+def atomic_product(final, overwrite=True):
+    os.makedirs(os.path.dirname(final), exist_ok=True)
+    lock = final + ".lock"
+    try:
+        os.mkdir(lock)
+    except FileExistsError:
+        raise RuntimeError(f"Output locked by another writer (or stale lock): {final}")
+    work = None
+    previous = signal.getsignal(signal.SIGTERM)
+    def interrupted(signum, frame):
+        raise SystemExit(128 + signum)
+    try:
+        signal.signal(signal.SIGTERM, interrupted)
+        if os.path.exists(final) and not overwrite:
+            print(f"[SKIP] Existing output retained; freshness not verified: {final}")
+            yield None
+            return
+        work = tempfile.mkdtemp(prefix="." + os.path.basename(final) + ".work.",
+                                dir=os.path.dirname(final))
+        candidate = os.path.join(work, os.path.basename(final))
+        yield candidate
+        if not os.path.isfile(candidate) or os.path.getsize(candidate) == 0:
+            raise RuntimeError(f"Writer did not create a nonempty candidate: {final}")
+        os.replace(candidate, final)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        if work is not None:
+            shutil.rmtree(work)
+        os.rmdir(lock)
 
 infile, outfile, drop_missing_flag, parquet_engine, rel_path, future_uo_uvel_cm_s_to_m_s = sys.argv[1:7]
 drop_missing = drop_missing_flag == "yes"
@@ -387,7 +422,11 @@ with xr.open_dataset(infile) as ds:
     if drop_missing:
         df = df[df[value_column].notna()]
 
-    df.to_parquet(outfile, index=False, engine=parquet_engine)
+    with atomic_product(outfile, os.environ.get("OVERWRITE", "no") == "yes") as candidate:
+        if candidate is not None:
+            df.to_parquet(candidate, index=False, engine=parquet_engine)
+            check = pd.read_parquet(candidate, engine=parquet_engine)
+            pd.testing.assert_frame_equal(check, df.reset_index(drop=True))
 PY
 
   if [[ ! -f "${outfile}" ]]; then
@@ -396,7 +435,7 @@ PY
   fi
 
   echo "[DONE ] ${outfile}"
-}
+)
 
 echo "============================================================"
 echo "Starting NetCDF to Parquet export"

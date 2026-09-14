@@ -472,6 +472,261 @@ fi
         self.assertIn('duplicate', result.stderr)
         self.assertEqual((self.root/'calls').read_text(), calls)
 
+    def delivery_block(self, name, original=False):
+        import re
+        path = 'scripts/tools/' + name
+        text = subprocess.check_output(['git', 'show', 'HEAD:'+path], cwd=ROOT, text=True) if original else (ROOT/path).read_text()
+        blocks = re.findall(r"<<'PY'\n(.*?)\nPY", text, re.S)
+        marker = {
+            'aggregate_ocean_downscaling_products_by_depth_bins.sh': 'infile, out_dir, bin_set',
+            'split_ocean_downscaling_products_by_depth.sh': 'infile, out_dir, base, zdim',
+            'export_ocean_downscaling_products_bydepth_to_csv.sh': 'infile, outfile, drop_missing_flag',
+            'export_ocean_downscaling_products_to_parquet.sh': 'infile, outfile, drop_missing_flag',
+            'export_ocean_downscaling_products_to_geotiff.sh': '    tmp_encoded_nc,',
+        }[name]
+        return next(block for block in blocks if marker in block)
+
+    def run_delivery_block(self, code, args, **env):
+        return subprocess.run([sys.executable, '-', *map(str, args)], input=code,
+            env=dict(self.env, OVERWRITE='yes', **env), capture_output=True, text=True)
+
+    def test_delivery_outputs_match_committed_calculations_and_survive_failure(self):
+        import pandas as pd
+        import rasterio
+        volume = self.root/'thetao.nc'
+        field = self.field()
+        field.values[0, 0] = [[1., 2.], [3., np.nan]]
+        field.values[0, 1] = [[4., 5.], [6., 7.]]
+        field.to_netcdf(volume)
+        surface = self.root/'thetao_depth_0000p000m.nc'
+        field.isel(lev=0).to_netcdf(surface)
+        names = ['aggregate_ocean_downscaling_products_by_depth_bins.sh',
+                 'split_ocean_downscaling_products_by_depth.sh',
+                 'export_ocean_downscaling_products_bydepth_to_csv.sh',
+                 'export_ocean_downscaling_products_to_parquet.sh',
+                 'export_ocean_downscaling_products_to_geotiff.sh']
+        for name in names:
+            with self.subTest(tool=name):
+                outputs = []
+                args = None
+                for original in (True, False):
+                    dest = self.root/(name + ('_old' if original else '_new'))
+                    dest.mkdir()
+                    if 'depth_bins' in name:
+                        args = [volume, dest, 'fine', 'yes', 'yes']; pattern = '*.nc'
+                    elif 'split_' in name:
+                        args = [volume, dest, 'thetao', 'lev', '3', '4', 'all']; pattern = '*.nc'
+                    elif 'bydepth_to_csv' in name:
+                        args = [surface, dest/'out.csv', 'yes']; pattern = '*.csv'
+                    elif 'parquet' in name:
+                        args = [surface, dest/'out.parquet', 'yes', 'pyarrow', surface.name, 'yes']; pattern = '*.parquet'
+                    else:
+                        args = [surface, dest/'out.tif', surface.name, 'thetao=100', '100',
+                                'int16', 'LZW', dest/'part.csv', 'yes', 'yes', dest/'encoded.nc']
+                        pattern = '*.tif'
+                    result = self.run_delivery_block(self.delivery_block(name, original), args)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    outputs.append(sorted(dest.glob(pattern)))
+                    self.assertTrue(outputs[-1], name)
+                self.assertEqual([p.name for p in outputs[0]], [p.name for p in outputs[1]])
+                for old, new in zip(*outputs):
+                    if pattern == '*.nc':
+                        with xr.open_dataset(old) as a, xr.open_dataset(new) as b:
+                            xr.testing.assert_identical(a, b)
+                    elif pattern == '*.csv':
+                        pd.testing.assert_frame_equal(pd.read_csv(old), pd.read_csv(new))
+                    elif pattern == '*.parquet':
+                        pd.testing.assert_frame_equal(pd.read_parquet(old), pd.read_parquet(new))
+                    else:
+                        with rasterio.open(old) as a, rasterio.open(new) as b:
+                            np.testing.assert_array_equal(a.read(), b.read())
+                            self.assertEqual(a.profile, b.profile)
+                            self.assertEqual(a.tags(), b.tags())
+                preserved = {p: p.read_bytes() for p in outputs[1]}
+                # Fail at the final publication boundary after a valid candidate exists.
+                failure = "import os\ndef refuse(*args, **kwargs): raise OSError('injected publication failure')\nos.replace = refuse\n"
+                result = self.run_delivery_block(failure+self.delivery_block(name), args)
+                self.assertNotEqual(result.returncode, 0, name)
+                self.assertIn('injected publication failure', result.stderr)
+                for path, data in preserved.items():
+                    self.assertEqual(path.read_bytes(), data)
+                self.assertFalse(list(outputs[1][0].parent.glob('*.lock')))
+                self.assertFalse(list(outputs[1][0].parent.glob('.*.work.*')))
+                # A pre-existing lock belongs to another writer and must survive.
+                lock = Path(str(outputs[1][0])+'.lock')
+                lock.mkdir()
+                result = self.run_delivery_block(self.delivery_block(name), args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue(lock.exists())
+                for path, data in preserved.items():
+                    self.assertEqual(path.read_bytes(), data)
+                lock.rmdir()
+
+    def test_delivery_validation_rejects_corrupt_candidates(self):
+        surface = self.root/'thetao_depth_0000p000m.nc'
+        self.field().isel(lev=0).to_netcdf(surface)
+        for name, extension in [('export_ocean_downscaling_products_bydepth_to_csv.sh', 'csv'),
+                                ('export_ocean_downscaling_products_to_parquet.sh', 'parquet')]:
+            final = self.root/('accepted.'+extension)
+            final.write_bytes(b'previous accepted output')
+            method = 'to_csv' if extension == 'csv' else 'to_parquet'
+            fault = ("import pandas as pd\nfrom pathlib import Path\n"
+                     "def corrupt(self, path, *a, **kw): Path(path).write_bytes(b'broken')\n"
+                     f"pd.DataFrame.{method} = corrupt\n")
+            args = [surface, final, 'yes']
+            if extension == 'parquet':
+                args += ['pyarrow', surface.name, 'yes']
+            result = self.run_delivery_block(fault+self.delivery_block(name), args)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(final.read_bytes(), b'previous accepted output')
+
+    def test_geotiff_manifest_failure_lock_and_cli_backend(self):
+        import shutil
+        source_dir = self.root/'source'
+        source_dir.mkdir()
+        source = source_dir/'thetao_depth_0000p000m.nc'
+        self.field().isel(lev=0).to_netcdf(source)
+        output = self.root/'geotiffs'
+        startup = self.root/'bash_env'
+        startup.write_text(self.preparation_shell().split('detect_gridtype() {')[0])
+        tool = ROOT/'scripts/tools/export_ocean_downscaling_products_to_geotiff.sh'
+        env = dict(IN_ROOT=str(source_dir), OUT_ROOT=str(output),
+                   GEOTIFF_PYTHON=sys.executable, OVERWRITE='yes', NPROC='1',
+                   BASH_ENV=str(startup))
+        result = self.run_script(tool, **env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        final = output/'thetao_depth_0000p000m.tif'
+        manifest = output/'geotiff_manifest.csv'
+        accepted, record = final.read_bytes(), manifest.read_bytes()
+        with manifest.open() as handle:
+            row = next(csv.DictReader(handle))
+        self.assertEqual(row['geotiff_file'], str(final))
+        self.assertEqual(row['publication_status'], 'validated_replacement')
+        # Keep the valid input first so preflight passes; a later worker must fail.
+        (source_dir/'zzz_invalid.nc').write_bytes(b'corrupt')
+        result = self.run_script(tool, **env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(manifest.read_bytes(), record)
+        self.assertFalse(list(output.glob('.geotiff_run.*')))
+        (source_dir/'zzz_invalid.nc').unlink()
+        accepted = final.read_bytes()
+        lock = output/'geotiff_manifest.csv.lock'
+        lock.mkdir()
+        result = self.run_script(tool, **env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(lock.exists())
+        self.assertEqual(final.read_bytes(), accepted)
+        self.assertEqual(manifest.read_bytes(), record)
+        lock.rmdir()
+        # Skipping retains both pixels and prior metadata, not new invocation settings.
+        changed = self.field(value=9.).isel(lev=0)
+        changed.to_netcdf(source)
+        result = self.run_script(tool, **dict(env, OVERWRITE='no', SCALE_FACTORS='thetao=1000'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(final.read_bytes(), accepted)
+        with manifest.open() as handle:
+            skipped = next(csv.DictReader(handle))
+        self.assertEqual(skipped['publication_status'], 'existing_unverified')
+        self.assertEqual(skipped['scale_factor'], row['scale_factor'])
+        self.assertEqual(skipped['min_real'], row['min_real'])
+        # Exercise the supported CLI-only writer/readback without Python GDAL.
+        if shutil.which('gdal_translate') and shutil.which('gdalinfo'):
+            code = self.delivery_block(tool.name)
+            prefix = """import builtins
+real_import = builtins.__import__
+def without_raster_bindings(name, *args, **kwargs):
+    if name.split('.')[0] in ('rasterio', 'osgeo'):
+        raise ImportError('CLI-only fixture')
+    return real_import(name, *args, **kwargs)
+builtins.__import__ = without_raster_bindings
+"""
+            args = [source, output/'cli.tif', source.name, 'thetao=100', '100',
+                    'int16', 'LZW', output/'cli.csv', 'yes', 'yes', output/'encoded.nc']
+            result = self.run_delivery_block(prefix+code, args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_delivery_concurrent_publication_and_interruption(self):
+        import time
+        names = ['aggregate_ocean_downscaling_products_by_depth_bins.sh',
+                 'split_ocean_downscaling_products_by_depth.sh',
+                 'export_ocean_downscaling_products_bydepth_to_csv.sh',
+                 'export_ocean_downscaling_products_to_parquet.sh',
+                 'export_ocean_downscaling_products_to_geotiff.sh']
+        helpers = []
+        for name in names:
+            block = self.delivery_block(name)
+            node = next(n for n in ast.parse(block).body if isinstance(n, ast.FunctionDef) and n.name == 'atomic_product')
+            helpers.append('@contextmanager\n' + ast.get_source_segment(block, node))
+        self.assertTrue(all(helper == helpers[0] for helper in helpers))
+        helper = 'from contextlib import contextmanager\nimport os, shutil, signal, tempfile, sys, time\n'+helpers[0]
+        final = self.root/'accepted'
+        final.write_bytes(b'old')
+        ready = self.root/'ready'
+        script = helper + '''
+with atomic_product(sys.argv[1]) as candidate:
+    open(candidate, 'wb').write(b'new')
+    open(sys.argv[2], 'w').close()
+    time.sleep(10)
+'''
+        writer = subprocess.Popen([sys.executable, '-c', script, str(final), str(ready)],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            deadline = time.monotonic() + 5
+            while not ready.exists() and writer.poll() is None and time.monotonic() < deadline:
+                time.sleep(.02)
+            self.assertTrue(ready.exists())
+            other = subprocess.run([sys.executable, '-c',
+                helper+'\nwith atomic_product(sys.argv[1]): pass', str(final)],
+                capture_output=True, text=True)
+            self.assertNotEqual(other.returncode, 0)
+            self.assertIn('Output locked', other.stderr)
+            self.assertEqual(final.read_bytes(), b'old')
+        finally:
+            writer.terminate()
+            writer.communicate(timeout=5)
+        self.assertNotEqual(writer.returncode, 0)
+        self.assertEqual(final.read_bytes(), b'old')
+        self.assertFalse(Path(str(final)+'.lock').exists())
+        self.assertFalse(list(self.root.glob('.*.work.*')))
+
+    def test_delivery_shell_propagates_writer_failure(self):
+        names = ['aggregate_ocean_downscaling_products_by_depth_bins.sh',
+                 'split_ocean_downscaling_products_by_depth.sh',
+                 'export_ocean_downscaling_products_bydepth_to_csv.sh',
+                 'export_ocean_downscaling_products_to_parquet.sh',
+                 'export_ocean_downscaling_products_to_geotiff.sh']
+        bindir = self.root/'bin'
+        bindir.mkdir()
+        stub = bindir/'python3'
+        stub.write_text('#!/bin/bash\nexit 17\n')
+        stub.chmod(0o755)
+        source = self.root/'source.nc'
+        source.write_bytes(b'fixture')
+        out = self.root/'out'
+        out.mkdir()
+        (out/'manifest_parts').mkdir()
+        for name in names:
+            text = (ROOT/'scripts/tools'/name).read_text()
+            start = text.index('process_one_file() (')
+            # The outer shell function closes immediately before the main section.
+            end = text.index('\n)\n', text.index('\nPY\n', start)) + 3 if 'split_' not in name else text.index('\n)\n', start) + 3
+            function = text[start:end]
+            if 'split_' in name:
+                # Include the real dimension discovery helper that invokes Python.
+                begin = text.index('find_vertical_dim() {')
+                stop = text.index('\n}\n', begin) + 3
+                function = text[begin:stop] + function
+            env = dict(self.env, PATH=str(bindir)+os.pathsep+self.env['PATH'],
+                       IN_ROOT=str(self.root), OUT_ROOT=str(out), TMP_DIR=str(out),
+                       PARQUET_PYTHON=str(stub), GEOTIFF_PYTHON=str(stub),
+                       SOURCE=str(source), DROP_MISSING='yes', PARQUET_ENGINE='pyarrow',
+                       OVERWRITE='yes', BIN_SET='fine', COPY_2D_FILES='yes',
+                       FUTURE_UO_UVEL_CM_S_TO_M_S='yes', SCALE_FACTORS='thetao=100',
+                       DEFAULT_SCALE='100', ENCODE_DTYPE='int16', COMPRESS='LZW')
+            result = subprocess.run(['bash', '-c', function+'\nprocess_one_file "$SOURCE"'],
+                                    env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 17, (name, result.stdout, result.stderr))
+
     def test_all_cannot_submit_and_predecessors_checked(self):
         result = self.run_script(SMOKE, RUN='yes', STEP='all')
         self.assertNotEqual(result.returncode, 0); self.assertIn('unsafe', result.stderr)

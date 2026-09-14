@@ -253,8 +253,49 @@ is per file, not a transaction across a complete run.
 Missing vertical-axis descriptors are built privately for each invocation; existing
 configured descriptors remain readable as before. `OVERWRITE_OUTPUTS=no` still
 retains existing vertical outputs and explicitly reports that freshness was not
-verified. Exporter replacement protection and source/settings freshness checks are
-separate remaining work; this change does not certify existing products as current.
+verified. Source/settings freshness checks remain separate work; protected exporter writes
+are described below and do not certify existing products as current.
+
+### Protected layer, depth, and delivery writes
+
+The fine/pelagic layer tool, depth splitter, and CSV/Parquet/GeoTIFF exporters now
+write replacements into unique temporary workspaces beside each destination. Each
+output has an exclusive `.lock` directory. A writer never removes someone else's
+lock, and only publishes its candidate after format-specific readback succeeds:
+
+- NetCDF: read all fields and compare values, coordinates, attributes, and structure
+  with the dataset prepared by the existing calculation. Unchanged 2D copies also
+  use protected publication; the depth splitter verifies byte-for-byte copies.
+- CSV/Parquet: reopen the table and compare columns, rows, and values with the
+  prepared table (CSV uses a small floating-point round-trip tolerance).
+- GeoTIFF: read all encoded pixels and check shape, dtype, nodata, transform, CRS,
+  and variable/scale/offset metadata. CLI-only GDAL validation needs both
+  `gdal_translate` and `gdalinfo` and temporary space for an ENVI readback.
+
+Scientific calculations, table columns, raster encoding settings, filenames, and
+final layouts are retained. Existing overwrite controls keep their meaning; the
+CSV exporter and depth splitter still replace their outputs when run. These checks
+add readback I/O and require space for the old file and its candidate. A failed
+writer or validation leaves the previous final file intact and fails the job.
+Protection is per output, not a transaction across all outputs from a source file.
+
+GeoTIFF runs sharing an output root also lock `geotiff_manifest.csv`. File workers
+within a run remain parallel. Each run uses private manifest rows; worker failures
+retain the previous manifest instead of being accepted merely because rows exist.
+Completed TIFFs can remain after a later worker fails; the failed run must be
+reviewed/rerun before treating its manifest as a complete account of those files.
+Manifest publication uses an atomic rename on its destination filesystem.
+
+GeoTIFF manifest rows now include `publication_status`: `validated_replacement`
+for newly written/read-back TIFFs and `existing_unverified` for skipped TIFFs.
+Skipped TIFFs retain previously recorded metadata where available; unknown fields
+stay blank rather than being inferred from current settings. This is not source or
+settings freshness validation. Freshness tracking remains separate work.
+
+Normal completion, Python exceptions, and handled termination clean owned output
+locks and workspaces. After SIGKILL, node loss, or storage errors, inspect remaining
+jobs before manually recovering stale `.lock` directories or hidden workspaces.
+Never remove a lock while its writer could still be active.
 
 ### Operational order for a new model
 

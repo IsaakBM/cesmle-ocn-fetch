@@ -245,6 +245,233 @@ fi
             self.assertIn('EXCLUDE_FUTURE_MODELS', submitted, runner.name)
             self.assertIn('cesm_f09_g16 legacy_downscaled_rcp85', submitted, runner.name)
 
+    def daily_field(self, name, year, month, count, calendar='standard', offsets=None):
+        import netCDF4
+        dates = netCDF4.num2date(np.arange(count) if offsets is None else offsets,
+            f'days since {year:04d}-{month:02d}-01', calendar=calendar,
+            only_use_cftime_datetimes=True)
+        data = xr.DataArray(np.arange(len(dates)*4, dtype=float).reshape(len(dates), 2, 2),
+            dims=('time', 'lat', 'lon'), name='thetao',
+            coords={'time': dates, 'lat': [-1., 1.], 'lon': [0., 2.]})
+        data.lat.attrs['units'] = 'degrees_north'
+        data.lon.attrs['units'] = 'degrees_east'
+        path = self.root/name
+        data.to_netcdf(path)
+        return path
+
+    def test_daily_calendar_coverage_and_conflicting_versions(self):
+        workers = [ROOT/'scripts/core/temporal_aggregate_regrid.slurm.sh',
+                   ROOT/'scripts/bash/download_GLORYS_parallel.sh']
+        self.assertEqual(embedded(workers[0], 'PY_DAILY_COVERAGE'),
+                         embedded(workers[1], 'PY_DAILY_COVERAGE'))
+        for year, month, count, calendar in [(2001, 2, 28, 'standard'),
+                (2000, 2, 29, 'standard'), (2001, 4, 30, 'standard'),
+                (2001, 1, 31, 'standard'), (2000, 2, 28, 'noleap'),
+                (2001, 2, 30, '360_day'), (2001, 2, 29, 'all_leap')]:
+            source = self.daily_field('daily.nc', year, month, count, calendar)
+            for worker in workers:
+                result = subprocess.run([sys.executable, '-', str(year), str(month), str(source)],
+                    input=embedded(worker, 'PY_DAILY_COVERAGE'), capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+        for offsets, message in [(range(27), 'Missing days'),
+                                 ([0, 0], 'duplicate'), ([28], 'out-of-month')]:
+            source = self.daily_field('bad.nc', 2001, 2, 0, offsets=offsets)
+            for worker in workers:
+                result = subprocess.run([sys.executable, '-', '2001', '2', str(source)],
+                    input=embedded(worker, 'PY_DAILY_COVERAGE'), capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+        source = self.daily_field('complete.nc', 2001, 2, 28)
+        result = subprocess.run([sys.executable, '-', '2001', '2', str(source), str(source)],
+            input=embedded(workers[0], 'PY_DAILY_COVERAGE'), capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('duplicate', result.stderr)
+        import netCDF4
+        with netCDF4.Dataset(source, 'a') as ds:
+            ds.variables['time'].calendar = 'unknown'
+        result = subprocess.run([sys.executable, '-', '2001', '2', str(source)],
+            input=embedded(workers[0], 'PY_DAILY_COVERAGE'), capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('unsupported calendar', result.stderr)
+        for paths, message in [([], 'Missing days'), ([str(self.root/'absent.nc')], 'failed')]:
+            result = subprocess.run([sys.executable, '-', '2001', '2', *paths],
+                input=embedded(workers[0], 'PY_DAILY_COVERAGE'), capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(message, result.stderr)
+
+    def preparation_shell(self):
+        text = (ROOT/'scripts/core/temporal_aggregate_regrid.slurm.sh').read_text()
+        helpers = text[text.index('detect_gridtype() {'):text.index('export CDO')]
+        # Function harness avoids HPC setup; emulate mapfile -t on macOS Bash 3.
+        compat = r'''
+if ! type mapfile >/dev/null 2>&1; then
+mapfile() {
+  local destination="$2" item index=0
+  unset "$destination"
+  while IFS= read -r item; do
+    eval "$destination[$index]=\"\$item\""
+    index=$((index + 1))
+  done
+  return 0
+}
+fi
+'''
+        return compat + helpers
+
+    def preparation_env(self):
+        import shutil
+        (self.root/'parts').mkdir(exist_ok=True)
+        grid = self.root/'grid.txt'
+        grid.write_text('gridtype = lonlat\nxsize = 2\nysize = 2\nxfirst = 0\nxinc = 2\nyfirst = -1\nyinc = 2\n')
+        return dict(self.env, CDO=shutil.which('cdo'), VAR='thetao',
+                    PARTS=str(self.root/'parts'), GRIDFILE=str(grid), METHOD='remapbil',
+                    DATASET_LABEL='fixture', INPUT_TIMESTEP='daily', FILE_GLOB='*.nc',
+                    INROOT=str(self.root/'raw'))
+
+    def test_preparation_real_values_failures_and_output_locks(self):
+        import shutil
+        env = self.preparation_env()
+        source = self.daily_field('source.nc', 2001, 2, 28)
+        folder = self.root/'raw/2001/02'
+        folder.mkdir(parents=True)
+        shutil.copyfile(source, folder/'daily.nc')
+        output = self.root/'parts/fixture_thetao_200102.monmean.grid.nc'
+        expected = self.root/'expected.nc'
+        subprocess.run([env['CDO'], '-s', '-O', 'remapbil,'+env['GRIDFILE'], '-monmean',
+                        '-selname,thetao', str(source), str(expected)], check=True, capture_output=True)
+        shell = self.preparation_shell() + '\nprocess_month 2001 02'
+        result = subprocess.run(['bash', '-c', shell], env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with xr.open_dataset(output) as actual, xr.open_dataset(expected) as reference:
+            xr.testing.assert_allclose(actual, reference)
+        accepted = output.read_bytes()
+        shutil.copyfile(source, folder/'duplicate.nc')
+        result = subprocess.run(['bash', '-c', shell], env=env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(output.read_bytes(), accepted)
+        (folder/'duplicate.nc').unlink()
+        lock = Path(str(output)+'.lock')
+        lock.mkdir()
+        result = subprocess.run(['bash', '-c', shell], env=env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(lock.exists())
+        self.assertEqual(output.read_bytes(), accepted)
+        lock.rmdir()
+        # Hold one actual writer at the remap boundary; a second writer must fail.
+        import time
+        blocker = self.root/'cdo_block'
+        blocker.write_text('#!/bin/bash\nfor arg in "$@"; do case "$arg" in remap*)\n'
+            'touch "$READY"\nfor attempt in {1..100}; do\n'
+            '[[ -f "$RELEASE" ]] && break\nsleep 0.05\ndone\n'
+            '[[ -f "$RELEASE" ]] || exit 88\n;; esac; done\nexec "'+env['CDO']+'" "$@"\n')
+        blocker.chmod(0o755)
+        ready, release = self.root/'ready', self.root/'release'
+        writer = subprocess.Popen(['bash', '-c', shell], env=dict(env,
+            CDO=str(blocker), READY=str(ready), RELEASE=str(release)),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            deadline = time.monotonic() + 5
+            while not ready.exists() and writer.poll() is None and time.monotonic() < deadline:
+                time.sleep(.02)
+            self.assertTrue(ready.exists())
+            other = subprocess.run(['bash', '-c', shell], env=env, capture_output=True, text=True)
+            self.assertNotEqual(other.returncode, 0)
+            self.assertIn('Output locked', other.stderr)
+            self.assertEqual(output.read_bytes(), accepted)
+        finally:
+            release.touch()
+            stdout, stderr = writer.communicate(timeout=10)
+        self.assertEqual(writer.returncode, 0, stderr)
+        accepted = output.read_bytes()
+        stub = self.root/'cdo_fail'
+        stub.write_text('#!/bin/bash\nfor last; do :; done\n'
+            'for arg in "$@"; do case "$arg" in remap*)\n'
+            'if [[ "$INVALID" == yes ]]; then printf corrupt > "$last"; exit 0; fi\n'
+            'exit 7;; esac; done\nexec "'+env['CDO']+'" "$@"\n')
+        stub.chmod(0o755)
+        for call, destination in [('process_month 2001 02', output),
+                ('process_timeseries_file "$SOURCE"', self.root/'parts/source.grid.nc')]:
+            destination.write_bytes(accepted)
+            for invalid in ('yes', 'no'):
+                result = subprocess.run(['bash', '-c', self.preparation_shell()+'\n'+call],
+                    env=dict(env, CDO=str(stub), SOURCE=str(source), INVALID=invalid),
+                    capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(destination.read_bytes(), accepted)
+        self.assertFalse(list((self.root/'parts').glob('*.lock')))
+        self.assertFalse(list((self.root/'parts').glob('*.work.*')))
+        # Successful monthly time-series regridding retains the old calculation.
+        result = subprocess.run(['bash', '-c', self.preparation_shell()+'\nprocess_timeseries_file "$SOURCE"'],
+            env=dict(env, SOURCE=str(source)), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        subprocess.run([env['CDO'], '-s', '-O', 'remapbil,'+env['GRIDFILE'],
+                        '-selname,thetao', str(source), str(expected)], check=True, capture_output=True)
+        with xr.open_dataset(self.root/'parts/source.grid.nc') as actual, xr.open_dataset(expected) as reference:
+            xr.testing.assert_allclose(actual, reference)
+
+    def test_vertical_replacement_and_custom_target(self):
+        import shutil
+        tool = ROOT/'scripts/core/vertical_interpolate_to_reference.slurm.sh'
+        source_dir = self.root/'input'
+        source_dir.mkdir()
+        source = source_dir/'field.nc'
+        field = self.field()
+        field.values[:, 0] = 0.
+        field.values[:, 1] = 10.
+        field.to_netcdf(source)
+        target = self.root/'target.txt'
+        target.write_text('zaxistype = depth_below_sea\nsize = 1\nname = lev\nunits = m\nlevels = 5\n')
+        env = dict(IN_DIR=str(source_dir), OUT_DIR=str(self.root/'vertical'),
+                   TARGET_REF_FILE=str(source), TARGET_ZAXIS_FILE=str(target),
+                   SHARED_TMP_DIR=str(self.root/'shared'), SOURCE_ZDIM_NAME='lev',
+                   SOURCE_UNITS_IN='m', SOURCE_UNITS_OUT='m', MAX_JOBS='2',
+                   CDO=shutil.which('cdo'))
+        result = self.run_script(tool, **env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = self.root/'vertical/field_on_reference.nc'
+        with xr.open_dataset(output) as data:
+            np.testing.assert_allclose(data.thetao.values, 5.)
+        accepted = output.read_bytes()
+        stub = self.root/'cdo_fail'
+        stub.write_text('#!/bin/bash\ncase "$1" in intlevel*) exit 7;; esac\nexec "'+env['CDO']+'" "$@"\n')
+        stub.chmod(0o755)
+        result = self.run_script(tool, **dict(env, CDO=str(stub)))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('workers failed', result.stderr)
+        self.assertEqual(output.read_bytes(), accepted)
+
+    def test_glorys_download_skip_and_postdownload_validation(self):
+        text = (ROOT/'scripts/bash/download_GLORYS_parallel.sh').read_text()
+        functions = text[text.index('validate_daily_coverage() {'):text.index('# ========= Build per-month tasks')]
+        functions += text[text.index('fetch_month() ('):text.index('export -f validate_daily_coverage')]
+        source = self.daily_field('daily.nc', 2001, 2, 28)
+        folder = self.root/'2001/02'
+        folder.mkdir(parents=True)
+        client = self.root/'client'
+        client.write_text('#!/bin/bash\nprintf called >> "$MARKER"\ncp "$SOURCE" "$DEST/daily.nc"\n')
+        client.chmod(0o755)
+        env = dict(self.env, CM=str(client), SOURCE=str(source), DEST=str(folder),
+                   MARKER=str(self.root/'calls'))
+        command = functions+'\nfetch_month dataset regex "$DEST"'
+        result = subprocess.run(['bash', '-c', command], env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = subprocess.run(['bash', '-c', command], env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root/'calls').read_text(), 'called')
+        (folder/'daily.nc').unlink()
+        source = self.daily_field('incomplete.nc', 2001, 2, 27)
+        result = subprocess.run(['bash', '-c', command], env=dict(env, SOURCE=str(source)),
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Missing days', result.stderr)
+        # Duplicate versions stop before invoking the client.
+        (folder/'duplicate.nc').write_bytes((folder/'daily.nc').read_bytes())
+        calls = (self.root/'calls').read_text()
+        result = subprocess.run(['bash', '-c', command], env=env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('duplicate', result.stderr)
+        self.assertEqual((self.root/'calls').read_text(), calls)
+
     def test_all_cannot_submit_and_predecessors_checked(self):
         result = self.run_script(SMOKE, RUN='yes', STEP='all')
         self.assertNotEqual(result.returncode, 0); self.assertIn('unsafe', result.stderr)

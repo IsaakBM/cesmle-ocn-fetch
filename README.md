@@ -216,6 +216,46 @@ Baseline products remain selectable; downstream delivery can include `ensemble`.
 Ensemble construction and current-speed derivation retain their existing exclusions
 and scientific calculations. Job logs report the effective selection settings.
 
+### Daily inputs and protected preparation outputs
+
+GLORYS download skipping now requires complete actual daily timestamps, not a
+minimum filename count. The same calendar-aware check runs before daily-to-monthly
+averaging in the temporal worker (`INPUT_TIMESTEP=daily`, including the GLORYS
+runner, or the existing auto-selected daily mode). Missing, duplicate, mixed-calendar,
+out-of-month, unreadable-time, and unsupported-calendar inputs stop processing.
+Supported calendars are standard/Gregorian, proleptic Gregorian, Julian, no-leap,
+all-leap, and 360-day, including their CF aliases. Existing monthly-input selection
+and averaging/regridding settings are retained.
+
+The downloader queues months with missing days, then checks coverage again after
+the client finishes. Conflicting versions and old nested download layouts require
+review; files are not flattened or versions chosen automatically. This needs
+Python 3 with NumPy, netCDF4, and cftime in the download and processing environments.
+Coverage validates timestamps, not scientific field quality.
+
+Monthly preparation, time-series regridding, and vertical interpolation build
+replacements in unique temporary workspaces beside their final files. They read
+back the complete candidate with CDO and check variable names and timestamps;
+vertical interpolation also checks configured target levels. A successful candidate
+replaces the final file by a same-filesystem rename. Failed workers preserve the
+previous final file, and their failure propagates to the job. Preparation therefore
+needs working space on the output filesystem; `MIN_FREE_GB` checks that filesystem
+in the temporal worker. The existing CDO defaults remain `/usr/bin/cdo` (temporal)
+and `cdo` on PATH (vertical); `CDO` can select the executable explicitly.
+
+An output-specific `.lock` directory rejects simultaneous writers. Downloaders
+similarly lock each month. Normal exits and handled signals clean up owned locks
+and workspaces. SIGKILL, node loss, or filesystem failures can leave them behind:
+check the relevant jobs are no longer running before manually removing only the
+stale lock/workspace. A lock is never automatically treated as stale. Protection
+is per file, not a transaction across a complete run.
+
+Missing vertical-axis descriptors are built privately for each invocation; existing
+configured descriptors remain readable as before. `OVERWRITE_OUTPUTS=no` still
+retains existing vertical outputs and explicitly reports that freshness was not
+verified. Exporter replacement protection and source/settings freshness checks are
+separate remaining work; this change does not certify existing products as current.
+
 ### Operational order for a new model
 
 1. Discover and download historical and scenario inputs using the existing ESGF

@@ -61,7 +61,9 @@ shopt -s nullglob
 #   OUT_SUFFIX         : output suffix before .nc (default: on_reference)
 #   MAX_JOBS           : max parallel files (default: 5)
 #   OVERWRITE_OUTPUTS  : yes | no (default: yes)
+#   CDO                : CDO executable (default: cdo)
 # ==============================================================================
+CDO="${CDO:-cdo}"
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 IN_DIR="${IN_DIR:-}"
 OUT_DIR="${OUT_DIR:-}"
@@ -115,6 +117,22 @@ if [[ -z "$SOURCE_ZAXIS_FILE" ]]; then
 fi
 
 mkdir -p "${SHARED_TMP_DIR}" "${TMP_DIR}" "${OUT_DIR}"
+# Existing explicit/cache descriptors are read as before; missing descriptors are
+# built privately for this invocation, never exposed while partially written.
+AXIS_WORK="$(mktemp -d "${TMP_DIR}/axis.XXXXXX")"
+cleanup_axes() {
+  local pid
+  # Wait for remaining workers before removing descriptors they may still need.
+  for pid in $(jobs -pr); do kill -TERM "$pid" 2>/dev/null || true; done
+  wait || true
+  rm -rf -- "$AXIS_WORK"
+}
+trap cleanup_axes EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+[[ -f "$TARGET_ZAXIS_FILE" ]] || TARGET_ZAXIS_FILE="$AXIS_WORK/target.txt"
+[[ -f "$SOURCE_ZAXIS_FILE" ]] || SOURCE_ZAXIS_FILE="$AXIS_WORK/source.txt"
+
 
 if [[ -z "$SOURCE_SCALE" ]]; then
   case "${SOURCE_UNITS_IN}:${SOURCE_UNITS_OUT}" in
@@ -160,7 +178,7 @@ if [[ -f "${TARGET_ZAXIS_FILE}" ]]; then
   echo "  ${TARGET_ZAXIS_FILE}"
 else
   echo "Target z-axis template not found. Creating it now..."
-  cdo zaxisdes "${TARGET_REF_FILE}" > "${TARGET_ZAXIS_FILE}"
+  "$CDO" zaxisdes "${TARGET_REF_FILE}" > "${TARGET_ZAXIS_FILE}"
   echo "Created:"
   echo "  ${TARGET_ZAXIS_FILE}"
 fi
@@ -180,7 +198,7 @@ else
     exit 1
   fi
 
-  LEVELS_RAW="$(cdo showlevel "${FIRST_FILE}" | tr ' ' '\n' | awk 'NF')"
+  LEVELS_RAW="$("$CDO" showlevel "${FIRST_FILE}" | tr ' ' '\n' | awk 'NF')"
   NLEVELS="$(printf "%s\n" "${LEVELS_RAW}" | wc -l | awk '{print $1}')"
 
   if [[ "${SOURCE_SCALE}" == "1" ]]; then
@@ -202,48 +220,71 @@ EOF
   echo "  ${SOURCE_ZAXIS_FILE}"
 fi
 
-process_one_file() {
-  local infile="$1"
-  local base tmpfile outfile
-
-  base="$(basename "${infile}" .nc)"
-  tmpfile="${TMP_DIR}/${base}_zfix.nc"
-  outfile="${OUT_DIR}/${base}_${OUT_SUFFIX}.nc"
-
-  echo
-  echo "[START] ${base}"
-
-  if [[ -f "${outfile}" ]]; then
-    if [[ "${OVERWRITE_OUTPUTS}" == "yes" ]]; then
-      echo "[INFO ] Replacing existing output: ${outfile}"
-      rm -f "${outfile}"
-    else
-      echo "[SKIP ] Output already exists: ${outfile}"
-      return 0
-    fi
+# Read all output records and verify variable names and unchanged timestamps
+# against the immediate input to the spatial operation before publication.
+validate_prepared_output() {
+  local output="$1" reference="$2" names expected_names times expected_times
+  [[ -s "$output" ]] || return 1
+  "$CDO" -s infon "$output" >/dev/null || return 1
+  names="$("$CDO" -s showname "$output")" || return 1
+  expected_names="$("$CDO" -s showname "$reference")" || return 1
+  times="$("$CDO" -s showtimestamp "$output")" || return 1
+  expected_times="$("$CDO" -s showtimestamp "$reference")" || return 1
+  if [[ -z "$names" || -z "$times" || "$names" != "$expected_names" || "$times" != "$expected_times" ]]; then
+    echo "ERROR: Replacement variables/time differ from input: $output" >&2
+    return 1
   fi
-
-  if [[ -f "${tmpfile}" ]]; then
-    echo "[WARN ] Removing stale temp file: ${tmpfile}"
-    rm -f "${tmpfile}"
-  fi
-
-  echo "[STEP1] Setting source z-axis and units"
-  cdo setattribute,${SOURCE_ZDIM_NAME}@units="${SOURCE_UNITS_OUT}" \
-    -setzaxis,"${SOURCE_ZAXIS_FILE}" \
-    "${infile}" "${tmpfile}"
-
-  echo "[STEP2] Interpolating vertically onto target levels"
-  cdo intlevel,zdescription="${TARGET_ZAXIS_FILE}" "${tmpfile}" "${outfile}"
-
-  echo "[STEP3] Cleaning temp file"
-  rm -f "${tmpfile}"
-
-  echo "[DONE ] ${outfile}"
 }
 
+process_one_file() (
+  set -euo pipefail
+  local infile="$1" base outfile work=""
+  base="$(basename "$infile" .nc)"
+  outfile="${OUT_DIR}/${base}_${OUT_SUFFIX}.nc"
+  mkdir "${outfile}.lock" 2>/dev/null || { echo "ERROR: Output locked: $outfile" >&2; exit 1; }
+  PREP_WORK_PATH=""
+  PREP_LOCK_PATH="${outfile}.lock"
+  trap '[[ -z "$PREP_WORK_PATH" ]] || rm -rf -- "$PREP_WORK_PATH"; rmdir -- "$PREP_LOCK_PATH"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  if [[ -f "$outfile" && "$OVERWRITE_OUTPUTS" == "no" ]]; then
+    echo "[SKIP] Existing output retained (freshness not verified): $outfile"
+    exit 0
+  fi
+  work="$(mktemp -d "${outfile}.work.XXXXXX")"
+  PREP_WORK_PATH="$work"
+  "$CDO" setattribute,${SOURCE_ZDIM_NAME}@units="${SOURCE_UNITS_OUT}" \
+    -setzaxis,"${SOURCE_ZAXIS_FILE}" "$infile" "$work/zfix.nc"
+  "$CDO" intlevel,zdescription="${TARGET_ZAXIS_FILE}" "$work/zfix.nc" "$work/output.nc"
+  validate_prepared_output "$work/output.nc" "$work/zfix.nc"
+  # Compare against the configured descriptor, which may intentionally differ
+  # from TARGET_REF_FILE when an explicit target axis is supplied.
+  python3 - "$CDO" "$work/output.nc" "$TARGET_ZAXIS_FILE" <<'PY_VALIDATE_LEVELS'
+import math
+import re
+import subprocess
+import sys
+text = open(sys.argv[3]).read()
+match = re.search(r"(?ms)^\s*levels\s*=\s*(.*?)(?=^\s*[A-Za-z_]\w*\s*=|\Z)", text)
+if not match:
+    raise SystemExit('ERROR: Target descriptor has no explicit levels')
+expected = [float(x) for x in match[1].split()]
+actual_descriptor = subprocess.check_output([sys.argv[1], '-s', 'zaxisdes', sys.argv[2]], text=True)
+actual_match = re.search(r"(?ms)^\s*levels\s*=\s*(.*?)(?=^\s*[A-Za-z_]\w*\s*=|\Z)", actual_descriptor)
+if not actual_match:
+    raise SystemExit('ERROR: Replacement has no explicit vertical levels')
+actual = [float(x) for x in actual_match[1].split()]
+if len(actual) != len(expected) or not all(math.isclose(a, b, rel_tol=1e-7, abs_tol=1e-9) for a, b in zip(actual, expected)):
+    raise SystemExit('ERROR: Replacement levels differ from configured target axis')
+PY_VALIDATE_LEVELS
+  mv -f -- "$work/output.nc" "$outfile"
+  echo "[DONE] $outfile"
+  exit 0
+)
+
 export TMP_DIR OUT_DIR TARGET_ZAXIS_FILE SOURCE_ZAXIS_FILE SOURCE_ZDIM_NAME SOURCE_UNITS_OUT OUT_SUFFIX OVERWRITE_OUTPUTS
-export -f process_one_file
+export CDO TARGET_REF_FILE
+export -f validate_prepared_output process_one_file
 
 FILES=( "${IN_DIR}"/${FILE_GLOB} )
 REAL_FILES=()
@@ -259,18 +300,17 @@ fi
 
 echo "Found ${#REAL_FILES[@]} input files."
 
-running=0
+# Wait for every child explicitly: a final bare wait can hide failed workers.
+pids=()
+failed=0
 for f in "${REAL_FILES[@]}"; do
-  process_one_file "${f}" &
-  ((running+=1))
-
-  if (( running >= MAX_JOBS )); then
-    wait -n
-    ((running-=1))
+  process_one_file "$f" &
+  pids+=("$!")
+  if (( ${#pids[@]} >= MAX_JOBS )); then
+    for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
+    pids=()
   fi
 done
-
-wait
-
-echo
+for pid in ${pids[@]+"${pids[@]}"}; do wait "$pid" || failed=1; done
+(( failed == 0 )) || { echo "ERROR: Vertical interpolation workers failed" >&2; exit 1; }
 echo "All vertical interpolation processing completed for DATASET=${DATASET_LABEL}"

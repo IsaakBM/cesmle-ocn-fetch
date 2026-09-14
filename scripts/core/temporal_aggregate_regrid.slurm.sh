@@ -56,10 +56,12 @@ set -euo pipefail
 #                             unstructured grids (default: remapdis)
 #   PARTS_SUBDIR  : output subdir under OUTROOT/VAR (default: parts)
 #   TMP_SUBDIR    : temp subdir under OUTROOT/VAR (default: tmp)
-#   MIN_FREE_GB   : minimum free space where TMP lives (default: 40)
+#   MIN_FREE_GB   : minimum free space on the output filesystem (default: 40)
+#   CDO           : CDO executable (default: /usr/bin/cdo)
 #   INPUT_TIMESTEP: daily | monthly | auto (default: auto)
 #                   used only for INPUT_LAYOUT=year_month
 # ==============================================================================
+CDO="${CDO:-/usr/bin/cdo}"
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"
 YEAR="${YEAR:-}"
@@ -132,17 +134,18 @@ TMP_TAG="${YEAR:-all}"
 TMPDIR="${TMPBASE}/${DATASET_LABEL}_${VAR}_${TMP_TAG}_${TMP_SUBDIR}"
 mkdir -p "$TMPDIR"
 
+# Replacements live beside final outputs for atomic rename; check that filesystem.
 # Free-space preflight
-FREE_GB=$(df -BG "$TMPBASE" | awk 'NR==2 {gsub("G","",$4); print $4}')
+FREE_GB=$(df -BG "$PARTS" | awk 'NR==2 {gsub("G","",$4); print $4}')
 
 if [[ -z "$FREE_GB" ]]; then
-  echo "ERROR: Could not determine free space on: $TMPBASE"
+  echo "ERROR: Could not determine free space on: $PARTS"
   exit 1
 fi
 
 if [[ "$FREE_GB" -lt "$MIN_FREE_GB" ]]; then
-  echo "ERROR: Low free space where TMP lives: ${FREE_GB}G free, need at least ${MIN_FREE_GB}G."
-  echo "       Path checked: $TMPBASE"
+  echo "ERROR: Low free space where replacements are written: ${FREE_GB}G free, need at least ${MIN_FREE_GB}G."
+  echo "       Path checked: $PARTS"
   exit 1
 fi
 
@@ -179,7 +182,7 @@ detect_gridtype() {
   local src="$1"
   local gridtype
 
-  gridtype="$(/usr/bin/cdo -s griddes "$src" 2>/dev/null | awk '$1 == "gridtype" {print $3; exit}')"
+  gridtype="$("$CDO" -s griddes "$src" 2>/dev/null | awk '$1 == "gridtype" {print $3; exit}')"
   if [[ -z "$gridtype" ]]; then
     gridtype="unknown"
   fi
@@ -206,100 +209,151 @@ resolve_method() {
   esac
 }
 
-process_month() {
-  local yyyy="$1"
-  local mm="$2"
+# ==============================================================================
+# Validate actual daily timestamps. Exit 10 means only missing days; other
+# failures (including duplicate versions) must be reviewed before downloading.
+# ==============================================================================
+validate_daily_coverage() {
+  python3 - "$@" <<'PY_DAILY_COVERAGE'
+import sys
+from collections import defaultdict
+import cftime
+import netCDF4
+import numpy as np
 
+year, month = map(int, sys.argv[1:3])
+paths = sys.argv[3:]
+try:
+    seen = defaultdict(list)
+    calendar = None
+    aliases = {'gregorian': 'standard', '365_day': 'noleap', '366_day': 'all_leap'}
+    for path in paths:
+        with netCDF4.Dataset(path) as ds:
+            if 'time' not in ds.variables:
+                raise ValueError(f'{path}: missing time coordinate')
+            time = ds.variables['time']
+            cal = aliases.get(getattr(time, 'calendar', 'standard'), getattr(time, 'calendar', 'standard'))
+            if cal not in ('standard', 'proleptic_gregorian', 'noleap', 'all_leap', '360_day', 'julian'):
+                raise ValueError(f'{path}: unsupported calendar {cal}')
+            if calendar is not None and calendar != cal:
+                raise ValueError('mixed calendars require review')
+            calendar = cal
+            values = time[:]
+            if values.ndim != 1 or not values.size or np.ma.getmaskarray(values).any() or not np.isfinite(values).all():
+                raise ValueError(f'{path}: empty, masked, or invalid time coordinate')
+            for date in netCDF4.num2date(values, time.units, calendar=cal, only_use_cftime_datetimes=True):
+                if (date.year, date.month) != (year, month):
+                    raise ValueError(f'{path}: out-of-month timestamp {date}')
+                seen[date.day].append(path)
+    duplicates = {day: names for day, names in seen.items() if len(names) > 1}
+    if duplicates:
+        raise ValueError('duplicate days/versions: ' + repr(duplicates))
+    if not paths:
+        print(f'Missing days: no files for {year:04d}-{month:02d}', file=sys.stderr)
+        sys.exit(10)
+    first = cftime.datetime(year, month, 1, calendar=calendar)
+    # Date construction honors the calendar, including the Gregorian reform gap.
+    expected = set()
+    for day in range(1, first.daysinmonth + 1):
+        try:
+            cftime.datetime(year, month, day, calendar=calendar)
+            expected.add(day)
+        except ValueError:
+            pass
+    missing = sorted(expected - set(seen))
+    if missing:
+        print(f'Missing days: {year:04d}-{month:02d}: {missing}', file=sys.stderr)
+        sys.exit(10)
+    print(f'Validated daily coverage: {year:04d}-{month:02d}, {len(expected)} days ({calendar})')
+except Exception as error:
+    print(f'Daily coverage validation failed: {error}', file=sys.stderr)
+    sys.exit(1)
+PY_DAILY_COVERAGE
+}
+
+# Read all output records and verify variable names and unchanged timestamps
+# against the immediate input to the spatial operation before publication.
+validate_prepared_output() {
+  local output="$1" reference="$2" names expected_names times expected_times
+  [[ -s "$output" ]] || return 1
+  "$CDO" -s infon "$output" >/dev/null || return 1
+  names="$("$CDO" -s showname "$output")" || return 1
+  expected_names="$("$CDO" -s showname "$reference")" || return 1
+  times="$("$CDO" -s showtimestamp "$output")" || return 1
+  expected_times="$("$CDO" -s showtimestamp "$reference")" || return 1
+  if [[ -z "$names" || -z "$times" || "$names" != "$expected_names" || "$times" != "$expected_times" ]]; then
+    echo "ERROR: Replacement variables/time differ from input: $output" >&2
+    return 1
+  fi
+}
+
+# Each child owns an output lock and a private workspace beside the final file.
+# Atomic rename cannot cross filesystems. Never remove a pre-existing lock:
+# after an uncatchable kill, confirm no writer remains before manual recovery.
+process_month() (
+  set -euo pipefail
+  local yyyy="$1" mm="$2" work=""
   local inpath="${INROOT}/${yyyy}/${mm}"
   local out="${PARTS}/${DATASET_LABEL}_${VAR}_${yyyy}${mm}.monmean.$(basename "$GRIDFILE" .txt).nc"
-
-  if [[ ! -d "$inpath" ]]; then
-    echo "WARN: Missing directory: $inpath"
-    return 0
-  fi
-
+  local mode="$INPUT_TIMESTEP" method_to_use source_file
+  [[ -d "$inpath" ]] || { echo "ERROR: Missing month directory: $inpath" >&2; exit 1; }
+  local files=()
   mapfile -t files < <(find "$inpath" -maxdepth 1 -type f -name "$FILE_GLOB" | sort)
-
-  if [[ "${#files[@]}" -eq 0 ]]; then
-    echo "WARN: No files found: $inpath"
-    return 0
-  fi
-
-  local base="${DATASET_LABEL}_${VAR}_${yyyy}${mm}"
-  local tmp_merge="${TMPDIR}/.${base}.merge.nc"
-  local tmp_mon="${TMPDIR}/.${base}.monmean.nc"
-  local tmp_out="${TMPDIR}/.${base}.out.nc"
-  local source_file
-  local mode
-  local method_to_use
-  local source_for_method
-
-  trap 'rm -f "$tmp_merge" "$tmp_mon" "$tmp_out"' RETURN
-
-  rm -f "$out"
-
-  mode="$INPUT_TIMESTEP"
+  (( ${#files[@]} )) || { echo "ERROR: No files in $inpath" >&2; exit 1; }
+  mkdir "${out}.lock" 2>/dev/null || { echo "ERROR: Output locked: $out" >&2; exit 1; }
+  PREP_WORK_PATH=""
+  PREP_LOCK_PATH="${out}.lock"
+  trap '[[ -z "$PREP_WORK_PATH" ]] || rm -rf -- "$PREP_WORK_PATH"; rmdir -- "$PREP_LOCK_PATH"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  work="$(mktemp -d "${out}.work.XXXXXX")"
+  PREP_WORK_PATH="$work"
   if [[ "$mode" == "auto" ]]; then
-    if [[ "${#files[@]}" -eq 1 ]]; then
-      mode="monthly"
-    else
-      mode="daily"
-    fi
+    if (( ${#files[@]} == 1 )); then mode=monthly; else mode=daily; fi
   fi
-
-  if [[ "$mode" == "monthly" ]]; then
-    source_file="${files[0]}"
-    source_for_method="$source_file"
-    echo "INFO: ${yyyy}-${mm} detected as monthly input; skipping monmean"
-    /usr/bin/cdo -L -O -P 1 -selname,"${VAR}" "$source_file" "$tmp_mon"
+  if [[ "$mode" == "daily" ]]; then
+    validate_daily_coverage "$yyyy" "$mm" "${files[@]}"
+    "$CDO" -L -O -P 1 -selname,"${VAR}" -mergetime "${files[@]}" "$work/merge.nc"
+    "$CDO" -L -O -P 1 monmean "$work/merge.nc" "$work/month.nc"
   else
-    source_for_method="${files[0]}"
-    echo "INFO: ${yyyy}-${mm} detected as daily input; computing monthly mean"
-    /usr/bin/cdo -L -O -P 1 -selname,"${VAR}" -mergetime "${files[@]}" "$tmp_merge"
-    /usr/bin/cdo -L -O -P 1 monmean "$tmp_merge" "$tmp_mon"
+    # Preserve the existing monthly selection and numerical calculation.
+    "$CDO" -L -O -P 1 -selname,"${VAR}" "${files[0]}" "$work/month.nc"
   fi
-
-  method_to_use="$(resolve_method "$source_for_method")"
-  echo "INFO: ${yyyy}-${mm} remap method resolved to: $method_to_use"
-  /usr/bin/cdo -L -O -P 1 ${method_to_use},"${GRIDFILE}" "$tmp_mon" "$tmp_out"
-
-  mv -f "$tmp_out" "$out"
-
-  trap - RETURN
+  source_file="${files[0]}"
+  method_to_use="$(resolve_method "$source_file")"
+  "$CDO" -L -O -P 1 ${method_to_use},"${GRIDFILE}" "$work/month.nc" "$work/output.nc"
+  validate_prepared_output "$work/output.nc" "$work/month.nc"
+  mv -f -- "$work/output.nc" "$out"
   echo "DONE: $out"
-}
+  exit 0
+)
 
-# ==============================================================================
-# Regrid one time-series file directly
-# ==============================================================================
-process_timeseries_file() {
-  local in="$1"
-  local base stem out tmp method_to_use
-
-  base="$(basename "$in")"
-  stem="${base%.nc}"
+process_timeseries_file() (
+  set -euo pipefail
+  local in="$1" base stem out work="" method_to_use
+  base="$(basename "$in")"; stem="${base%.nc}"
   out="${PARTS}/${stem}.$(basename "$GRIDFILE" .txt).nc"
-  tmp="${TMPDIR}/.${stem}.out.nc"
-
-  trap 'rm -f "$tmp"' RETURN
-
-  if [[ ! -f "$in" ]]; then
-    echo "WARN: Missing file: $in"
-    return 0
-  fi
-
-  rm -f "$out"
-
-  echo "INFO: Regridding monthly time-series file: $base"
+  [[ -f "$in" ]] || { echo "ERROR: Missing file: $in" >&2; exit 1; }
+  mkdir "${out}.lock" 2>/dev/null || { echo "ERROR: Output locked: $out" >&2; exit 1; }
+  PREP_WORK_PATH=""
+  PREP_LOCK_PATH="${out}.lock"
+  trap '[[ -z "$PREP_WORK_PATH" ]] || rm -rf -- "$PREP_WORK_PATH"; rmdir -- "$PREP_LOCK_PATH"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  work="$(mktemp -d "${out}.work.XXXXXX")"
+  PREP_WORK_PATH="$work"
   method_to_use="$(resolve_method "$in")"
-  echo "INFO: ${base} remap method resolved to: $method_to_use"
-  /usr/bin/cdo -L -O -P 1 ${method_to_use},"${GRIDFILE}" -selname,"${VAR}" "$in" "$tmp"
-  mv -f "$tmp" "$out"
-
-  trap - RETURN
+  # Select once, so validation compares exactly the variables being regridded.
+  "$CDO" -L -O -P 1 -selname,"${VAR}" "$in" "$work/selected.nc"
+  "$CDO" -L -O -P 1 ${method_to_use},"${GRIDFILE}" "$work/selected.nc" "$work/output.nc"
+  validate_prepared_output "$work/output.nc" "$work/selected.nc"
+  mv -f -- "$work/output.nc" "$out"
   echo "DONE: $out"
-}
+  exit 0
+)
 
+export CDO
+export -f validate_daily_coverage validate_prepared_output
 export -f detect_gridtype resolve_method process_month process_timeseries_file
 export DATASET_LABEL INROOT OUTROOT OUTDIR PARTS TMPDIR VAR GRIDFILE METHOD AUTO_METHOD_DEFAULT AUTO_METHOD_CURVILINEAR FILE_GLOB INPUT_TIMESTEP
 

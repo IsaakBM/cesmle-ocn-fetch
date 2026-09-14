@@ -51,6 +51,78 @@ echo "[info] Output root: $OUTROOT"
 echo "[info] Logs: $LOGDIR"
 echo "[info] Parallel workers (months): $CPUS"
 
+# ==============================================================================
+# Validate actual daily timestamps. Exit 10 means only missing days; other
+# failures (including duplicate versions) must be reviewed before downloading.
+# ==============================================================================
+validate_daily_coverage() {
+  python3 - "$@" <<'PY_DAILY_COVERAGE'
+import sys
+from collections import defaultdict
+import cftime
+import netCDF4
+import numpy as np
+
+year, month = map(int, sys.argv[1:3])
+paths = sys.argv[3:]
+try:
+    seen = defaultdict(list)
+    calendar = None
+    aliases = {'gregorian': 'standard', '365_day': 'noleap', '366_day': 'all_leap'}
+    for path in paths:
+        with netCDF4.Dataset(path) as ds:
+            if 'time' not in ds.variables:
+                raise ValueError(f'{path}: missing time coordinate')
+            time = ds.variables['time']
+            cal = aliases.get(getattr(time, 'calendar', 'standard'), getattr(time, 'calendar', 'standard'))
+            if cal not in ('standard', 'proleptic_gregorian', 'noleap', 'all_leap', '360_day', 'julian'):
+                raise ValueError(f'{path}: unsupported calendar {cal}')
+            if calendar is not None and calendar != cal:
+                raise ValueError('mixed calendars require review')
+            calendar = cal
+            values = time[:]
+            if values.ndim != 1 or not values.size or np.ma.getmaskarray(values).any() or not np.isfinite(values).all():
+                raise ValueError(f'{path}: empty, masked, or invalid time coordinate')
+            for date in netCDF4.num2date(values, time.units, calendar=cal, only_use_cftime_datetimes=True):
+                if (date.year, date.month) != (year, month):
+                    raise ValueError(f'{path}: out-of-month timestamp {date}')
+                seen[date.day].append(path)
+    duplicates = {day: names for day, names in seen.items() if len(names) > 1}
+    if duplicates:
+        raise ValueError('duplicate days/versions: ' + repr(duplicates))
+    if not paths:
+        print(f'Missing days: no files for {year:04d}-{month:02d}', file=sys.stderr)
+        sys.exit(10)
+    first = cftime.datetime(year, month, 1, calendar=calendar)
+    # Date construction honors the calendar, including the Gregorian reform gap.
+    expected = set()
+    for day in range(1, first.daysinmonth + 1):
+        try:
+            cftime.datetime(year, month, day, calendar=calendar)
+            expected.add(day)
+        except ValueError:
+            pass
+    missing = sorted(expected - set(seen))
+    if missing:
+        print(f'Missing days: {year:04d}-{month:02d}: {missing}', file=sys.stderr)
+        sys.exit(10)
+    print(f'Validated daily coverage: {year:04d}-{month:02d}, {len(expected)} days ({calendar})')
+except Exception as error:
+    print(f'Daily coverage validation failed: {error}', file=sys.stderr)
+    sys.exit(1)
+PY_DAILY_COVERAGE
+}
+
+# Existing nested versions are reported, never flattened or selected implicitly.
+check_flat_download_layout() {
+  local nested
+  nested="$(find "$1" -mindepth 2 -type f -name '*.nc' -print -quit)"
+  if [[ -n "$nested" ]]; then
+    echo "ERROR: Nested download requires layout/version review: $nested" >&2
+    return 1
+  fi
+}
+
 # ========= Build per-month tasks =========
 TASKS="$(mktemp)"; : > "$TASKS"
 trap 'rm -f "$TASKS"' EXIT
@@ -72,39 +144,46 @@ for year in $(seq "${YEAR_START}" "${YEAR_END}"); do
     # daily filename regex for that month
     REGEX="mercatorglorys12v1_gl12_mean_${year}${mm}[0-9]{2}_R[0-9]{8}\\.nc"
 
-    # quick completeness heuristic
-    existing=$(ls -1 "${OUTDIR}"/mercatorglorys12v1_gl12_mean_${year}${mm}??_R????????.nc 2>/dev/null | wc -l || true)
-    if (( existing >= 28 )); then
-      echo "[skip] Likely complete (${year}-${mm}: ${existing} files) at ${OUTDIR}"
+    check_flat_download_layout "$OUTDIR"
+    # Only a complete, readable daily time axis qualifies for skipping.
+    files=()
+    while IFS= read -r -d '' file; do files+=("$file"); done < <(find "$OUTDIR" -maxdepth 1 -type f -name '*.nc' -print0)
+    if validate_daily_coverage "$year" "$mm" ${files[@]+"${files[@]}"}; then
+      echo "[skip] Verified daily coverage: ${year}-${mm}"
       continue
+    else
+      status=$?
+      [[ "$status" == 10 ]] || exit "$status"
     fi
 
     echo "${DATASET}|${REGEX}|${OUTDIR}" >> "$TASKS"
   done
 done
 
-# ========= Helper: tidy nested structure from older runs =========
-tidy_nested_if_any() {
-  local outdir="$1" year mm
-  year=$(basename "$(dirname "$outdir")")
-  mm=$(basename "$outdir")
-
-  if compgen -G "${outdir}/GLOBAL_MULTIYEAR_PHY_001_030/*/*/${year}/${mm}/mercatorglorys12v1_gl12_mean_${year}${mm}??_R????????.nc*" > /dev/null; then
-    find "${outdir}/GLOBAL_MULTIYEAR_PHY_001_030" -type f -regex ".*/mercatorglorys12v1_gl12_mean_${year}${mm}[0-9]{2}_R[0-9]{8}\\.nc.*" -print0 \
-      | xargs -0 -I {} bash -c '
-          src="{}"; base=$(basename "$src")
-          mv -f "$src" "'"$outdir"'/"$base"
-        ' || true
-    find "${outdir}/GLOBAL_MULTIYEAR_PHY_001_030" -type d -empty -delete || true
-  fi
-}
-
 # ========= Worker =========
-fetch_month() {
+fetch_month() (
+  set -euo pipefail
   local dataset="$1"
   local regex="$2"
   local outdir="$3"
 
+  # Do not let two downloader instances modify the same month concurrently.
+  mkdir "${outdir}.download.lock" 2>/dev/null || { echo "ERROR: Download locked: $outdir" >&2; exit 1; }
+  DOWNLOAD_LOCK_PATH="${outdir}.download.lock"
+  DOWNLOAD_MANIFEST_TMP=""
+  trap '[[ -z "$DOWNLOAD_MANIFEST_TMP" ]] || rm -f -- "$DOWNLOAD_MANIFEST_TMP"; rmdir -- "$DOWNLOAD_LOCK_PATH"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  local year mm manifest
+  year=$(basename "$(dirname "$outdir")")
+  mm=$(basename "$outdir")
+  check_flat_download_layout "$outdir"
+  local files=()
+  while IFS= read -r -d '' file; do files+=("$file"); done < <(find "$outdir" -maxdepth 1 -type f -name '*.nc' -print0)
+  if validate_daily_coverage "$year" "$mm" ${files[@]+"${files[@]}"}; then exit 0; else
+    local status=$?
+    [[ "$status" == 10 ]] || exit "$status"
+  fi
   echo "[get] dataset=${dataset}"
   echo "      regex=${regex}"
   echo "      outdir=${outdir}"
@@ -116,18 +195,25 @@ fetch_month() {
     --output-directory "$outdir" \
     --no-directories
 
-  # Tidy leftovers from earlier runs (if any)
-  tidy_nested_if_any "$outdir"
+  check_flat_download_layout "$outdir"
+
+  # A successful client exit does not prove a complete month.
+  files=()
+  while IFS= read -r -d '' file; do files+=("$file"); done < <(find "$outdir" -maxdepth 1 -type f -name '*.nc' -print0)
+  validate_daily_coverage "$year" "$mm" ${files[@]+"${files[@]}"}
 
   # Manifest
   year=$(basename "$(dirname "$outdir")")
   mm=$(basename "$outdir")
   manifest="${outdir}/manifest_${year}${mm}.txt"
-  ls -1 "${outdir}"/mercatorglorys12v1_gl12_mean_${year}${mm}??_R????????.nc 2>/dev/null | sort > "$manifest" || true
+  DOWNLOAD_MANIFEST_TMP="$(mktemp "${manifest}.XXXXXX")"
+  printf '%s\n' "${files[@]}" | sort > "$DOWNLOAD_MANIFEST_TMP"
+  mv -f -- "$DOWNLOAD_MANIFEST_TMP" "$manifest"
   echo "[done] manifest: $manifest"
-}
+  exit 0
+)
 
-export -f fetch_month tidy_nested_if_any
+export -f validate_daily_coverage fetch_month check_flat_download_layout
 export CM
 
 # ========= Parallel execution =========

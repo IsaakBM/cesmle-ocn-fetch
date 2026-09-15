@@ -86,6 +86,12 @@ CSV exporter and depth splitter still replace their outputs when run. These chec
 add readback I/O and require space for the old file and its candidate. A failed
 writer or validation leaves the previous final file intact and fails the job.
 Protection is per output, not a transaction across all outputs from a source file.
+Each generated delivery output also gets a sidecar fingerprint named
+`<output>.provenance.json`. The sidecar records the source file path, source size,
+source mtime, script identity, output path, and relevant export settings. When a
+tool would keep an existing output because `OVERWRITE=no`, the sidecar must match
+the current source/settings; missing or mismatched provenance fails the job and
+preserves the existing output.
 
 GeoTIFF runs sharing an output root also lock `geotiff_manifest.csv`. File workers
 within a run remain parallel. Each run uses private manifest rows; worker failures
@@ -95,10 +101,10 @@ reviewed/rerun before treating its manifest as a complete account of those files
 Manifest publication uses an atomic rename on its destination filesystem.
 
 GeoTIFF manifest rows now include `publication_status`: `validated_replacement`
-for newly written/read-back TIFFs and `existing_unverified` for skipped TIFFs.
-Skipped TIFFs retain previously recorded metadata where available; unknown fields
-stay blank rather than being inferred from current settings. This is not source or
-settings freshness validation. Freshness tracking remains separate work.
+for newly written/read-back TIFFs and `fresh_existing` for skipped TIFFs whose
+sidecar provenance matches the current source and settings. Skipped TIFFs retain
+previously recorded metadata where available; unknown fields stay blank rather
+than being inferred from current settings.
 
 ## Planned adjustment sequence
 
@@ -114,9 +120,9 @@ Continue the repository adjustment work in this order:
    current project decision that CESM/RCP85 is no longer part of the active or
    planned production pipeline.
 3. Freshness/provenance checks.
-   Once the active names and roles are clear, add lightweight fingerprints for
-   generated outputs so existing files can be classified as matching or not
-   matching their current sources, settings, and code.
+   Delivery outputs now write lightweight fingerprints so existing files can be
+   classified as matching or not matching their current sources, settings, and
+   code.
 4. Later cleanup or retirement.
    Propose any additional deprecation, archival move, or rename only after the
    naming/role audit lists exact callers, risks, and validation needed.

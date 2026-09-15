@@ -618,17 +618,23 @@ fi
         self.assertEqual(final.read_bytes(), accepted)
         self.assertEqual(manifest.read_bytes(), record)
         lock.rmdir()
-        # Skipping retains both pixels and prior metadata, not new invocation settings.
-        changed = self.field(value=9.).isel(lev=0)
-        changed.to_netcdf(source)
-        result = self.run_script(tool, **dict(env, OVERWRITE='no', SCALE_FACTORS='thetao=1000'))
+        # Skipping now requires provenance to match current inputs and settings.
+        result = self.run_script(tool, **dict(env, OVERWRITE='no'))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(final.read_bytes(), accepted)
         with manifest.open() as handle:
             skipped = next(csv.DictReader(handle))
-        self.assertEqual(skipped['publication_status'], 'existing_unverified')
+        self.assertEqual(skipped['publication_status'], 'fresh_existing')
         self.assertEqual(skipped['scale_factor'], row['scale_factor'])
         self.assertEqual(skipped['min_real'], row['min_real'])
+        fresh_record = manifest.read_bytes()
+        changed = self.field(value=9.).isel(lev=0)
+        changed.to_netcdf(source)
+        result = self.run_script(tool, **dict(env, OVERWRITE='no', SCALE_FACTORS='thetao=1000'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('provenance does not match', result.stderr)
+        self.assertEqual(final.read_bytes(), accepted)
+        self.assertEqual(manifest.read_bytes(), fresh_record)
         # Exercise the supported CLI-only writer/readback without Python GDAL.
         if shutil.which('gdal_translate') and shutil.which('gdalinfo'):
             code = self.delivery_block(tool.name)

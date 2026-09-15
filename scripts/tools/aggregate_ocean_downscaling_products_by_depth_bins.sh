@@ -172,6 +172,7 @@ process_one_file() (
   python3 - "${infile}" "${out_dir}" "${BIN_SET}" "${COPY_2D_FILES}" "${OVERWRITE}" <<'PY'
 import os
 import sys
+import json
 import numpy as np
 import xarray as xr
 
@@ -183,8 +184,45 @@ import shutil
 import signal
 import tempfile
 
+def file_fingerprint(path):
+    stat = os.stat(path)
+    return {
+        "path": os.path.abspath(path),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+def expected_provenance(source, final, settings):
+    return {
+        "schema_version": 1,
+        "script": "scripts/tools/aggregate_ocean_downscaling_products_by_depth_bins.sh",
+        "source": file_fingerprint(source),
+        "output": os.path.abspath(final),
+        "settings": settings,
+    }
+
+def provenance_path(final):
+    return final + ".provenance.json"
+
+def require_fresh_existing(final, provenance):
+    path = provenance_path(final)
+    if not os.path.isfile(path):
+        raise RuntimeError(f"Existing output lacks provenance sidecar; rerun with OVERWRITE=yes: {final}")
+    with open(path) as handle:
+        recorded = json.load(handle)
+    if recorded != provenance:
+        raise RuntimeError(f"Existing output provenance does not match current inputs/settings; rerun with OVERWRITE=yes: {final}")
+    print(f"[FRESH] Existing output matches provenance: {final}")
+
+def write_provenance(final, provenance):
+    tmp = f"{provenance_path(final)}.tmp.{os.getpid()}"
+    with open(tmp, "w") as handle:
+        json.dump(provenance, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(tmp, provenance_path(final))
+
 @contextmanager
-def atomic_product(final, overwrite=True):
+def atomic_product(final, overwrite=True, provenance=None):
     os.makedirs(os.path.dirname(final), exist_ok=True)
     lock = final + ".lock"
     try:
@@ -198,7 +236,9 @@ def atomic_product(final, overwrite=True):
     try:
         signal.signal(signal.SIGTERM, interrupted)
         if os.path.exists(final) and not overwrite:
-            print(f"[SKIP] Existing output retained; freshness not verified: {final}")
+            if provenance is None:
+                raise RuntimeError(f"Existing output cannot be freshness-checked without provenance settings: {final}")
+            require_fresh_existing(final, provenance)
             yield None
             return
         work = tempfile.mkdtemp(prefix="." + os.path.basename(final) + ".work.",
@@ -208,14 +248,16 @@ def atomic_product(final, overwrite=True):
         if not os.path.isfile(candidate) or os.path.getsize(candidate) == 0:
             raise RuntimeError(f"Writer did not create a nonempty candidate: {final}")
         os.replace(candidate, final)
+        if provenance is not None:
+            write_provenance(final, provenance)
     finally:
         signal.signal(signal.SIGTERM, previous)
         if work is not None:
             shutil.rmtree(work)
         os.rmdir(lock)
 
-def publish_netcdf(dataset, final, overwrite=True):
-    with atomic_product(final, overwrite) as candidate:
+def publish_netcdf(dataset, final, overwrite=True, provenance=None):
+    with atomic_product(final, overwrite, provenance) as candidate:
         if candidate is None:
             return
         dataset.to_netcdf(candidate)
@@ -371,7 +413,12 @@ with xr.open_dataset(infile) as ds:
     if zdim is None:
         rel_copy = os.path.join(out_dir, os.path.basename(infile))
         if copy_2d:
-            publish_netcdf(ds, rel_copy, overwrite)
+            provenance = expected_provenance(infile, rel_copy, {
+                "operation": "copy_2d",
+                "bin_set": bin_set,
+                "copy_2d_files": copy_2d_flag,
+            })
+            publish_netcdf(ds, rel_copy, overwrite, provenance)
             print(f"[COPY] 2D/no-z file copied unchanged: {infile}")
         else:
             print(f"[SKIP] No recognized vertical axis: {infile}")
@@ -451,7 +498,20 @@ with xr.open_dataset(infile) as ds:
             )
 
         out = preserve_referenced_auxiliary_vars(out, ds, zdim)
-        publish_netcdf(out, outfile, overwrite)
+        provenance = expected_provenance(infile, outfile, {
+            "operation": "aggregate_depth_bin",
+            "bin_set": bin_set,
+            "bin_prefix": prefix,
+            "bin_slug": slug,
+            "bin_label": label,
+            "bin_lower_m": lower,
+            "bin_upper_m": upper,
+            "zdim": zdim,
+            "main_var": main_var,
+            "bounds_source": bounds_source,
+            "method": method,
+        })
+        publish_netcdf(out, outfile, overwrite, provenance)
         print(
             f"[DONE ] {outfile} "
             f"(levels={idx.size} method={method} range=[{lower}, {upper}))"

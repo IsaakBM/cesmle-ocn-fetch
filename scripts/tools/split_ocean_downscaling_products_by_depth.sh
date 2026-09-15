@@ -198,6 +198,7 @@ extract_all_levels() {
   python3 - "$infile" "$out_dir" "$base" "$zdim" "$MIN_DECIMALS" "$INTEGER_WIDTH" "$MAX_DEPTH_M" <<'PY'
 import os
 import sys
+import json
 import xarray as xr
 
 # Atomic publication owns only its lock and private workspace. A pre-existing
@@ -208,8 +209,45 @@ import shutil
 import signal
 import tempfile
 
+def file_fingerprint(path):
+    stat = os.stat(path)
+    return {
+        "path": os.path.abspath(path),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+def expected_provenance(source, final, settings):
+    return {
+        "schema_version": 1,
+        "script": "scripts/tools/split_ocean_downscaling_products_by_depth.sh",
+        "source": file_fingerprint(source),
+        "output": os.path.abspath(final),
+        "settings": settings,
+    }
+
+def provenance_path(final):
+    return final + ".provenance.json"
+
+def require_fresh_existing(final, provenance):
+    path = provenance_path(final)
+    if not os.path.isfile(path):
+        raise RuntimeError(f"Existing output lacks provenance sidecar; rerun with OVERWRITE=yes: {final}")
+    with open(path) as handle:
+        recorded = json.load(handle)
+    if recorded != provenance:
+        raise RuntimeError(f"Existing output provenance does not match current inputs/settings; rerun with OVERWRITE=yes: {final}")
+    print(f"[FRESH] Existing output matches provenance: {final}")
+
+def write_provenance(final, provenance):
+    tmp = f"{provenance_path(final)}.tmp.{os.getpid()}"
+    with open(tmp, "w") as handle:
+        json.dump(provenance, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(tmp, provenance_path(final))
+
 @contextmanager
-def atomic_product(final, overwrite=True):
+def atomic_product(final, overwrite=True, provenance=None):
     os.makedirs(os.path.dirname(final), exist_ok=True)
     lock = final + ".lock"
     try:
@@ -223,7 +261,9 @@ def atomic_product(final, overwrite=True):
     try:
         signal.signal(signal.SIGTERM, interrupted)
         if os.path.exists(final) and not overwrite:
-            print(f"[SKIP] Existing output retained; freshness not verified: {final}")
+            if provenance is None:
+                raise RuntimeError(f"Existing output cannot be freshness-checked without provenance settings: {final}")
+            require_fresh_existing(final, provenance)
             yield None
             return
         work = tempfile.mkdtemp(prefix="." + os.path.basename(final) + ".work.",
@@ -233,14 +273,16 @@ def atomic_product(final, overwrite=True):
         if not os.path.isfile(candidate) or os.path.getsize(candidate) == 0:
             raise RuntimeError(f"Writer did not create a nonempty candidate: {final}")
         os.replace(candidate, final)
+        if provenance is not None:
+            write_provenance(final, provenance)
     finally:
         signal.signal(signal.SIGTERM, previous)
         if work is not None:
             shutil.rmtree(work)
         os.rmdir(lock)
 
-def publish_netcdf(dataset, final, overwrite=True):
-    with atomic_product(final, overwrite) as candidate:
+def publish_netcdf(dataset, final, overwrite=True, provenance=None):
+    with atomic_product(final, overwrite, provenance) as candidate:
         if candidate is None:
             return
         dataset.to_netcdf(candidate)
@@ -296,7 +338,16 @@ with xr.open_dataset(infile) as ds:
         # Keep the selected vertical coordinate as a scalar coordinate so later
         # export steps can recover the exact depth directly from the file.
         out = ds.isel({zdim: idx}, drop=False)
-        publish_netcdf(out, outfile)
+        provenance = expected_provenance(infile, outfile, {
+            "operation": "split_depth",
+            "zdim": zdim,
+            "depth_m": depth_value,
+            "depth_token": token,
+            "min_decimals": min_decimals,
+            "integer_width": integer_width,
+            "max_depth_m": max_depth,
+        })
+        publish_netcdf(out, outfile, provenance=provenance)
         print(f"[DONE ] {outfile} depth_m={depth_value:.10g}")
         exported += 1
 
@@ -309,6 +360,7 @@ copy_2d_atomically() {
   python3 - "$1" "$2" <<'PY_COPY_ATOMIC'
 import sys
 import filecmp
+import json
 import xarray as xr
 # Atomic publication owns only its lock and private workspace. A pre-existing
 # lock is never removed automatically; interrupted writers require inspection.
@@ -318,8 +370,36 @@ import shutil
 import signal
 import tempfile
 
+def file_fingerprint(path):
+    stat = os.stat(path)
+    return {
+        "path": os.path.abspath(path),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+def provenance_path(final):
+    return final + ".provenance.json"
+
+def require_fresh_existing(final, provenance):
+    path = provenance_path(final)
+    if not os.path.isfile(path):
+        raise RuntimeError(f"Existing output lacks provenance sidecar; rerun with OVERWRITE=yes: {final}")
+    with open(path) as handle:
+        recorded = json.load(handle)
+    if recorded != provenance:
+        raise RuntimeError(f"Existing output provenance does not match current inputs/settings; rerun with OVERWRITE=yes: {final}")
+    print(f"[FRESH] Existing output matches provenance: {final}")
+
+def write_provenance(final, provenance):
+    tmp = f"{provenance_path(final)}.tmp.{os.getpid()}"
+    with open(tmp, "w") as handle:
+        json.dump(provenance, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(tmp, provenance_path(final))
+
 @contextmanager
-def atomic_product(final, overwrite=True):
+def atomic_product(final, overwrite=True, provenance=None):
     os.makedirs(os.path.dirname(final), exist_ok=True)
     lock = final + ".lock"
     try:
@@ -333,7 +413,9 @@ def atomic_product(final, overwrite=True):
     try:
         signal.signal(signal.SIGTERM, interrupted)
         if os.path.exists(final) and not overwrite:
-            print(f"[SKIP] Existing output retained; freshness not verified: {final}")
+            if provenance is None:
+                raise RuntimeError(f"Existing output cannot be freshness-checked without provenance settings: {final}")
+            require_fresh_existing(final, provenance)
             yield None
             return
         work = tempfile.mkdtemp(prefix="." + os.path.basename(final) + ".work.",
@@ -343,6 +425,8 @@ def atomic_product(final, overwrite=True):
         if not os.path.isfile(candidate) or os.path.getsize(candidate) == 0:
             raise RuntimeError(f"Writer did not create a nonempty candidate: {final}")
         os.replace(candidate, final)
+        if provenance is not None:
+            write_provenance(final, provenance)
     finally:
         signal.signal(signal.SIGTERM, previous)
         if work is not None:
@@ -350,7 +434,14 @@ def atomic_product(final, overwrite=True):
         os.rmdir(lock)
 
 source, final = sys.argv[1:]
-with atomic_product(final) as candidate:
+provenance = {
+    "schema_version": 1,
+    "script": "scripts/tools/split_ocean_downscaling_products_by_depth.sh",
+    "source": file_fingerprint(source),
+    "output": os.path.abspath(final),
+    "settings": {"operation": "copy_2d"},
+}
+with atomic_product(final, provenance=provenance) as candidate:
     shutil.copy2(source, candidate)
     if not filecmp.cmp(source, candidate, shallow=False):
         raise ValueError("Copied NetCDF differs from source")

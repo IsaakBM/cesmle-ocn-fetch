@@ -144,6 +144,7 @@ process_one_file() (
   python3 - "${infile}" "${outfile}" "${DROP_MISSING}" <<'PY'
 import sys
 import re
+import json
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -156,8 +157,36 @@ import shutil
 import signal
 import tempfile
 
+def file_fingerprint(path):
+    stat = os.stat(path)
+    return {
+        "path": os.path.abspath(path),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+def provenance_path(final):
+    return final + ".provenance.json"
+
+def require_fresh_existing(final, provenance):
+    path = provenance_path(final)
+    if not os.path.isfile(path):
+        raise RuntimeError(f"Existing output lacks provenance sidecar; rerun with OVERWRITE=yes: {final}")
+    with open(path) as handle:
+        recorded = json.load(handle)
+    if recorded != provenance:
+        raise RuntimeError(f"Existing output provenance does not match current inputs/settings; rerun with OVERWRITE=yes: {final}")
+    print(f"[FRESH] Existing output matches provenance: {final}")
+
+def write_provenance(final, provenance):
+    tmp = f"{provenance_path(final)}.tmp.{os.getpid()}"
+    with open(tmp, "w") as handle:
+        json.dump(provenance, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(tmp, provenance_path(final))
+
 @contextmanager
-def atomic_product(final, overwrite=True):
+def atomic_product(final, overwrite=True, provenance=None):
     os.makedirs(os.path.dirname(final), exist_ok=True)
     lock = final + ".lock"
     try:
@@ -171,7 +200,9 @@ def atomic_product(final, overwrite=True):
     try:
         signal.signal(signal.SIGTERM, interrupted)
         if os.path.exists(final) and not overwrite:
-            print(f"[SKIP] Existing output retained; freshness not verified: {final}")
+            if provenance is None:
+                raise RuntimeError(f"Existing output cannot be freshness-checked without provenance settings: {final}")
+            require_fresh_existing(final, provenance)
             yield None
             return
         work = tempfile.mkdtemp(prefix="." + os.path.basename(final) + ".work.",
@@ -181,6 +212,8 @@ def atomic_product(final, overwrite=True):
         if not os.path.isfile(candidate) or os.path.getsize(candidate) == 0:
             raise RuntimeError(f"Writer did not create a nonempty candidate: {final}")
         os.replace(candidate, final)
+        if provenance is not None:
+            write_provenance(final, provenance)
     finally:
         signal.signal(signal.SIGTERM, previous)
         if work is not None:
@@ -296,7 +329,19 @@ with xr.open_dataset(infile) as ds:
     if drop_missing:
         df = df[df[value_column].notna()]
 
-    with atomic_product(outfile) as candidate:
+    provenance = {
+        "schema_version": 1,
+        "script": "scripts/tools/export_ocean_downscaling_products_bydepth_to_csv.sh",
+        "source": file_fingerprint(infile),
+        "output": os.path.abspath(outfile),
+        "settings": {
+            "operation": "export_csv",
+            "drop_missing": drop_missing_flag,
+            "main_var": main_var,
+            "value_column": value_column,
+        },
+    }
+    with atomic_product(outfile, provenance=provenance) as candidate:
         df.to_csv(candidate, index=False)
         check = pd.read_csv(candidate, float_precision="round_trip")
         pd.testing.assert_frame_equal(check, df.reset_index(drop=True),

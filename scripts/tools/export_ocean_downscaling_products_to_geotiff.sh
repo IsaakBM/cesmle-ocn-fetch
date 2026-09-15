@@ -295,6 +295,7 @@ process_one_file() (
     "${FUTURE_UO_UVEL_CM_S_TO_M_S}" \
     "${TMP_DIR}/$(basename "${manifest_part}" .csv).encoded.tmp.nc" <<'PY'
 import csv
+import json
 import os
 import re
 import shutil
@@ -311,8 +312,36 @@ import shutil
 import signal
 import tempfile
 
+def file_fingerprint(path):
+    stat = os.stat(path)
+    return {
+        "path": os.path.abspath(path),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+def provenance_path(final):
+    return final + ".provenance.json"
+
+def require_fresh_existing(final, provenance):
+    path = provenance_path(final)
+    if not os.path.isfile(path):
+        raise RuntimeError(f"Existing output lacks provenance sidecar; rerun with OVERWRITE=yes: {final}")
+    with open(path) as handle:
+        recorded = json.load(handle)
+    if recorded != provenance:
+        raise RuntimeError(f"Existing output provenance does not match current inputs/settings; rerun with OVERWRITE=yes: {final}")
+    print(f"[FRESH] Existing output matches provenance: {final}")
+
+def write_provenance(final, provenance):
+    tmp = f"{provenance_path(final)}.tmp.{os.getpid()}"
+    with open(tmp, "w") as handle:
+        json.dump(provenance, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(tmp, provenance_path(final))
+
 @contextmanager
-def atomic_product(final, overwrite=True):
+def atomic_product(final, overwrite=True, provenance=None):
     os.makedirs(os.path.dirname(final), exist_ok=True)
     lock = final + ".lock"
     try:
@@ -326,7 +355,9 @@ def atomic_product(final, overwrite=True):
     try:
         signal.signal(signal.SIGTERM, interrupted)
         if os.path.exists(final) and not overwrite:
-            print(f"[SKIP] Existing output retained; freshness not verified: {final}")
+            if provenance is None:
+                raise RuntimeError(f"Existing output cannot be freshness-checked without provenance settings: {final}")
+            require_fresh_existing(final, provenance)
             yield None
             return
         work = tempfile.mkdtemp(prefix="." + os.path.basename(final) + ".work.",
@@ -336,6 +367,8 @@ def atomic_product(final, overwrite=True):
         if not os.path.isfile(candidate) or os.path.getsize(candidate) == 0:
             raise RuntimeError(f"Writer did not create a nonempty candidate: {final}")
         os.replace(candidate, final)
+        if provenance is not None:
+            write_provenance(final, provenance)
     finally:
         signal.signal(signal.SIGTERM, previous)
         if work is not None:
@@ -600,7 +633,28 @@ with xr.open_dataset(infile) as ds:
         crs = "EPSG:4326"
 
     final_outfile = outfile
-    with atomic_product(final_outfile, overwrite == "yes") as candidate:
+    provenance = {
+        "schema_version": 1,
+        "script": "scripts/tools/export_ocean_downscaling_products_to_geotiff.sh",
+        "source": file_fingerprint(infile),
+        "output": os.path.abspath(final_outfile),
+        "settings": {
+            "operation": "export_geotiff",
+            "rel_path": rel_path,
+            "main_var": main_var,
+            "variable_key": variable_key,
+            "scale_factor": scale_factor,
+            "encode_dtype": encode_dtype,
+            "encoded_dtype": dtype_name,
+            "compress": compress,
+            "future_uo_uvel_cm_s_to_m_s": future_uo_uvel_cm_s_to_m_s,
+            "unit_conversion": unit_conversion,
+            "x_name": x_name,
+            "y_name": y_name,
+            "crs": crs or "",
+        },
+    }
+    with atomic_product(final_outfile, overwrite == "yes", provenance) as candidate:
         skip_existing = candidate is None
         if candidate is not None:
             outfile = candidate
@@ -752,7 +806,7 @@ with xr.open_dataset(infile) as ds:
     outfile = final_outfile
 
     row = {
-        "publication_status": "existing_unverified" if skip_existing else "validated_replacement",
+        "publication_status": "fresh_existing" if skip_existing else "validated_replacement",
         "source_file": os.path.abspath(infile),
         "relative_path": rel_path,
         "geotiff_file": os.path.abspath(outfile),
@@ -785,7 +839,7 @@ with xr.open_dataset(infile) as ds:
                         break
         row = {key: (recorded or {}).get(key, "") for key in row}
         row.update(relative_path=rel_path, geotiff_file=os.path.abspath(outfile),
-                   publication_status="existing_unverified")
+                   publication_status="fresh_existing")
 
     with open(manifest_part, "w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(row.keys()))
@@ -804,7 +858,7 @@ PY
   fi
 
   if [[ -f "${outfile}" && "${OVERWRITE}" == "no" ]]; then
-    echo "[KEEP ] Existing ${outfile}; manifest row marked existing_unverified"
+    echo "[KEEP ] Existing ${outfile}; provenance matched and manifest row marked fresh_existing"
   else
     echo "[DONE ] ${outfile}"
   fi

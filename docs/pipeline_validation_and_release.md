@@ -100,6 +100,32 @@ Skipped TIFFs retain previously recorded metadata where available; unknown field
 stay blank rather than being inferred from current settings. This is not source or
 settings freshness validation. Freshness tracking remains separate work.
 
+## Planned adjustment sequence
+
+Continue the repository adjustment work in this order:
+
+1. Safe publication for preparation and delivery outputs.
+   Daily coverage checks, preparation outputs, vertical interpolation outputs,
+   layer/depth NetCDF products, CSV, Parquet, and GeoTIFF exports now publish
+   through validated temporary candidates.
+2. Naming and role reconciliation.
+   Reassess active path names, runner names, headers, and README descriptions
+   before adding freshness/provenance metadata. This pass must account for the
+   current project decision that CESM/RCP85 is no longer part of the active or
+   planned production pipeline.
+3. Freshness/provenance checks.
+   Once the active names and roles are clear, add lightweight fingerprints for
+   generated outputs so existing files can be classified as matching or not
+   matching their current sources, settings, and code.
+4. Later cleanup or retirement.
+   Propose any additional deprecation, archival move, or rename only after the
+   naming/role audit lists exact callers, risks, and validation needed.
+
+The naming/role audit is an analysis step first. It may recommend documentation
+updates, safe cleanup, architectural/refactoring work, potentially output-affecting
+changes, or scientific decisions requiring review. It does not by itself approve
+directory moves, script renames, or scientific configuration changes.
+
 Normal completion, Python exceptions, and handled termination clean owned output
 locks and workspaces. After SIGKILL, node loss, or storage errors, inspect remaining
 jobs before manually recovering stale `.lock` directories or hidden workspaces.

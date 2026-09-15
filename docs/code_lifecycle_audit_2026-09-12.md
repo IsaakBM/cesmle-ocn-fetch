@@ -7,6 +7,16 @@ helpers from live code. The production coastal-fill pipeline remains in place.
 Archived code is retained under `legacy/deprecated/`; cluster data and jobs were
 not touched.
 
+## Later project decision
+
+As of 2026-09-15, the project decision is that CESM/RCP85 products are no longer
+part of the active or planned production pipeline. The CESM retention conclusions
+below remain a historical record of the 2026-09-12 baseline, but they should be
+reconciled before adding freshness/provenance metadata or making further cleanup
+changes. The next pass should classify CESM-specific paths as active,
+historical/reproduction, deprecated, or candidates for archival, with exact callers
+and risks listed before any file move or rename.
+
 ## Coverage and evidence
 
 - Inventoried all 101 tracked shell/R scripts: 79 active, 18 previously archived,

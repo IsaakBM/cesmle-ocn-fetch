@@ -292,6 +292,32 @@ Skipped TIFFs retain previously recorded metadata where available; unknown field
 stay blank rather than being inferred from current settings. This is not source or
 settings freshness validation. Freshness tracking remains separate work.
 
+### Planned adjustment sequence
+
+The current cleanup and hardening work proceeds in this order:
+
+1. Safe publication for preparation and delivery outputs.
+   This is implemented for daily download coverage, monthly preparation,
+   vertical interpolation, layer/depth NetCDF products, CSV, Parquet, and
+   GeoTIFF exports.
+2. Naming and role reconciliation.
+   Before adding freshness/provenance records, reassess whether active path names,
+   runner names, headers, and README descriptions match the current workflow. This
+   includes the updated decision that CESM/RCP85 products are no longer part of
+   the active or planned production pipeline.
+3. Freshness/provenance checks.
+   After names and roles are reconciled, add lightweight fingerprints so existing
+   outputs can be classified by whether they match the current sources, settings,
+   and code, rather than only by whether a destination file exists.
+4. Later cleanup or retirement.
+   Only after the naming/role audit identifies exact callers and risks should any
+   additional deprecation, archival move, or rename be proposed.
+
+The naming pass is expected to classify each candidate as documentation-only,
+safe/non-scientific cleanup, architectural/refactoring, potentially
+output-affecting, or a scientific decision requiring review. It does not authorize
+directory moves, script renames, or scientific configuration changes by itself.
+
 Normal completion, Python exceptions, and handled termination clean owned output
 locks and workspaces. After SIGKILL, node loss, or storage errors, inspect remaining
 jobs before manually recovering stale `.lock` directories or hidden workspaces.
@@ -389,8 +415,14 @@ Superseded non-coastal addition, patch-style hindcast coastal filling, and the
 local CESM download experiment are now under
 [legacy/deprecated](legacy/deprecated/README.md). Use the coastal-fill production
 workers and the direct `0p25 -> 0p05_glorys_coast` baseline workflow for new runs.
-CESM reproduction, the original unfilled `0p05` baseline, standalone audits,
-and delivery exporters remain available.
+The September audit retained CESM reproduction utilities because external usage
+had not been disproved at that baseline. The current cleanup sequence now
+reassesses that decision against the later project decision that CESM/RCP85 is no
+longer part of the active or planned production pipeline. Until that naming/role
+audit is completed, keep the files in place and treat any CESM-specific entrypoint
+as historical/reproduction code, not a current production path. The original
+unfilled `0p05` baseline, standalone audits, and delivery exporters remain
+available.
 
 ## Repository Layout
 

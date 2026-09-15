@@ -76,8 +76,9 @@ The current scientific branches are:
 - `ipcc_esgf_to_hindcast/`
   - adds IPCC/ESGF change fields to the configured trusted baseline
     (`GLORYS` for physics/sea-ice and hindcast for BGC)
-- `cesm_to_glorys/`
-  - historical/reproduction runner family for the retired CESM/RCP85 branch
+
+The retired CESM/RCP85 reproduction runners are preserved under
+`legacy/deprecated/scripts/runners/cesm_to_glorys/`, outside the active pipeline.
 
 The current CMIP6/IPCC expansion targets five first-member model branches:
 `CNRM-ESM2-1`, `IPSL-CM6A-LR`, `MPI-ESM1-2-HR`, `MPI-ESM1-2-LR`, and
@@ -442,7 +443,7 @@ Selected top-level entries and the current script inventory (no directory change
 cesmle-ocn-fetch/
 ├── data/                           # Lightweight manifests/layout; large data live externally
 ├── docs/                           # Runbooks, audit records, and reference material
-├── legacy/deprecated/              # Previously archived workflows
+├── legacy/deprecated/              # Archived workflows, including CESM/RCP85 reproduction
 ├── scripts/
 │   ├── R/
 │   │   ├── audit_pipeline_path_assumptions.R
@@ -453,16 +454,10 @@ cesmle-ocn-fetch/
 │   │   ├── assess_sb5_storage_migration.sh
 │   │   ├── bgc_monthly_download.slurm.sh
 │   │   ├── download_GLORYS_parallel.sh
-│   │   ├── download_cesmle.sh
-│   │   ├── download_cesmle_list_and_get.sh
-│   │   ├── download_cesmle_list_parallel-hist.sh
-│   │   ├── download_cesmle_list_parallel-proj.sh
-│   │   ├── download_cesmle_list_parallel.sh
 │   │   ├── prepare_sb5_storage_layout.sh
 │   │   └── process_esgf_wget_scripts.sh
 │   ├── core/
 │   │   ├── add_anomaly_to_baseline_with_coastal_fill.slurm.sh
-│   │   ├── add_cesm_members_to_glorys_with_coastal_fill.slurm.sh
 │   │   ├── climatology_window_from_monthly_files.slurm.sh
 │   │   ├── climatology_window_from_timeseries.slurm.sh
 │   │   ├── delta_from_climatologies.slurm.sh
@@ -471,12 +466,6 @@ cesmle-ocn-fetch/
 │   ├── lib/
 │   │   └── ipcc_esgf_discovery.sh
 │   ├── runners/
-│   │   ├── cesm_to_glorys/
-│   │   │   ├── run_add_anomaly_to_baseline_with_coastal_fill.sh
-│   │   │   ├── run_climatology_window.sh
-│   │   │   ├── run_delta_from_climatologies.sh
-│   │   │   ├── run_temporal_aggregate_regrid.sh
-│   │   │   └── run_vertical_interpolate_to_reference.sh
 │   │   ├── downscaling/
 │   │   │   └── run_add_anomaly_to_trusted_baseline_with_coastal_fill.sh
 │   │   ├── global_ocean_biogeochemistry_hindcast/
@@ -495,7 +484,6 @@ cesmle-ocn-fetch/
 │   │   │   └── run_vertical_interpolate_to_reference.sh
 │   │   ├── ipcc_esgf_to_hindcast/
 │   │   │   └── run_add_anomaly_to_baseline_with_coastal_fill.sh
-│   │   ├── other_model/
 │   │   └── products/
 │   │       ├── run_aggregate_ocean_downscaling_products_fine_layers.sh
 │   │       ├── run_aggregate_ocean_downscaling_products_pelagic_layers.sh
@@ -618,8 +606,8 @@ Reusable worker scripts. These do the actual processing.
   - then dynamically fills missing top layers in the final output
   - writes the native output and can optionally regrid a final delivery copy
 
-- [add_cesm_members_to_glorys_with_coastal_fill.slurm.sh](scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh)
-  - historical/reproduction CESM to GLORYS orchestration worker for the
+- [add_cesm_members_to_glorys_with_coastal_fill.slurm.sh](legacy/deprecated/scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh)
+  - archived historical/reproduction CESM to GLORYS orchestration worker for the
     coastal-fill branch
   - submits one Slurm job per physical variable while processing many CESM
     member anomaly files inside that job
@@ -963,15 +951,15 @@ Closest modern abstraction:
   GLORYS wet mask for IPCC/ESGF biogeochemistry:
   [add_anomaly_to_baseline_with_coastal_fill.slurm.sh](scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh)
 
-Modern CESM runners now live in:
+Archived CESM reproduction runners now live in:
 
-- [run_temporal_aggregate_regrid.sh](scripts/runners/cesm_to_glorys/run_temporal_aggregate_regrid.sh)
-- [run_vertical_interpolate_to_reference.sh](scripts/runners/cesm_to_glorys/run_vertical_interpolate_to_reference.sh)
-- [run_climatology_window.sh](scripts/runners/cesm_to_glorys/run_climatology_window.sh)
-- [run_delta_from_climatologies.sh](scripts/runners/cesm_to_glorys/run_delta_from_climatologies.sh)
-- [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline_with_coastal_fill.sh)
+- [run_temporal_aggregate_regrid.sh](legacy/deprecated/scripts/runners/cesm_to_glorys/run_temporal_aggregate_regrid.sh)
+- [run_vertical_interpolate_to_reference.sh](legacy/deprecated/scripts/runners/cesm_to_glorys/run_vertical_interpolate_to_reference.sh)
+- [run_climatology_window.sh](legacy/deprecated/scripts/runners/cesm_to_glorys/run_climatology_window.sh)
+- [run_delta_from_climatologies.sh](legacy/deprecated/scripts/runners/cesm_to_glorys/run_delta_from_climatologies.sh)
+- [run_add_anomaly_to_baseline_with_coastal_fill.sh](legacy/deprecated/scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline_with_coastal_fill.sh)
 
-Historical CESM logic in the new runner architecture:
+Historical CESM logic retained in the archived runner architecture:
 
 1. regrid CESM monthly POP time-series to `1 degree`
 2. vertically interpolate them to GLORYS depth levels
@@ -983,7 +971,7 @@ Historical CESM logic in the new runner architecture:
 
 Important notes:
 
-- the retained CESM runner family is centered on the `rcp85` branch,
+- the archived CESM runner family is centered on the `rcp85` branch,
   matching the old downstream CESM workflow organization
 - the add-to-baseline stage currently preserves the old variable mapping:
   - `TEMP -> thetao`
@@ -1470,13 +1458,13 @@ Runner layout for this coastal-fill branch:
 - IPCC/ESGF to hindcast wrapper:
   [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh)
 - historical CESM to GLORYS wrapper:
-  [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline_with_coastal_fill.sh)
+  [run_add_anomaly_to_baseline_with_coastal_fill.sh](legacy/deprecated/scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline_with_coastal_fill.sh)
 
 Important CESM/GLORYS note:
 
 - the historical CESM -> GLORYS coastal-fill path uses a dedicated variable-level
   worker:
-  [add_cesm_members_to_glorys_with_coastal_fill.slurm.sh](scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh)
+  [add_cesm_members_to_glorys_with_coastal_fill.slurm.sh](legacy/deprecated/scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh)
 - this restores the legacy CESM -> GLORYS launch behavior:
   one Slurm job per variable, with member anomaly files processed inside that
   job
@@ -1491,7 +1479,7 @@ Why the runner structure is split this way:
 - `scripts/runners/downscaling/` holds the general configurable launcher
 - `scripts/runners/ipcc_esgf_to_hindcast/` keeps the current IPCC/ESGF ->
   hindcast production entrypoint
-- `scripts/runners/cesm_to_glorys/` keeps the historical CESM -> GLORYS
+- `legacy/deprecated/scripts/runners/cesm_to_glorys/` keeps the archived historical CESM -> GLORYS
   reproduction entrypoint
 
 This keeps the method generic while leaving the day-to-day launchers in the
@@ -2200,14 +2188,12 @@ Notes:
 
 Located in [scripts/bash](scripts/bash):
 
-- `download_cesmle.sh`
-- `download_cesmle_list_parallel.sh`
-- `download_cesmle_list_parallel-hist.sh`
-- `download_cesmle_list_parallel-proj.sh`
-- `download_cesmle_list_and_get.sh`
 - `download_GLORYS_parallel.sh`
 - `bgc_monthly_download.slurm.sh`
 - `process_esgf_wget_scripts.sh`
+
+Archived CESM-LE download helpers are preserved under
+[legacy/deprecated/scripts/bash](legacy/deprecated/scripts/bash).
 
 These are for acquisition, staging, and utilities. They are not the main
 scientific processing workers.

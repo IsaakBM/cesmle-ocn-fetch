@@ -52,7 +52,7 @@ and risks listed before any file move or rename.
 | `scripts/tools/fill_hindcast_baseline_coastal_gaps.sh` | Archive. Patch of an already remapped `0p05` baseline; replaced by direct `0p25 -> 0p05_glorys_coast` remap/fill, with historical validation evidence. Only the corresponding old runner references it. |
 | `scripts/runners/products/run_fill_hindcast_baseline_coastal_gaps.sh` | Archive with its worker. No other script references this standalone superseded launcher. |
 | `scripts/core/add_anomaly_to_baseline.slurm.sh` | Archive. README identifies coastal fill as production; this is the older non-coastal calculation. Its only script consumers are the CESM runner archived here and the already archived IPCC runner. |
-| `scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline.sh` | Archive with its worker. Historical candidate; supported CESM coastal-fill runner remains. |
+| `legacy/deprecated/scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline.sh` | Archive with its worker. Historical candidate; the later 2026-09-15 cleanup archived the CESM coastal-fill reproduction runner too. |
 | `scripts/bash/z_cesm1_temp.sh` | Archive. Hard-coded two-member TEMP download experiment writing to `$HOME/Desktop/z_esmLE_test`; no script consumers. Configurable CESM download alternatives remain available. |
 
 The archived files retain their relative directory layout. Both non-coastal

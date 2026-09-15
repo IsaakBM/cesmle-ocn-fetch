@@ -41,17 +41,17 @@ they are discovery hints, not verified calls. Zero is expected for manual entry 
 | [scripts/bash/assess_sb5_storage_migration.sh](../scripts/bash/assess_sb5_storage_migration.sh) | Retained audit / storage utility | 0 |
 | [scripts/bash/bgc_monthly_download.slurm.sh](../scripts/bash/bgc_monthly_download.slurm.sh) | Retained acquisition utility | 0 |
 | [scripts/bash/download_GLORYS_parallel.sh](../scripts/bash/download_GLORYS_parallel.sh) | Retained acquisition utility | 0 |
-| [scripts/bash/download_cesmle.sh](../scripts/bash/download_cesmle.sh) | Retained CESM reproduction | 0 |
-| [scripts/bash/download_cesmle_list_and_get.sh](../scripts/bash/download_cesmle_list_and_get.sh) | Retained CESM reproduction | 0 |
-| [scripts/bash/download_cesmle_list_parallel-hist.sh](../scripts/bash/download_cesmle_list_parallel-hist.sh) | Retained CESM reproduction | 0 |
-| [scripts/bash/download_cesmle_list_parallel-proj.sh](../scripts/bash/download_cesmle_list_parallel-proj.sh) | Retained CESM reproduction | 0 |
-| [scripts/bash/download_cesmle_list_parallel.sh](../scripts/bash/download_cesmle_list_parallel.sh) | Retained CESM reproduction | 0 |
+| [legacy/deprecated/scripts/bash/download_cesmle.sh](../legacy/deprecated/scripts/bash/download_cesmle.sh) | Archived CESM reproduction on 2026-09-15 | 0 |
+| [legacy/deprecated/scripts/bash/download_cesmle_list_and_get.sh](../legacy/deprecated/scripts/bash/download_cesmle_list_and_get.sh) | Archived CESM reproduction on 2026-09-15 | 0 |
+| [legacy/deprecated/scripts/bash/download_cesmle_list_parallel-hist.sh](../legacy/deprecated/scripts/bash/download_cesmle_list_parallel-hist.sh) | Archived CESM reproduction on 2026-09-15 | 0 |
+| [legacy/deprecated/scripts/bash/download_cesmle_list_parallel-proj.sh](../legacy/deprecated/scripts/bash/download_cesmle_list_parallel-proj.sh) | Archived CESM reproduction on 2026-09-15 | 0 |
+| [legacy/deprecated/scripts/bash/download_cesmle_list_parallel.sh](../legacy/deprecated/scripts/bash/download_cesmle_list_parallel.sh) | Archived CESM reproduction on 2026-09-15 | 0 |
 | [scripts/bash/prepare_sb5_storage_layout.sh](../scripts/bash/prepare_sb5_storage_layout.sh) | Retained audit / storage utility | 0 |
 | [scripts/bash/process_esgf_wget_scripts.sh](../scripts/bash/process_esgf_wget_scripts.sh) | Retained acquisition utility | 0 |
 | [scripts/bash/z_cesm1_temp.sh](../legacy/deprecated/scripts/bash/z_cesm1_temp.sh) | Archived in this audit | 0 |
 | [scripts/core/add_anomaly_to_baseline.slurm.sh](../legacy/deprecated/scripts/core/add_anomaly_to_baseline.slurm.sh) | Archived in this audit | 2 |
 | [scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh](../scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh) | Retained pipeline / delivery | 3 |
-| [scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh](../scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh) | Retained CESM reproduction | 1 |
+| [legacy/deprecated/scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh](../legacy/deprecated/scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh) | Archived CESM reproduction on 2026-09-15 | 1 |
 | [scripts/core/climatology_window_from_monthly_files.slurm.sh](../scripts/core/climatology_window_from_monthly_files.slurm.sh) | Retained pipeline / delivery | 2 |
 | [scripts/core/climatology_window_from_timeseries.slurm.sh](../scripts/core/climatology_window_from_timeseries.slurm.sh) | Retained pipeline / delivery | 2 |
 | [scripts/core/delta_from_climatologies.slurm.sh](../scripts/core/delta_from_climatologies.slurm.sh) | Retained pipeline / delivery | 2 |
@@ -59,11 +59,11 @@ they are discovery hints, not verified calls. Zero is expected for manual entry 
 | [scripts/core/vertical_interpolate_to_reference.slurm.sh](../scripts/core/vertical_interpolate_to_reference.slurm.sh) | Retained pipeline / delivery | 3 |
 | [scripts/lib/ipcc_esgf_discovery.sh](../scripts/lib/ipcc_esgf_discovery.sh) | Retained pipeline / delivery | 5 |
 | [scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline.sh](../legacy/deprecated/scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline.sh) | Archived in this audit | 0 |
-| [scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline_with_coastal_fill.sh](../scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline_with_coastal_fill.sh) | Retained CESM reproduction | 1 |
-| [scripts/runners/cesm_to_glorys/run_climatology_window.sh](../scripts/runners/cesm_to_glorys/run_climatology_window.sh) | Retained CESM reproduction | 1 |
-| [scripts/runners/cesm_to_glorys/run_delta_from_climatologies.sh](../scripts/runners/cesm_to_glorys/run_delta_from_climatologies.sh) | Retained CESM reproduction | 1 |
-| [scripts/runners/cesm_to_glorys/run_temporal_aggregate_regrid.sh](../scripts/runners/cesm_to_glorys/run_temporal_aggregate_regrid.sh) | Retained CESM reproduction | 1 |
-| [scripts/runners/cesm_to_glorys/run_vertical_interpolate_to_reference.sh](../scripts/runners/cesm_to_glorys/run_vertical_interpolate_to_reference.sh) | Retained CESM reproduction | 1 |
+| [legacy/deprecated/scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline_with_coastal_fill.sh](../legacy/deprecated/scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline_with_coastal_fill.sh) | Archived CESM reproduction on 2026-09-15 | 1 |
+| [legacy/deprecated/scripts/runners/cesm_to_glorys/run_climatology_window.sh](../legacy/deprecated/scripts/runners/cesm_to_glorys/run_climatology_window.sh) | Archived CESM reproduction on 2026-09-15 | 1 |
+| [legacy/deprecated/scripts/runners/cesm_to_glorys/run_delta_from_climatologies.sh](../legacy/deprecated/scripts/runners/cesm_to_glorys/run_delta_from_climatologies.sh) | Archived CESM reproduction on 2026-09-15 | 1 |
+| [legacy/deprecated/scripts/runners/cesm_to_glorys/run_temporal_aggregate_regrid.sh](../legacy/deprecated/scripts/runners/cesm_to_glorys/run_temporal_aggregate_regrid.sh) | Archived CESM reproduction on 2026-09-15 | 1 |
+| [legacy/deprecated/scripts/runners/cesm_to_glorys/run_vertical_interpolate_to_reference.sh](../legacy/deprecated/scripts/runners/cesm_to_glorys/run_vertical_interpolate_to_reference.sh) | Archived CESM reproduction on 2026-09-15 | 1 |
 | [scripts/runners/downscaling/run_add_anomaly_to_trusted_baseline_with_coastal_fill.sh](../scripts/runners/downscaling/run_add_anomaly_to_trusted_baseline_with_coastal_fill.sh) | Retained pipeline / delivery | 1 |
 | [scripts/runners/global_ocean_biogeochemistry_hindcast/run_climatology_window.sh](../scripts/runners/global_ocean_biogeochemistry_hindcast/run_climatology_window.sh) | Retained pipeline / delivery | 1 |
 | [scripts/runners/global_ocean_biogeochemistry_hindcast/run_temporal_aggregate_regrid.sh](../scripts/runners/global_ocean_biogeochemistry_hindcast/run_temporal_aggregate_regrid.sh) | Retained pipeline / delivery | 1 |
@@ -156,12 +156,12 @@ This is a conservative candidate screen, not a complete semantic call graph.
 | `scripts/bash/bgc_monthly_download.slurm.sh` | `fetch_month` | 2 | Retained |
 | `scripts/bash/download_GLORYS_parallel.sh` | `tidy_nested_if_any` | 2 | Retained |
 | `scripts/bash/download_GLORYS_parallel.sh` | `fetch_month` | 2 | Retained |
-| `scripts/bash/download_cesmle_list_and_get.sh` | `list_member_files` | 1 | Retained |
-| `scripts/bash/download_cesmle_list_and_get.sh` | `grab_if_needed` | 1 | Retained |
-| `scripts/bash/download_cesmle_list_parallel-hist.sh` | `http_ok` | 1 | Retained |
-| `scripts/bash/download_cesmle_list_parallel-hist.sh` | `download_one` | 3 | Retained |
-| `scripts/bash/download_cesmle_list_parallel-proj.sh` | `http_ok` | 1 | Retained |
-| `scripts/bash/download_cesmle_list_parallel-proj.sh` | `download_one` | 3 | Retained |
+| `legacy/deprecated/scripts/bash/download_cesmle_list_and_get.sh` | `list_member_files` | 1 | Archived CESM reproduction on 2026-09-15 |
+| `legacy/deprecated/scripts/bash/download_cesmle_list_and_get.sh` | `grab_if_needed` | 1 | Archived CESM reproduction on 2026-09-15 |
+| `legacy/deprecated/scripts/bash/download_cesmle_list_parallel-hist.sh` | `http_ok` | 1 | Archived CESM reproduction on 2026-09-15 |
+| `legacy/deprecated/scripts/bash/download_cesmle_list_parallel-hist.sh` | `download_one` | 3 | Archived CESM reproduction on 2026-09-15 |
+| `legacy/deprecated/scripts/bash/download_cesmle_list_parallel-proj.sh` | `http_ok` | 1 | Archived CESM reproduction on 2026-09-15 |
+| `legacy/deprecated/scripts/bash/download_cesmle_list_parallel-proj.sh` | `download_one` | 3 | Archived CESM reproduction on 2026-09-15 |
 | `scripts/bash/process_esgf_wget_scripts.sh` | `usage` | 4 | Retained |
 | `scripts/bash/process_esgf_wget_scripts.sh` | `log` | 10 | Retained |
 | `scripts/bash/process_esgf_wget_scripts.sh` | `require_commands` | 1 | Retained |
@@ -184,10 +184,10 @@ This is a conservative candidate screen, not a complete semantic call graph.
 | `scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh` | `fill_slice_distance_weighted` | 2 | Retained |
 | `scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh` | `fill_slice_require_complete` | 1 | Retained |
 | `scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh` | `finite_wet_neighbors` | 2 | Retained |
-| `scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh` | `glorys_var_for_cesm_var` | 1 | Retained |
-| `scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh` | `realization_for_member_tag` | 1 | Retained |
-| `scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh` | `process_one_anomaly_file` | 1 | Retained |
-| `scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh` | `process_window` | 2 | Retained |
+| `legacy/deprecated/scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh` | `glorys_var_for_cesm_var` | 1 | Archived CESM reproduction on 2026-09-15 |
+| `legacy/deprecated/scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh` | `realization_for_member_tag` | 1 | Archived CESM reproduction on 2026-09-15 |
+| `legacy/deprecated/scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh` | `process_one_anomaly_file` | 1 | Archived CESM reproduction on 2026-09-15 |
+| `legacy/deprecated/scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh` | `process_window` | 2 | Archived CESM reproduction on 2026-09-15 |
 | `scripts/core/climatology_window_from_monthly_files.slurm.sh` | `pick_main_var` | 1 | Retained |
 | `scripts/core/delta_from_climatologies.slurm.sh` | `pick_main_var` | 2 | Retained |
 | `scripts/core/temporal_aggregate_regrid.slurm.sh` | `detect_gridtype` | 2 | Retained |
@@ -212,8 +212,8 @@ This is a conservative candidate screen, not a complete semantic call graph.
 | `scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline.sh` | `member_prefix` | 2 | Archived with superseded script |
 | `scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline.sh` | `delta_dir_for_cesm_var` | 2 | Archived with superseded script |
 | `scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline.sh` | `delta_file_for_member_window` | 1 | Archived with superseded script |
-| `scripts/runners/cesm_to_glorys/run_climatology_window.sh` | `member_prefix` | 1 | Retained |
-| `scripts/runners/cesm_to_glorys/run_delta_from_climatologies.sh` | `member_prefix` | 1 | Retained |
+| `legacy/deprecated/scripts/runners/cesm_to_glorys/run_climatology_window.sh` | `member_prefix` | 1 | Archived CESM reproduction on 2026-09-15 |
+| `legacy/deprecated/scripts/runners/cesm_to_glorys/run_delta_from_climatologies.sh` | `member_prefix` | 1 | Archived CESM reproduction on 2026-09-15 |
 | `scripts/runners/downscaling/run_add_anomaly_to_trusted_baseline_with_coastal_fill.sh` | `render_template` | 4 | Retained |
 | `scripts/runners/downscaling/run_add_anomaly_to_trusted_baseline_with_coastal_fill.sh` | `anomaly_mode_for_var` | 1 | Retained |
 | `scripts/runners/glorys/run_climatology_window.sh` | `make_sbatch_extra_args` | 1 | Retained |

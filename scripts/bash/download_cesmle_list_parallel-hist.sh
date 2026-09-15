@@ -12,8 +12,9 @@
 #SBATCH --error=/home/sandbox-sparc/cesmle-ocn-fetch/logs/cesmle_hist_list_par_%j.err
 #SBATCH --chdir=/home/sandbox-sparc/cesmle-ocn-fetch
 
-# Lifecycle: historical/reproduction CESM-LE acquisition helper. Not part of the
-# current active or planned production pipeline.
+# Lifecycle:
+#   - Historical/reproduction CESM-LE acquisition helper.
+#   - Not part of the current active or planned production pipeline.
 
 set -euo pipefail
 

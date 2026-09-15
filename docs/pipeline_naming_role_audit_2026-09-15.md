@@ -138,18 +138,16 @@ not apply to output directory names or product filenames.
 | IPCC/ESGF R discovery/fetch scripts in `scripts/R/` and `scripts/lib/` | Keep. | None. | Names are source-specific and accurate. | No approval needed for keeping. |
 | GLORYS/BGC/ESGF acquisition helpers in `scripts/bash/` | Keep, except CESM-LE helpers above. | None. | Names describe data acquisition or storage-layout utilities. | No approval needed for keeping. |
 
-## Concrete next pass
+## Header clarification pass
 
-The next implementation pass, if you approve it, should be narrow and mechanical:
+Completed as comment-only cleanup:
 
-1. Add or tighten headers in CESM-specific scripts so they clearly say
-   historical/reproduction and not current production.
-2. Add or tighten the header in
-   `scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh`
-   so it explains the active trusted-reference role while keeping the filename
-   unchanged.
-3. Decide whether to archive the CESM-specific paths in one controlled commit.
-   This is the first point where files would actually move.
+1. CESM-specific scripts carry a historical/reproduction lifecycle marker and say
+   they are not part of the current active or planned production pipeline.
+2. `scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh`
+   carries the active trusted-reference final-addition wrapper description while
+   keeping the filename unchanged.
 
 No active script or active `scripts/runners/` directory rename is recommended for
-this release.
+this release. The next possible step that would move files is a separately
+approved CESM archival pass.

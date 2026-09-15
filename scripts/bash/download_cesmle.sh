@@ -10,8 +10,9 @@
 #SBATCH --output=cesmle_dl_%j.out
 #SBATCH --error=cesmle_dl_%j.err
 
-# Lifecycle: historical/reproduction CESM-LE acquisition helper. Not part of the
-# current active or planned production pipeline.
+# Lifecycle:
+#   - Historical/reproduction CESM-LE acquisition helper.
+#   - Not part of the current active or planned production pipeline.
 
 set -euo pipefail
 

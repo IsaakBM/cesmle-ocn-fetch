@@ -26,18 +26,25 @@ Excluded:
 
 ## Summary recommendation
 
-Do not do a broad rename before freshness/provenance. Most current script names
-are understandable. The only names that need action before provenance are
-documentation/header clarifications around active versus historical roles.
+Do not do a broad rename. Most current script names are understandable and the
+active paths are now protected by the robustness/freshness work. The naming
+cleanup should be narrow: keep active runner names stable, clarify historical
+CESM/RCP85 scripts, and only archive obsolete CESM-specific entry points after a
+separate explicit approval.
 
 Recommended next pass:
 
-1. Update script headers and README wording so CESM/RCP85 scripts are clearly
-   historical/reproduction, not current production.
-2. Clarify the active role of `scripts/runners/ipcc_esgf_to_hindcast/` without
-   renaming it yet.
-3. Keep active runner paths stable until freshness/provenance is implemented.
-4. Consider later archival of CESM-specific scripts only after explicit approval.
+1. Keep active IPCC/ESGF, GLORYS, BGC hindcast, downscaling, and product runner
+   names as-is.
+2. Keep `scripts/runners/ipcc_esgf_to_hindcast/` as-is for this release, because
+   it is an active wrapper used by callers and runbooks. Its header should carry
+   the clearer description: IPCC/ESGF to trusted-reference final-addition wrapper.
+3. Treat `scripts/runners/cesm_to_glorys/`, `scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh`,
+   and `scripts/bash/download_cesmle*.sh` as historical/reproduction code, not
+   current production.
+4. If you approve an implementation pass, archive CESM-specific scripts in one
+   controlled commit with references updated, instead of renaming active pipeline
+   scripts piecemeal.
 
 ## Runner directory names
 
@@ -107,27 +114,42 @@ Recommended next pass:
 | `scripts/bash/archive_sb5_legacy_storage_roots.sh`, `assess_sb5_storage_migration.sh`, `prepare_sb5_storage_layout.sh` | Storage utility names are acceptable. | Keep. | Documentation only. |
 | `scripts/tools/test_climatology_monthly_coverage.py`, `test_pipeline_safeguards.py` | Test names are acceptable. | Keep. | Documentation only. |
 
+## Final rename/archive decision table
+
+This is the decision table for script names and `scripts/runners/` names. It does
+not apply to output directory names or product filenames.
+
+| Current name | Decision | If changed later | Why | Required approval level |
+| --- | --- | --- | --- | --- |
+| `scripts/runners/glorys/` | Keep. | None. | Clear source-specific reanalysis runner name. | No approval needed for keeping. |
+| `scripts/runners/global_ocean_biogeochemistry_hindcast/` | Keep. | None. | Long but explicit; matches the BGC hindcast source. | No approval needed for keeping. |
+| `scripts/runners/ipcc_esgf/` | Keep. | None. | Clear acquisition/preparation/delta stage for IPCC/ESGF models. | No approval needed for keeping. |
+| `scripts/runners/downscaling/` | Keep. | None. | Names the stage/action, not an output root. | No approval needed for keeping. |
+| `scripts/runners/products/` | Keep. | None. | Clear home for final products, derived products, exports, and audits. | No approval needed for keeping. |
+| `scripts/runners/ipcc_esgf_to_hindcast/` | Keep for this release. | Optional later rename to `ipcc_esgf_to_trusted_reference/` only if all callers and runbooks are changed together. | Current name is slightly narrow because variables route to GLORYS or BGC hindcast trusted baselines, but it is active and already referenced. | Architectural/refactoring approval if renamed. |
+| `scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh` | Keep for this release. | Optional later rename together with the directory. | Active final-addition wrapper; renaming alone would add breakage risk without changing science. | Architectural/refactoring approval if renamed. |
+| `scripts/runners/cesm_to_glorys/` | Archive later if approved. | Move as a group to a legacy/deprecated location, or keep in place with historical headers. | CESM/RCP85 is no longer part of current or planned production. | Safe/non-scientific cleanup approval before moving. |
+| `scripts/runners/cesm_to_glorys/*.sh` | Archive later with the directory if approved. | Move as a group; do not rename individual files first. | These are historical/reproduction launchers. | Safe/non-scientific cleanup approval before moving. |
+| `scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh` | Archive later with CESM scripts if approved. | Move with CESM legacy code. | CESM-specific worker is no longer active production. | Safe/non-scientific cleanup approval before moving. |
+| `scripts/bash/download_cesmle*.sh` | Archive later with CESM scripts if approved. | Move with CESM legacy code. | CESM-LE acquisition scripts are no longer active production. | Safe/non-scientific cleanup approval before moving. |
+| `scripts/runners/other_model/` | Remove later if approved. | Delete placeholder directory. | Empty placeholder with only `.gitkeep`; not part of the current pipeline. | Safe/non-scientific cleanup approval before deleting. |
+| Generic core workers in `scripts/core/` | Keep. | None. | Names describe reusable operations. | No approval needed for keeping. |
+| Product/export/audit tools in `scripts/tools/` | Keep. | None. | Names match actions and are used by active product runners. | No approval needed for keeping. |
+| IPCC/ESGF R discovery/fetch scripts in `scripts/R/` and `scripts/lib/` | Keep. | None. | Names are source-specific and accurate. | No approval needed for keeping. |
+| GLORYS/BGC/ESGF acquisition helpers in `scripts/bash/` | Keep, except CESM-LE helpers above. | None. | Names describe data acquisition or storage-layout utilities. | No approval needed for keeping. |
+
 ## Concrete next pass
 
-The next safe implementation pass should only update prose and comments:
+The next implementation pass, if you approve it, should be narrow and mechanical:
 
-- README sections that still describe CESM as current production should say
-  historical/reproduction.
-- CESM-specific script headers should say historical/reproduction and not active
-  production.
-- `scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh`
-  should have a clearer header explaining that it is the active IPCC/ESGF
-  final-addition wrapper and that it routes variables to trusted GLORYS or
-  hindcast baselines.
+1. Add or tighten headers in CESM-specific scripts so they clearly say
+   historical/reproduction and not current production.
+2. Add or tighten the header in
+   `scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh`
+   so it explains the active trusted-reference role while keeping the filename
+   unchanged.
+3. Decide whether to archive the CESM-specific paths in one controlled commit.
+   This is the first point where files would actually move.
 
-No script or directory rename is recommended before freshness/provenance.
-
-## Later optional changes
-
-Only after review and explicit approval:
-
-- Move CESM-specific runners and CESM-specific core/download scripts to
-  `legacy/deprecated/`.
-- Remove `scripts/runners/other_model/` if a placeholder is no longer useful.
-- Consider renaming `scripts/runners/ipcc_esgf_to_hindcast/` only if all callers,
-  runbooks, and cluster commands are updated together.
+No active script or active `scripts/runners/` directory rename is recommended for
+this release.

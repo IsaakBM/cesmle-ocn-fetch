@@ -27,6 +27,8 @@ RESOLUTION="${RESOLUTION:-0p05}"
 PRODUCT_FAMILIES="${PRODUCT_FAMILIES:-layers depths}"
 MEMBER="${MEMBER:-001}"
 PHYSICAL_VARS="${PHYSICAL_VARS:-thetao so uo}"
+# Raster products only. Provenance JSON sidecars stay with reproducibility
+# archives and are not staged for viewer/sample delivery.
 EXTENSIONS="${EXTENSIONS:-tif tiff}"
 DRY_RUN="${DRY_RUN:-yes}"
 OVERWRITE="${OVERWRITE:-yes}"

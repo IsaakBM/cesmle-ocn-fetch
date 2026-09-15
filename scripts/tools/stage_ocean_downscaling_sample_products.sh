@@ -49,8 +49,10 @@ shopt -s nullglob
 #                         (default: 001)
 #   PHYSICAL_VARS       : retained for compatibility with older runners
 #                         (default: thetao so uo)
-#   EXTENSIONS          : space-separated filename extensions to copy
-#                         (default: tif tiff)
+#   EXTENSIONS          : space-separated raster filename extensions to copy
+#                         (default: tif tiff). Provenance sidecars
+#                         (*.provenance.json) are reproducibility metadata and
+#                         are not staged for viewer/sample delivery.
 #   DRY_RUN             : yes | no
 #                         yes -> print planned copies without writing files
 #                         no  -> copy files
@@ -113,6 +115,15 @@ case "${OVERWRITE}" in
     exit 1
     ;;
 esac
+
+for extension in ${EXTENSIONS}; do
+  case "${extension}" in
+    json|provenance.json|*.json)
+      echo "ERROR: EXTENSIONS is for raster products only; do not stage provenance JSON sidecars here."
+      exit 1
+      ;;
+  esac
+done
 
 case "${STAGE_MANIFESTS}" in
   yes|no) ;;

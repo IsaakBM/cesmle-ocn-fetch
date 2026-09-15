@@ -2016,6 +2016,8 @@ Notes:
 - this is a copy-only staging step for viewer deployment tests
 - it reads from the layer, pelagic, and individual-depth GeoTIFF trees
 - it only stages `0p05` products
+- it stages raster products only; `*.provenance.json` sidecars are kept as
+  reproducibility metadata and are not copied into the viewer/sample tree
 - baseline outputs keep the simple `baseline/<variable>/<resolution>` layout;
   manifests mark these rows as `model=baseline`, `realization=baseline`, and
   `scenario=baseline` for the Shiny app

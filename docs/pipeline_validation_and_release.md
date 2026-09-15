@@ -234,6 +234,12 @@ sample-staging override semantics. Existing historical products are not deleted.
 Downstream ensemble exports remain supported; ensemble construction and current-speed
 policies remain unchanged.
 
+Provenance sidecars named `*.provenance.json` are metadata receipts for
+reproducibility and rerun freshness checks. Keep them with publication or archival
+reproducibility bundles when desired, but do not treat them as primary products.
+Viewer/sample staging copies raster products and filtered manifests only; it
+rejects JSON sidecars in `EXTENSIONS` to avoid accidental product delivery.
+
 Prepare an independently reviewed expected-file list for the release: one path
 relative to the curated product root per line. Do not derive this list solely from
 files that already exist; that would miss absent products.

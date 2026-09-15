@@ -6,6 +6,10 @@
 #  (ibrito@conservation.org)
 # ============================================================================== 
 #
+#  Lifecycle:
+#    - Historical/reproduction code for the CESM/RCP85 branch.
+#    - Not part of the current active or planned production pipeline.
+#
 #  Purpose:
 #    - For one CESM source variable, loop over all regridded 0.05 degree member
 #      anomaly files for 2050-2060 and 2090-2100

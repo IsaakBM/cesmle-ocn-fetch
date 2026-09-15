@@ -34,7 +34,7 @@ The easiest way to understand the repository is to read it in this order:
    - GLORYS baseline
    - hindcast baseline
    - IPCC/ESGF to hindcast downscaling
-   - CESM to GLORYS downscaling
+   - historical CESM to GLORYS reproduction workflow
 4. **Curated product pipeline**
    - organize final products
    - create fine layers
@@ -77,7 +77,7 @@ The current scientific branches are:
   - adds IPCC/ESGF change fields to the configured trusted baseline
     (`GLORYS` for physics/sea-ice and hindcast for BGC)
 - `cesm_to_glorys/`
-  - adds CESM member change fields to the GLORYS baseline
+  - historical/reproduction runner family for the retired CESM/RCP85 branch
 
 The current CMIP6/IPCC expansion targets five first-member model branches:
 `CNRM-ESM2-1`, `IPSL-CM6A-LR`, `MPI-ESM1-2-HR`, `MPI-ESM1-2-LR`, and
@@ -411,6 +411,10 @@ python3 scripts/tools/test_pipeline_safeguards.py
 
 The [September 2026 code audit](docs/code_lifecycle_audit_2026-09-12.md) records
 script and function coverage, retirement decisions, and validation limits.
+The [September 15 naming and role audit](docs/pipeline_naming_role_audit_2026-09-15.md)
+records the updated sequence before freshness/provenance: first reconcile active
+names and roles, then add source/settings fingerprints, then consider later
+cleanup or archival.
 Superseded non-coastal addition, patch-style hindcast coastal filling, and the
 local CESM download experiment are now under
 [legacy/deprecated](legacy/deprecated/README.md). Use the coastal-fill production
@@ -609,7 +613,8 @@ Reusable worker scripts. These do the actual processing.
   - writes the native output and can optionally regrid a final delivery copy
 
 - [add_cesm_members_to_glorys_with_coastal_fill.slurm.sh](scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh)
-  - CESM to GLORYS orchestration worker for the coastal-fill branch
+  - historical/reproduction CESM to GLORYS orchestration worker for the
+    coastal-fill branch
   - submits one Slurm job per physical variable while processing many CESM
     member anomaly files inside that job
   - delegates the actual per-file anomaly-addition work to
@@ -877,8 +882,8 @@ represented by:
 - [delta_from_climatologies.slurm.sh](scripts/core/delta_from_climatologies.slurm.sh)
 - [add_anomaly_to_baseline_with_coastal_fill.slurm.sh](scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh)
 
-The original CESM-to-GLORYS production scripts for these later stages are still
-kept in [legacy/scripts/slurm](legacy/scripts/slurm),
+The original CESM-to-GLORYS scripts for these later stages are still kept for
+historical reference in [legacy/scripts/slurm](legacy/scripts/slurm),
 including:
 
 - [cesm_member_deltas_0p05.slurm.sh](legacy/scripts/slurm/cesm_member_deltas_0p05.slurm.sh)
@@ -960,7 +965,7 @@ Modern CESM runners now live in:
 - [run_delta_from_climatologies.sh](scripts/runners/cesm_to_glorys/run_delta_from_climatologies.sh)
 - [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline_with_coastal_fill.sh)
 
-Current CESM logic in the new runner architecture:
+Historical CESM logic in the new runner architecture:
 
 1. regrid CESM monthly POP time-series to `1 degree`
 2. vertically interpolate them to GLORYS depth levels
@@ -972,13 +977,13 @@ Current CESM logic in the new runner architecture:
 
 Important notes:
 
-- the current modern CESM runner family is centered on the `rcp85` branch,
+- the retained CESM runner family is centered on the `rcp85` branch,
   matching the old downstream CESM workflow organization
 - the add-to-baseline stage currently preserves the old variable mapping:
   - `TEMP -> thetao`
   - `SALT -> so`
   - `UVEL -> uo`
-- final CESM downscaled products now use the same provenance order as the
+- retained CESM downscaled products use the same provenance order as the
   IPCC/ESGF branch:
   `/home/SB5/downscaled/cesm_f09_g16/<member>/rcp85/<var>/0p05/<window>/`
   where `<member>` is derived from the CESM filename, for example `001`
@@ -1458,12 +1463,12 @@ Runner layout for this coastal-fill branch:
   [run_add_anomaly_to_trusted_baseline_with_coastal_fill.sh](scripts/runners/downscaling/run_add_anomaly_to_trusted_baseline_with_coastal_fill.sh)
 - IPCC/ESGF to hindcast wrapper:
   [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh)
-- CESM to GLORYS wrapper:
+- historical CESM to GLORYS wrapper:
   [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/cesm_to_glorys/run_add_anomaly_to_baseline_with_coastal_fill.sh)
 
 Important CESM/GLORYS note:
 
-- the CESM -> GLORYS coastal-fill path now uses a dedicated variable-level
+- the historical CESM -> GLORYS coastal-fill path uses a dedicated variable-level
   worker:
   [add_cesm_members_to_glorys_with_coastal_fill.slurm.sh](scripts/core/add_cesm_members_to_glorys_with_coastal_fill.slurm.sh)
 - this restores the legacy CESM -> GLORYS launch behavior:
@@ -1471,7 +1476,7 @@ Important CESM/GLORYS note:
   job
 - this is intentionally different from the hindcast coastal-fill wrapper,
   which submits one job per variable-window combination
-- the current CESM coastal-fill worker writes member-aware outputs under:
+- the retained CESM coastal-fill worker writes member-aware outputs under:
   `/home/SB5/downscaled/cesm_f09_g16/<member>/rcp85/<var>/0p05/<window>/`
   while preserving the full original CESM member string in each filename
 
@@ -1480,8 +1485,8 @@ Why the runner structure is split this way:
 - `scripts/runners/downscaling/` holds the general configurable launcher
 - `scripts/runners/ipcc_esgf_to_hindcast/` keeps the current IPCC/ESGF ->
   hindcast production entrypoint
-- `scripts/runners/cesm_to_glorys/` keeps the current CESM -> GLORYS
-  production entrypoint
+- `scripts/runners/cesm_to_glorys/` keeps the historical CESM -> GLORYS
+  reproduction entrypoint
 
 This keeps the method generic while leaving the day-to-day launchers in the
 source-to-target workflow directories where they are easiest to remember.
@@ -1510,7 +1515,7 @@ Current source roots:
   `/home/SB5/downscaled/<model>/<realization>/<scenario>/<var>/...`
 - for current IPCC/ESGF biogeochemistry products, this includes paths such as
   `/home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2/ssp585/chl/...`
-- for current CESM physical products, this includes paths such as
+- retained CESM physical products use paths such as
   `/home/SB5/downscaled/cesm_f09_g16/001/rcp85/thetao/...`
 - `/home/SB5/downscaled_rcp85/<var>/...` is retained only as a legacy fallback
   while older outputs are still present
@@ -2253,7 +2258,7 @@ Examples:
 - additional current future windows include:
   `/home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2/ssp585/chl/0p05/2030-2040/`
   and `/home/SB5/downscaled/CNRM-ESM2-1/r1i1p1f2/ssp585/chl/0p05/2090-2100/`
-- current CESM final downscaled path:
+- retained CESM final downscaled path:
   `/home/SB5/downscaled/cesm_f09_g16/001/rcp85/thetao/0p05/2050-2060/`
 
 ## Expected Cluster Paths

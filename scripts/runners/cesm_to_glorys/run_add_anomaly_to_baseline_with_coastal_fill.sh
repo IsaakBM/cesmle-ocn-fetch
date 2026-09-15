@@ -5,6 +5,10 @@
 #  This code was created by Isaac Brito-Morales
 #  (ibrito@conservation.org)
 # ==============================================================================
+#
+#  Lifecycle:
+#    - Historical/reproduction runner for the CESM/RCP85 branch.
+#    - Not part of the current active or planned production pipeline.
 
 set -euo pipefail
 

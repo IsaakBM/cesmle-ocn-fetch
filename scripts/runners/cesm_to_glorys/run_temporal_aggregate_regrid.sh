@@ -5,6 +5,10 @@
 #  This code was created by Isaac Brito-Morales
 #  (ibrito@conservation.org)
 # ==============================================================================
+#
+#  Lifecycle:
+#    - Historical/reproduction runner for the CESM/RCP85 branch.
+#    - Not part of the current active or planned production pipeline.
 
 set -euo pipefail
 
@@ -16,7 +20,7 @@ set -euo pipefail
 #   - CESM POP files are already monthly time-series files.
 #   - This runner regrids them to a regular 1 degree POP-style global grid
 #     (360 x 180).
-#   - Downstream CESM climatology/delta logic is currently centered on the
+#   - Downstream CESM climatology/delta logic is retained around the
 #     rcp85 branch, but this runner can also submit historical regrids.
 # ==============================================================================
 

@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  Compatibility wrapper for the generic trusted-baseline coastal-fill runner
+#  IPCC/ESGF final-addition wrapper for trusted reference baselines
 #
 #  This code was created by Isaac Brito-Morales
 #  (ibrito@conservation.org)
 # ==============================================================================
+
+# This is an active production wrapper. It discovers IPCC/ESGF delta products and
+# routes each variable to the trusted reference family used by the current
+# pipeline: GLORYS for physical/ice variables and the BGC hindcast for
+# biogeochemical variables. The directory name is retained for compatibility.
 
 set -euo pipefail
 

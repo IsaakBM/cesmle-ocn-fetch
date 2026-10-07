@@ -22,6 +22,7 @@
 """Read-only source-coverage audit for the climatology expansion plan."""
 
 import collections
+import concurrent.futures
 import csv
 import os
 from pathlib import Path
@@ -100,14 +101,26 @@ MODELS = split_env(
 SCENARIOS = split_env("SCENARIOS", ("historical", "ssp126", "ssp245", "ssp585"))
 IPCC_VARS = split_env(
     "IPCC_VARS",
-    ("thetao", "so", "ph", "o2", "chl", "uo", "vo", "zooc", "zos", "mlotst", "siconc"),
+    ("thetao", "so", "ph", "o2", "chl", "uo", "vo", "zos", "mlotst", "siconc"),
 )
 GLORYS_VARS = split_env(
-    "GLORYS_VARS", ("bottomT", "mlotst", "so", "thetao", "uo", "vo", "zos", "siconc")
+    "GLORYS_VARS", ("mlotst", "so", "thetao", "uo", "vo", "zos", "siconc")
 )
-HINDCAST_VARS = split_env(
-    "HINDCAST_VARS", ("chl", "no3", "po4", "si", "o2", "nppv", "fe", "ph", "phyc")
-)
+HINDCAST_VARS = split_env("HINDCAST_VARS", ("chl", "o2", "ph"))
+
+VERIFY_RAW_TIMESTAMPS = os.environ.get("VERIFY_RAW_TIMESTAMPS", "no").lower() in {
+    "yes",
+    "true",
+    "1",
+}
+try:
+    AUDIT_WORKERS = int(
+        os.environ.get("AUDIT_WORKERS", os.environ.get("SLURM_CPUS_PER_TASK", "4"))
+    )
+except ValueError:
+    raise SystemExit("ERROR: AUDIT_WORKERS must be a positive integer")
+if AUDIT_WORKERS < 1:
+    raise SystemExit("ERROR: AUDIT_WORKERS must be a positive integer")
 
 VARS_2D = {"zos", "mlotst", "siconc"}
 SUPPORTED_CALENDARS = {
@@ -255,21 +268,25 @@ def inspect_paths(paths, start, end):
     calendars = set()
     unreadable = []
 
-    for path in relevant:
-        months, calendar, error = inspect_netcdf(path)
-        if error:
-            unreadable.append("{}: {}".format(path, error))
-            continue
-        calendars.add(calendar)
-        for value in months:
-            if value in expected:
-                occurrences[value].append(str(path))
+    # These metadata reads are independent and primarily filesystem-bound. A
+    # small pool reduces process wait time without loading scientific fields.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=AUDIT_WORKERS) as pool:
+        for path, result in zip(relevant, pool.map(inspect_netcdf, relevant)):
+            months, calendar, error = result
+            if error:
+                unreadable.append("{}: {}".format(path, error))
+                continue
+            calendars.add(calendar)
+            for value in months:
+                if value in expected:
+                    occurrences[value].append(str(path))
 
     missing = sorted(expected - set(occurrences))
     duplicates = sorted(value for value, sources in occurrences.items() if len(sources) > 1)
     normalized = {SUPPORTED_CALENDARS.get(value, "unsupported:{}".format(value)) for value in calendars}
 
     return {
+        "method": "decoded_netcdf_timestamps",
         "files": relevant,
         "timestamp_count": sum(len(sources) for sources in occurrences.values()),
         "unique_month_count": len(occurrences),
@@ -280,6 +297,40 @@ def inspect_paths(paths, start, end):
         "unreadable": unreadable,
         "complete": not missing and not duplicates and not unreadable and len(normalized) == 1
         and not next(iter(normalized), "").startswith("unsupported:"),
+    }
+
+
+def inspect_filename_paths(paths, start, end):
+    """Infer raw CMIP coverage from standard filename time ranges."""
+    relevant = overlapping_files(sorted(set(paths)), start, end)
+    expected = expected_months(start, end)
+    occurrences = collections.defaultdict(list)
+    unparsed = []
+
+    for path in relevant:
+        encoded = file_range(path)
+        if encoded is None:
+            unparsed.append("{}: missing YYYYMM-YYYYMM filename range".format(path))
+            continue
+        first, last = encoded
+        for value in range(max(first, min(expected)), min(last, max(expected)) + 1):
+            if value in expected:
+                occurrences[value].append(str(path))
+
+    missing = sorted(expected - set(occurrences))
+    duplicates = sorted(value for value, sources in occurrences.items() if len(sources) > 1)
+
+    return {
+        "method": "filename_range_inference",
+        "files": relevant,
+        "timestamp_count": sum(len(sources) for sources in occurrences.values()),
+        "unique_month_count": len(occurrences),
+        "missing": missing,
+        "duplicates": duplicates,
+        "calendars": [],
+        "normalized_calendars": [],
+        "unreadable": unparsed,
+        "complete": not missing and not duplicates and not unparsed,
     }
 
 
@@ -435,6 +486,7 @@ def add_coverage(record, prefix, coverage, directories):
     """Add one actual-file coverage summary to a report row."""
     record.update(
         {
+            prefix + "_coverage_method": coverage["method"],
             prefix + "_directories": format_list(directories),
             prefix + "_file_count": len(coverage["files"]),
             prefix + "_timestamp_count": coverage["timestamp_count"],
@@ -485,9 +537,26 @@ def audit_ipcc(manifest_rows):
                     prepared_files, existing_prepared_dirs = find_files(prepared_dirs, pattern)
                     raw_files, existing_raw_dirs = find_files(raw_dirs, pattern)
 
+                    print(
+                        "[CMIP6] model={} member={} scenario={} variable={} "
+                        "prepared_files={} raw_files={}".format(
+                            model,
+                            member,
+                            scenario,
+                            variable,
+                            len(prepared_files),
+                            len(raw_files),
+                        ),
+                        file=sys.stderr,
+                        flush=True,
+                    )
+
                     for label, start, end in WINDOWS[window_group]:
                         prepared = inspect_paths(prepared_files, start, end)
-                        raw = inspect_paths(raw_files, start, end)
+                        if VERIFY_RAW_TIMESTAMPS:
+                            raw = inspect_paths(raw_files, start, end)
+                        else:
+                            raw = inspect_filename_paths(raw_files, start, end)
                         available = manifest_coverage(member_rows, start, end)
                         record = base_record(
                             "cmip6", model, member, scenario, variable, label, start, end
@@ -534,13 +603,22 @@ def audit_baseline(dataset, root, variables, stage):
     for variable in variables:
         directory = root / variable / stage
         files, existing_dirs = find_files([directory], "*.nc")
+        print(
+            "[BASELINE] dataset={} variable={} prepared_files={}".format(
+                dataset, variable, len(files)
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
         for label, start, end in WINDOWS["historical"]:
             coverage = inspect_paths(files, start, end)
             record = base_record(
                 dataset, dataset, "baseline", "historical", variable, label, start, end
             )
             add_coverage(record, "prepared", coverage, existing_dirs)
-            add_coverage(record, "raw", inspect_paths([], start, end), [])
+            empty_raw = inspect_filename_paths([], start, end)
+            empty_raw["method"] = "not_applicable"
+            add_coverage(record, "raw", empty_raw, [])
             record.update(
                 {
                     "manifest_row_count": "",
@@ -571,6 +649,7 @@ FIELDNAMES = (
     "preceding_december",
     "expected_month_count",
     "classification",
+    "prepared_coverage_method",
     "prepared_directories",
     "prepared_file_count",
     "prepared_timestamp_count",
@@ -580,6 +659,7 @@ FIELDNAMES = (
     "prepared_calendars",
     "prepared_unreadable",
     "prepared_complete",
+    "raw_coverage_method",
     "raw_directories",
     "raw_file_count",
     "raw_timestamp_count",
@@ -617,6 +697,13 @@ def main():
     print("  GLORYS         : {}".format(GLORYS_ROOT), file=sys.stderr)
     print("  Hindcast       : {}".format(HINDCAST_ROOT), file=sys.stderr)
     print("  Manifest       : {}".format(MANIFEST), file=sys.stderr)
+    print("  Workers        : {}".format(AUDIT_WORKERS), file=sys.stderr)
+    print(
+        "  Raw timestamps : {}".format(
+            "decoded" if VERIFY_RAW_TIMESTAMPS else "filename ranges"
+        ),
+        file=sys.stderr,
+    )
 
     records = []
     records.extend(audit_ipcc(manifest_rows))

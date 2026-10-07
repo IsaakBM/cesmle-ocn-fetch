@@ -29,7 +29,7 @@ TOOL_SCRIPT="${SCRIPT_DIR}/../../tools/audit_climatology_source_coverage.py"
 #   PARTITION      : Slurm partition (default: grit_nodes)
 #   CPUS_PER_TASK  : requested CPUs/metadata workers (default: 4)
 #   MEMORY         : requested memory (default: 8G)
-#   WALLTIME       : requested walltime (default: 02:00:00)
+#   WALLTIME       : requested walltime (default: 04:00:00)
 #
 # The tool also accepts environment overrides for roots and selections:
 #   IPCC_DOWNLOAD_ROOT, IPCC_LEGACY_DOWNLOAD_ROOT, IPCC_MONTHLY_ROOT,
@@ -41,7 +41,7 @@ LOG_DIR="${LOG_DIR:-${REPO_ROOT}/logs}"
 PARTITION="${PARTITION:-grit_nodes}"
 CPUS_PER_TASK="${CPUS_PER_TASK:-4}"
 MEMORY="${MEMORY:-8G}"
-WALLTIME="${WALLTIME:-02:00:00}"
+WALLTIME="${WALLTIME:-04:00:00}"
 
 if [[ ! -x "${TOOL_SCRIPT}" ]]; then
   echo "ERROR: Audit tool is missing or not executable: ${TOOL_SCRIPT}" >&2

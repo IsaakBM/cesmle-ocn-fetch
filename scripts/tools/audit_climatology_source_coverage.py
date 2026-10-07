@@ -395,6 +395,18 @@ def find_files(directories, pattern):
     return sorted(set(files)), existing
 
 
+def find_preferred_files(directories, pattern, require_match):
+    """Use the first current/legacy directory accepted by pipeline precedence."""
+    for directory in directories:
+        if not directory.is_dir():
+            continue
+        files = sorted(path for path in directory.glob(pattern) if path.is_file())
+        if require_match and not files:
+            continue
+        return files, [directory]
+    return [], []
+
+
 # ==============================================================================
 # Expected CMIP groups and path resolution
 # ==============================================================================
@@ -534,8 +546,16 @@ def audit_ipcc(manifest_rows):
                             variable,
                         )
                     )
-                    prepared_files, existing_prepared_dirs = find_files(prepared_dirs, pattern)
-                    raw_files, existing_raw_dirs = find_files(raw_dirs, pattern)
+                    # Match the live discovery policy: use the member-aware
+                    # canonical stage when it exists, and consult older layouts
+                    # only as fallbacks. Never merge a canonical tree with its
+                    # migration symlink or shadowed memberless predecessor.
+                    prepared_files, existing_prepared_dirs = find_preferred_files(
+                        prepared_dirs, pattern, require_match=False
+                    )
+                    raw_files, existing_raw_dirs = find_preferred_files(
+                        raw_dirs, pattern, require_match=True
+                    )
 
                     print(
                         "[CMIP6] model={} member={} scenario={} variable={} "

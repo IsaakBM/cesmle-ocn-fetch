@@ -69,7 +69,7 @@ jid="$(sbatch --parsable \
   --chdir="${REPO_ROOT}" \
   --output="${LOG_DIR}/audit_clim_sources_%j.out" \
   --error="${LOG_DIR}/audit_clim_sources_%j.err" \
-  --export=ALL,OUT_FILE="${OUT_FILE}" \
+  --export=ALL,REPO_ROOT="${REPO_ROOT}",OUT_FILE="${OUT_FILE}" \
   "${TOOL_SCRIPT}")"
 
 echo "Submitted climatology source-coverage audit as jobid=${jid}"

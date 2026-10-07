@@ -34,7 +34,13 @@ import sys
 # ==============================================================================
 # Configuration
 # ==============================================================================
-REPO_ROOT = Path(__file__).resolve().parents[2]
+# Slurm copies an executable job script into its spool directory before running
+# it, so __file__ no longer identifies the checkout in that execution mode. The
+# runner exports the resolved checkout root; direct invocations retain the local
+# source-path fallback.
+REPO_ROOT = Path(
+    os.environ.get("REPO_ROOT", str(Path(__file__).resolve().parents[2]))
+).resolve()
 
 IPCC_DOWNLOAD_ROOT = Path(
     os.environ.get("IPCC_DOWNLOAD_ROOT", "/home/SB5/ipcc_esgf/downloads")

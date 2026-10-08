@@ -54,6 +54,8 @@ shopt -s nullglob
 #                   yes -> replace existing outputs
 #                   no  -> keep existing outputs
 #                   (default: no)
+#   VARS          : auto or space-separated variables to include
+#                   (default: auto)
 #   FUTURE_MODELS : auto or space-separated future top-level branches to include
 #                   (default: auto)
 #   EXCLUDE_FUTURE_MODELS
@@ -80,10 +82,12 @@ OUT_ROOT="${OUT_ROOT:-${DEFAULT_OUT_ROOT}}"
 TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_depth_bins}"
 COPY_2D_FILES="${COPY_2D_FILES:-yes}"
 OVERWRITE="${OVERWRITE:-no}"
+VARS="${VARS:-auto}"
 FUTURE_MODELS="${FUTURE_MODELS:-auto}"
 # Production selection: omit retired branches; retain discovery of new models.
 EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS-cesm_f09_g16 legacy_downscaled_rcp85}"
 NPROC="${SLURM_CPUS_PER_TASK:-5}"
+read -r -a VAR_LIST <<< "${VARS}"
 read -r -a FUTURE_MODEL_LIST <<< "${FUTURE_MODELS}"
 read -r -a EXCLUDE_FUTURE_MODEL_LIST <<< "${EXCLUDE_FUTURE_MODELS}"
 
@@ -100,7 +104,7 @@ contains_word() {
 
 include_relative_path() {
   local rel_path="$1"
-  local model
+  local model variable remainder
 
   # Recover the model component when IN_ROOT is already inside a future subtree.
   # Keep rel_path used for output layout unchanged outside this filter.
@@ -112,15 +116,26 @@ include_relative_path() {
 
   case "${rel_path}" in
     baseline/*)
+      variable="${rel_path#baseline/}"
+      variable="${variable%%/*}"
+      if [[ "${VARS}" != "auto" ]] && ! contains_word "${variable}" "${VAR_LIST[@]}"; then
+        return 1
+      fi
       return 0
       ;;
     future/*)
-      model="${rel_path#future/}"
-      model="${model%%/*}"
+      remainder="${rel_path#future/}"
+      model="${remainder%%/*}"
+      remainder="${remainder#*/}" # member/statistic
+      remainder="${remainder#*/}" # scenario
+      variable="${remainder%%/*}"
       if [[ -n "${EXCLUDE_FUTURE_MODELS}" ]] && contains_word "${model}" "${EXCLUDE_FUTURE_MODEL_LIST[@]}"; then
         return 1
       fi
       if [[ "${FUTURE_MODELS}" != "auto" ]] && ! contains_word "${model}" "${FUTURE_MODEL_LIST[@]}"; then
+        return 1
+      fi
+      if [[ "${VARS}" != "auto" ]] && ! contains_word "${variable}" "${VAR_LIST[@]}"; then
         return 1
       fi
       return 0
@@ -481,6 +496,13 @@ with xr.open_dataset(infile) as ds:
                 if zdim not in coord.dims:
                     out = out.assign_coords({coord_name: coord})
 
+        # Xarray arithmetic keeps coordinate values but can discard their CF
+        # attributes. Restore those attributes so GIS software recognizes lon
+        # and lat as spatial axes and so climatology bounds remain referenced.
+        for coord_name in out.coords:
+            if coord_name in ds.coords:
+                out[coord_name].attrs = ds[coord_name].attrs.copy()
+
         out.attrs = ds.attrs.copy()
         out.attrs["depth_bin_label"] = label
         out.attrs["depth_bin_lower_m"] = float(lower)
@@ -527,6 +549,7 @@ echo "TMP DIR         : ${TMP_DIR}"
 echo "BIN SET         : ${BIN_SET}"
 echo "COPY 2D FILES   : ${COPY_2D_FILES}"
 echo "OVERWRITE       : ${OVERWRITE}"
+echo "VARS            : ${VARS}"
 echo "FUTURE MODELS   : ${FUTURE_MODELS}"
 echo "EXCLUDE FUTURE  : ${EXCLUDE_FUTURE_MODELS:-<none>}"
 echo "PARALLEL FILES  : ${NPROC}"

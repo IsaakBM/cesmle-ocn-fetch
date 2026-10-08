@@ -41,12 +41,24 @@ TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_split_bydepth}"
 MIN_DECIMALS="${MIN_DECIMALS:-3}"
 INTEGER_WIDTH="${INTEGER_WIDTH:-4}"
 COPY_2D_FILES="${COPY_2D_FILES:-yes}"
+VARS="${VARS:-auto}"
+INCLUDE_BASELINE="${INCLUDE_BASELINE:-yes}"
+INCLUDE_FUTURE="${INCLUDE_FUTURE:-yes}"
 FUTURE_MODELS="${FUTURE_MODELS:-auto}"
 # Production selection: omit retired branches; retain discovery of new models.
 EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS-cesm_f09_g16 legacy_downscaled_rcp85}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-${SBATCH_EXCLUDE:-}}"
+read -r -a VAR_LIST <<< "${VARS}"
 read -r -a FUTURE_MODEL_LIST <<< "${FUTURE_MODELS}"
 read -r -a EXCLUDE_FUTURE_MODEL_LIST <<< "${EXCLUDE_FUTURE_MODELS}"
+
+for flag_name in INCLUDE_BASELINE INCLUDE_FUTURE; do
+  flag_value="${!flag_name}"
+  if [[ "${flag_value}" != "yes" && "${flag_value}" != "no" ]]; then
+    echo "ERROR: ${flag_name} must be yes or no"
+    exit 1
+  fi
+done
 
 GEOTIFF="${GEOTIFF:-no}"
 GEOTIFF_LOWER="${GEOTIFF,,}"
@@ -92,11 +104,16 @@ contains_word() {
 
 include_subtree() {
   local subtree="$1"
-  local rel_path model
+  local rel_path model variable
 
   rel_path="${subtree#${IN_ROOT}/}"
   case "${rel_path}" in
     baseline/*)
+      variable="${rel_path#baseline/}"
+      variable="${variable%%/*}"
+      if [[ "${VARS}" != "auto" ]] && ! contains_word "${variable}" "${VAR_LIST[@]}"; then
+        return 1
+      fi
       return 0
       ;;
     future/*)
@@ -120,8 +137,12 @@ mapfile -t SUBTREES < <(
   while IFS= read -r subtree; do
     include_subtree "${subtree}" && printf '%s\n' "${subtree}"
   done < <({
-    find "${IN_ROOT}/baseline" -mindepth 1 -maxdepth 1 -type d ! -name 'tmp*' 2>/dev/null
-    find "${IN_ROOT}/future" -mindepth 1 -maxdepth 1 -type d ! -name 'tmp*' 2>/dev/null
+    if [[ "${INCLUDE_BASELINE}" == "yes" ]]; then
+      find "${IN_ROOT}/baseline" -mindepth 1 -maxdepth 1 -type d ! -name 'tmp*' 2>/dev/null
+    fi
+    if [[ "${INCLUDE_FUTURE}" == "yes" ]]; then
+      find "${IN_ROOT}/future" -mindepth 1 -maxdepth 1 -type d ! -name 'tmp*' 2>/dev/null
+    fi
   } | sort)
 )
 if (( ${#SUBTREES[@]} == 0 )); then
@@ -134,6 +155,9 @@ echo "IN ROOT          : ${IN_ROOT}"
 echo "OUT ROOT         : ${OUT_ROOT}"
 echo "MAX DEPTH M      : ${MAX_DEPTH_M:-<all>}"
 echo "COPY 2D FILES    : ${COPY_2D_FILES}"
+echo "VARS             : ${VARS}"
+echo "INCLUDE BASELINE : ${INCLUDE_BASELINE}"
+echo "INCLUDE FUTURE   : ${INCLUDE_FUTURE}"
 echo "FUTURE MODELS    : ${FUTURE_MODELS}"
 echo "EXCLUDE FUTURE   : ${EXCLUDE_FUTURE_MODELS:-<none>}"
 echo "EXCLUDE NODES    : ${EXCLUDE_NODES:-<none>}"
@@ -160,7 +184,7 @@ for subtree in "${SUBTREES[@]}"; do
       --job-name="split_${job_tag}" \
       --output="${LOG_DIR}/split_bydepth_${job_tag}_%j.out" \
       --error="${LOG_DIR}/split_bydepth_${job_tag}_%j.err" \
-      --export=ALL,IN_ROOT="${subtree}",OUT_ROOT="${out_subtree}",TMP_DIR="${tmp_subtree}",MAX_DEPTH_M="${MAX_DEPTH_M}",MIN_DECIMALS="${MIN_DECIMALS}",INTEGER_WIDTH="${INTEGER_WIDTH}",COPY_2D_FILES="${COPY_2D_FILES}",FUTURE_MODELS="${FUTURE_MODELS}",EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS}" \
+      --export=ALL,IN_ROOT="${subtree}",OUT_ROOT="${out_subtree}",TMP_DIR="${tmp_subtree}",MAX_DEPTH_M="${MAX_DEPTH_M}",MIN_DECIMALS="${MIN_DECIMALS}",INTEGER_WIDTH="${INTEGER_WIDTH}",COPY_2D_FILES="${COPY_2D_FILES}",VARS="${VARS}",FUTURE_MODELS="${FUTURE_MODELS}",EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS}" \
       "${TOOL_SCRIPT}"
   )
   echo "  submitted SUBTREE=${rel_path} as jobid=${jid}"

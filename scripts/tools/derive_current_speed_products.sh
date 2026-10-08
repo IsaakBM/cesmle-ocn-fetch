@@ -2,6 +2,13 @@
 # ==============================================================================
 #  Derive sea-water current speed from curated uo/vo products
 #
+#  This code was created by Isaac Brito-Morales
+#  (ibrito@conservation.org)
+#
+#  Please do not distribute or reuse without permission.
+#  NO GUARANTEES THAT THIS CODE IS CORRECT.
+#  Use at your own risk. Caveat emptor.
+#
 #  current_speed = sqrt(uo^2 + vo^2)
 #
 #  Inputs and outputs live inside /home/SB5/ocean_downscaling_products:
@@ -78,15 +85,61 @@ make_current_speed() {
   tmp_file="${out_file}.tmp.$$.nc"
   rm -f "${tmp_file}"
 
-  cdo -O -expr,'current_speed=sqrt(uo*uo+vo*vo)' -merge "${u_file}" "${v_file}" "${tmp_file}"
+  # A scalar speed is meaningful only when both velocity components describe
+  # the same cells. Check dimensions and coordinate values before CDO merges
+  # the files so an accidental grid/time mismatch fails explicitly.
+  python3 - "${u_file}" "${v_file}" <<'PY'
+import sys
 
-  python3 - <<PY
 import numpy as np
 import xarray as xr
 
-path = "${tmp_file}"
-start_text = "${time_start}"
-end_text = "${time_end}"
+u_path, v_path = sys.argv[1:]
+
+with xr.open_dataset(u_path) as u_ds, xr.open_dataset(v_path) as v_ds:
+    if "uo" not in u_ds:
+        raise SystemExit(f"ERROR: uo variable not found: {u_path}")
+    if "vo" not in v_ds:
+        raise SystemExit(f"ERROR: vo variable not found: {v_path}")
+
+    u = u_ds["uo"]
+    v = v_ds["vo"]
+    if u.dims != v.dims:
+        raise SystemExit(
+            f"ERROR: uo/vo dimension order differs: {u.dims!r} != {v.dims!r}"
+        )
+
+    for dim in u.dims:
+        if u.sizes[dim] != v.sizes[dim]:
+            raise SystemExit(
+                f"ERROR: uo/vo size differs for {dim}: "
+                f"{u.sizes[dim]} != {v.sizes[dim]}"
+            )
+        if dim not in u_ds.coords or dim not in v_ds.coords:
+            raise SystemExit(f"ERROR: uo/vo files lack coordinate {dim!r}")
+        u_values = np.asarray(u_ds[dim].values)
+        v_values = np.asarray(v_ds[dim].values)
+        if np.issubdtype(u_values.dtype, np.number):
+            coordinates_match = np.array_equal(
+                u_values, v_values, equal_nan=True
+            )
+        else:
+            coordinates_match = np.array_equal(u_values, v_values)
+        if not coordinates_match:
+            raise SystemExit(
+                f"ERROR: uo/vo coordinate values differ for {dim}: "
+                f"{u_path} vs {v_path}"
+            )
+PY
+
+  cdo -O -expr,'current_speed=sqrt(uo*uo+vo*vo)' -merge "${u_file}" "${v_file}" "${tmp_file}"
+
+  python3 - "${tmp_file}" "${time_start}" "${time_end}" "${u_file}" "${v_file}" <<'PY'
+import numpy as np
+import xarray as xr
+import sys
+
+path, start_text, end_text, u_file, v_file = sys.argv[1:]
 start = np.datetime64(start_text)
 end = np.datetime64(end_text)
 midpoint = start + (end - start) // 2
@@ -113,21 +166,16 @@ out.attrs["climatology_time_policy"] = (
     "time coordinate set to midpoint of current_speed climatology window; "
     "time_bnds stores the configured window bounds"
 )
+out["current_speed"].attrs.update({
+    "standard_name": "sea_water_speed",
+    "long_name": "Sea Water Current Speed",
+    "units": "m s-1",
+    "derivation": "sqrt(uo^2 + vo^2)",
+    "source_uo": u_file,
+    "source_vo": v_file,
+})
 out.to_netcdf(path, format="NETCDF4")
 PY
-
-  if command -v ncatted >/dev/null 2>&1; then
-    ncatted -O \
-      -a standard_name,current_speed,o,c,"sea_water_speed" \
-      -a long_name,current_speed,o,c,"Sea Water Current Speed" \
-      -a units,current_speed,o,c,"m s-1" \
-      -a derivation,current_speed,o,c,"sqrt(uo^2 + vo^2)" \
-      -a source_uo,current_speed,o,c,"${u_file}" \
-      -a source_vo,current_speed,o,c,"${v_file}" \
-      "${tmp_file}"
-  else
-    echo "[WARN] ncatted not found; skipping current_speed metadata annotation" >&2
-  fi
 
   mv -f "${tmp_file}" "${out_file}"
   echo "[WRITE] ${out_file}"

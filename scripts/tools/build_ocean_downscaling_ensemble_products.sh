@@ -235,7 +235,14 @@ import numpy as np
 import xarray as xr
 
 window = "${WINDOW}"
+variable = "${VAR}"
+source_path = "${SOURCE_PATHS[0]}"
 outputs = ["${mean_out}", "${sd_out}"]
+
+with xr.open_dataset(source_path) as source:
+    if variable not in source:
+        raise ValueError(f"Expected variable {variable!r} not found in {source_path}")
+    source_variable_attrs = dict(source[variable].attrs)
 
 try:
     start_year, end_year = window.split("-", 1)
@@ -251,6 +258,11 @@ midpoint = start + (end - start) // 2
 for path in outputs:
     with xr.open_dataset(path) as ds:
         out = ds.load()
+    if variable not in out:
+        raise ValueError(f"Expected variable {variable!r} not found in {path}")
+    variable_attrs = source_variable_attrs.copy()
+    variable_attrs.update(out[variable].attrs)
+    out[variable].attrs = variable_attrs
     if "time" in out.dims:
         if out.sizes["time"] != 1:
             raise ValueError(

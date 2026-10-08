@@ -1796,6 +1796,9 @@ Notes:
   - `baseline/<var>`
   - `future/<model>`
 - within each submitted job, the tool still parallelizes over files
+- `VARS`, `INCLUDE_BASELINE`, and `INCLUDE_FUTURE` can limit regeneration to
+  one variable and scope; this is useful for refreshing a derived product
+  without rebuilding every layer
 - `OVERWRITE=no` by default skips existing layer products; set
   `OVERWRITE=yes` to refresh them
 - current intervals are left-closed and right-open:
@@ -1819,6 +1822,9 @@ Notes:
   layer-range filename
 - vertical weights come from explicit bounds when present, or reconstructed
   bounds derived from the depth-center coordinate when bounds are absent
+- retained longitude, latitude, time, and other coordinates preserve their CF
+  attributes after weighted aggregation so NetCDF readers can identify the
+  spatial axes and climatology bounds
 - the tool adds output metadata including:
   - `depth_bin_label`
   - `depth_bin_lower_m`
@@ -2117,6 +2123,8 @@ Notes:
 
 - mirrors the curated `baseline/future` structure
 - each 3D NetCDF file becomes one 2D NetCDF file per depth layer
+- `VARS`, `INCLUDE_BASELINE`, and `INCLUDE_FUTURE` can restrict a run to the
+  required variables and scopes
 - `MAX_DEPTH_M` can limit exported depth centers:
   - empty or `all` exports all depths
   - `600` exports only depth centers `<= 600 m`
@@ -2146,6 +2154,13 @@ bash scripts/runners/products/run_split_ocean_downscaling_products_by_depth.sh
 # Species workflow: original depth slices through 600 m plus matching GeoTIFFs
 MAX_DEPTH_M=600 \
 GEOTIFF=yes \
+bash scripts/runners/products/run_split_ocean_downscaling_products_by_depth.sh
+
+# Future ensemble current-speed NetCDFs at every original depth
+VARS=current_speed \
+FUTURE_MODELS=ensemble \
+INCLUDE_BASELINE=no \
+INCLUDE_FUTURE=yes \
 bash scripts/runners/products/run_split_ocean_downscaling_products_by_depth.sh
 
 # Export the matching shallow individual-depth NetCDF tree to Parquet

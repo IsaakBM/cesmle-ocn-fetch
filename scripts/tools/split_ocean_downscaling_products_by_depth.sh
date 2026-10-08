@@ -53,6 +53,8 @@ shopt -s nullglob
 #                   yes -> copy 2D files unchanged into mirrored structure
 #                   no  -> skip files without a vertical axis
 #                   (default: yes)
+#   VARS          : auto or space-separated variables to include
+#                   (default: auto)
 #   FUTURE_MODELS : auto or space-separated future top-level branches to include
 #                   (default: auto)
 #   EXCLUDE_FUTURE_MODELS
@@ -73,10 +75,12 @@ TMP_DIR="${TMP_DIR:-${OUT_ROOT}/tmp_split_bydepth}"
 MIN_DECIMALS="${MIN_DECIMALS:-3}"
 INTEGER_WIDTH="${INTEGER_WIDTH:-4}"
 COPY_2D_FILES="${COPY_2D_FILES:-yes}"
+VARS="${VARS:-auto}"
 FUTURE_MODELS="${FUTURE_MODELS:-auto}"
 # Production selection: omit retired branches; retain discovery of new models.
 EXCLUDE_FUTURE_MODELS="${EXCLUDE_FUTURE_MODELS-cesm_f09_g16 legacy_downscaled_rcp85}"
 NPROC="${SLURM_CPUS_PER_TASK:-6}"
+read -r -a VAR_LIST <<< "${VARS}"
 read -r -a FUTURE_MODEL_LIST <<< "${FUTURE_MODELS}"
 read -r -a EXCLUDE_FUTURE_MODEL_LIST <<< "${EXCLUDE_FUTURE_MODELS}"
 
@@ -93,7 +97,7 @@ contains_word() {
 
 include_relative_path() {
   local rel_path="$1"
-  local model
+  local model variable remainder
 
   # Recover the model component when IN_ROOT is already inside a future subtree.
   # Keep rel_path used for output layout unchanged outside this filter.
@@ -105,15 +109,27 @@ include_relative_path() {
 
   case "${rel_path}" in
     baseline/*)
+      variable="${rel_path#baseline/}"
+      variable="${variable%%/*}"
+      if [[ "${VARS}" != "auto" ]] && ! contains_word "${variable}" "${VAR_LIST[@]}"; then
+        return 1
+      fi
       return 0
       ;;
     future/*)
-      model="${rel_path#future/}"
+      remainder="${rel_path#future/}"
+      model="${remainder%%/*}"
+      remainder="${remainder#*/}" # member/statistic
+      remainder="${remainder#*/}" # scenario
+      variable="${remainder%%/*}"
       model="${model%%/*}"
       if [[ -n "${EXCLUDE_FUTURE_MODELS}" ]] && contains_word "${model}" "${EXCLUDE_FUTURE_MODEL_LIST[@]}"; then
         return 1
       fi
       if [[ "${FUTURE_MODELS}" != "auto" ]] && ! contains_word "${model}" "${FUTURE_MODEL_LIST[@]}"; then
+        return 1
+      fi
+      if [[ "${VARS}" != "auto" ]] && ! contains_word "${variable}" "${VAR_LIST[@]}"; then
         return 1
       fi
       return 0
@@ -503,6 +519,7 @@ echo "MAX DEPTH M     : ${MAX_DEPTH_M:-<all>}"
 echo "MIN DECIMALS    : ${MIN_DECIMALS}"
 echo "INTEGER WIDTH   : ${INTEGER_WIDTH}"
 echo "COPY 2D FILES   : ${COPY_2D_FILES}"
+echo "VARS            : ${VARS}"
 echo "FUTURE MODELS   : ${FUTURE_MODELS}"
 echo "EXCLUDE FUTURE  : ${EXCLUDE_FUTURE_MODELS:-<none>}"
 echo "PARALLEL FILES  : ${NPROC}"
@@ -523,7 +540,7 @@ for infile in "${files[@]}"; do
   :
 done
 
-export IN_ROOT OUT_ROOT TMP_DIR MAX_DEPTH_M MIN_DECIMALS INTEGER_WIDTH COPY_2D_FILES
+export IN_ROOT OUT_ROOT TMP_DIR MAX_DEPTH_M MIN_DECIMALS INTEGER_WIDTH COPY_2D_FILES VARS
 export -f copy_2d_atomically find_vertical_dim depth_token_from_value extract_all_levels process_one_file
 
 printf '%s\0' "${files[@]}" \

@@ -1181,10 +1181,17 @@ Operational sequence for the current IPCC branch:
      `/delta_windows/`
    - uses `log_ratio` deltas for `chl`; other variables use additive deltas
    - guards `chl` log-ratio cells with a tiny positive floor
-     (`LOG_RATIO_FLOOR_SPEC=chl=1e-12`) and defaults finite invalid/floored
-     cells to no change (`LOG_RATIO_INVALID_POLICY_SPEC=chl=no_change`) to
-     avoid extreme `exp(delta)` values from near-zero historical or future
-     chlorophyll cells
+     (`LOG_RATIO_FLOOR_SPEC=chl=1e-12`) and retains the existing no-change
+     treatment for finite invalid/floored inputs
+     (`LOG_RATIO_INVALID_POLICY_SPEC=chl=no_change`)
+   - accepts multiplicative chlorophyll factors from `0.01` through `100`
+     (`LOG_RATIO_MIN_FACTOR_SPEC=chl=0.01`,
+     `LOG_RATIO_MAX_FACTOR_SPEC=chl=100`); factors outside those inclusive
+     bounds are missing rather than being converted to no change
+   - the factor bounds were selected after a 45-combination sensitivity audit:
+     they rejected no finite cells in CNRM, IPSL, MPI-HR, or MPI-LR, and
+     rejected 61,019 of 16,728,597 UKESM cells (0.365%) across three scenarios
+     and three future windows
    - now targets exact expected climatology filenames instead of picking the
      first wildcard match in the directory
 
@@ -1668,7 +1675,7 @@ Notes:
 - future products preserve model, realization/member-or-statistic, scenario,
   variable, window, and resolution
 - ensemble products preserve the same grammar with `ensemble` as the model and
-  `model_mean` or `model_sd` in the realization/statistic slot
+  `model_mean`, `model_sd`, or `model_count` in the realization/statistic slot
 - downstream depth, layer, pelagic, GeoTIFF, Parquet, and by-depth CSV runners
   accept `FUTURE_MODELS="<model1> ... ensemble"` and
   `EXCLUDE_FUTURE_MODELS="<model>"` so derived products can include the CMIP6
@@ -1676,6 +1683,9 @@ Notes:
   branches such as `cesm_f09_g16`
 - `model_mean` is computed with CDO `ensmean`; `model_sd` is computed with CDO
   `ensstd1`, the sample standard deviation normalized by `n - 1`
+- `model_count` records the number of non-missing model values at every cell;
+  use it to identify where a masked individual-model value reduced ensemble
+  support
 - `cesm_f09_g16`, `legacy_downscaled_rcp85`, and existing `ensemble` products
   are excluded from new ensemble calculations by default
 - the runner now submits one Slurm job per curated subtree:
@@ -2339,9 +2349,13 @@ assumptions that should be kept in mind when interpreting the outputs.
   `downscaled projection = trusted target baseline + model-derived change field`.
   The current IPCC/ESGF `chl` path uses a log-ratio delta:
   `downscaled projection = trusted target baseline * exp(model-derived log change)`.
-  For `chl`, the log-ratio delta step also applies a tiny positive floor by
-  default and treats finite cells below that floor as no change, preventing
-  localized near-zero denominators from creating unrealistic chlorophyll spikes.
+  For `chl`, the log-ratio delta step applies a tiny positive floor and retains
+  the established no-change handling for finite invalid/floored inputs. It also
+  masks multiplicative factors outside the inclusive range `0.01–100`. These
+  rejected cells remain missing through downscaling so they cannot contribute a
+  baseline/no-change value to the ensemble. The ensemble output includes a
+  `model_count` product recording the number of valid contributing models at
+  every cell.
 
 - The central delta-change assumption is that each model's simulated
   climatological change signal is transferable onto the trusted baseline grid,

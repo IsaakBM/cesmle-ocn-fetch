@@ -197,12 +197,16 @@ The IPCC/ESGF `chl` log-ratio path uses guarded defaults:
 ```text
 LOG_RATIO_FLOOR_SPEC=chl=1e-12
 LOG_RATIO_INVALID_POLICY_SPEC=chl=no_change
+LOG_RATIO_MIN_FACTOR_SPEC=chl=0.01
+LOG_RATIO_MAX_FACTOR_SPEC=chl=100
 ```
 
-This keeps finite cells with near-zero or invalid chlorophyll inputs from
-becoming extreme multiplicative changes in Step 6. Those cells are treated as
-zero log change, while normal positive cells still use the model-derived
-`log(future) - log(historical)` anomaly.
+Finite invalid/floored chlorophyll inputs retain the established zero-log-change
+treatment. Among valid positive inputs, factors outside the inclusive range
+`0.01–100` are set to missing. They stay missing through Step 6 and therefore do
+not contribute a baseline/no-change value to ensemble statistics. The ensemble
+builder writes a `model_count` product so the valid model support is explicit at
+each cell.
 
 Expected delta products:
 

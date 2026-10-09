@@ -65,6 +65,10 @@ LOG_RATIO_FLOOR="${LOG_RATIO_FLOOR:-0}"
 LOG_RATIO_FLOOR_SPEC="${LOG_RATIO_FLOOR_SPEC:-chl=1e-12}"
 LOG_RATIO_INVALID_POLICY="${LOG_RATIO_INVALID_POLICY:-missing}"
 LOG_RATIO_INVALID_POLICY_SPEC="${LOG_RATIO_INVALID_POLICY_SPEC:-chl=no_change}"
+LOG_RATIO_MIN_FACTOR="${LOG_RATIO_MIN_FACTOR:-0}"
+LOG_RATIO_MIN_FACTOR_SPEC="${LOG_RATIO_MIN_FACTOR_SPEC:-chl=0.01}"
+LOG_RATIO_MAX_FACTOR="${LOG_RATIO_MAX_FACTOR:-inf}"
+LOG_RATIO_MAX_FACTOR_SPEC="${LOG_RATIO_MAX_FACTOR_SPEC:-chl=100}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
 
 contains_filter_value() {
@@ -271,6 +275,8 @@ for group in "${FUTURE_GROUPS[@]}"; do
   delta_mode="$(delta_mode_for_var "$v")"
   log_ratio_floor="$(spec_value_for_var "$v" "$LOG_RATIO_FLOOR" "$LOG_RATIO_FLOOR_SPEC")"
   log_ratio_invalid_policy="$(spec_value_for_var "$v" "$LOG_RATIO_INVALID_POLICY" "$LOG_RATIO_INVALID_POLICY_SPEC")"
+  log_ratio_min_factor="$(spec_value_for_var "$v" "$LOG_RATIO_MIN_FACTOR" "$LOG_RATIO_MIN_FACTOR_SPEC")"
+  log_ratio_max_factor="$(spec_value_for_var "$v" "$LOG_RATIO_MAX_FACTOR" "$LOG_RATIO_MAX_FACTOR_SPEC")"
   mapfile -t sbatch_extra_args < <(make_sbatch_extra_args)
 
   if [[ ! -f "$BASELINE_FILE" ]]; then
@@ -297,6 +303,8 @@ for group in "${FUTURE_GROUPS[@]}"; do
         DELTA_MODE="$delta_mode" \
         LOG_RATIO_FLOOR="$log_ratio_floor" \
         LOG_RATIO_INVALID_POLICY="$log_ratio_invalid_policy" \
+        LOG_RATIO_MIN_FACTOR="$log_ratio_min_factor" \
+        LOG_RATIO_MAX_FACTOR="$log_ratio_max_factor" \
         REGRID_DELTA="$regrid_delta" \
         GRIDFILE="$gridfile" \
         METHOD="$method" \
@@ -306,7 +314,7 @@ for group in "${FUTURE_GROUPS[@]}"; do
         "${sbatch_extra_args[@]}" \
         --job-name="delta_${future_tag}_${v}" \
         "$CORE_SCRIPT")
-      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=${future_tag} TARGET=${target_family} DELTA_MODE=${delta_mode} LOG_RATIO_FLOOR=${log_ratio_floor} LOG_RATIO_POLICY=${log_ratio_invalid_policy} REGRID_DELTA=${regrid_delta} as jobid=${jid}"
+      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=${future_tag} TARGET=${target_family} DELTA_MODE=${delta_mode} LOG_RATIO_FLOOR=${log_ratio_floor} LOG_RATIO_POLICY=${log_ratio_invalid_policy} LOG_RATIO_FACTOR_BOUNDS=${log_ratio_min_factor}:${log_ratio_max_factor} REGRID_DELTA=${regrid_delta} as jobid=${jid}"
     else
       echo "WARN: Missing ${future_tag} climatology for VAR=${v}: ${future_file}"
     fi

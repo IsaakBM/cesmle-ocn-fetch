@@ -261,8 +261,18 @@ are evidence to inspect, not automatically approved scientific thresholds.
 For GeoTIFF/COG delivery, verify decoded values against their source NetCDF, scaling
 and nodata metadata, grid/mask identity, and a representative subset of each
 product family. Ensemble uncertainty interpretation, reconstructed depth bounds,
-coastal filling, and chlorophyll policies still require scientific review for the
-paper; this implementation does not change those methods.
+and coastal filling still require scientific review for the paper.
+
+For chlorophyll, verify the recorded log-ratio QC attributes and counts before
+release. The accepted multiplicative factor range is inclusive `0.01–100`;
+out-of-range cells are missing in individual-model products. Inspect the matching
+ensemble `model_count` product together with the mean and sample standard
+deviation so spatial reductions in model support are visible. The sensitivity
+audit used to select this bound rejected no finite cells in CNRM-ESM2-1,
+IPSL-CM6A-LR, MPI-ESM1-2-HR, or MPI-ESM1-2-LR and rejected 0.365% of UKESM1-0-LL
+cells across all three scenarios and future windows (Slurm audit job 1174168,
+completed 2026-10-08). Raw ESGF and prepared monthly source files remain
+unchanged; the mask is applied only when deriving the log-ratio change field.
 
 ## Record release provenance
 

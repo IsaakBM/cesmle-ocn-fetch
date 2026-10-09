@@ -52,6 +52,12 @@ set -euo pipefail
 #   LOG_RATIO_INVALID_POLICY
 #                     : missing | no_change for invalid/floored log_ratio cells
 #                       (default: missing)
+#   LOG_RATIO_MIN_FACTOR
+#                     : optional inclusive lower bound for exp(log_ratio)
+#                       (default: 0, no lower-factor rejection)
+#   LOG_RATIO_MAX_FACTOR
+#                     : optional inclusive upper bound for exp(log_ratio)
+#                       (default: inf, no upper-factor rejection)
 #   REGRID_DELTA      : yes | no (default: no)
 #   GRIDFILE          : target grid file when REGRID_DELTA=yes
 #   METHOD            : CDO remapping method (default: remapbil)
@@ -73,6 +79,8 @@ OUT_PREFIX="${OUT_PREFIX:-}"
 DELTA_MODE="${DELTA_MODE:-additive}"
 LOG_RATIO_FLOOR="${LOG_RATIO_FLOOR:-0}"
 LOG_RATIO_INVALID_POLICY="${LOG_RATIO_INVALID_POLICY:-missing}"
+LOG_RATIO_MIN_FACTOR="${LOG_RATIO_MIN_FACTOR:-0}"
+LOG_RATIO_MAX_FACTOR="${LOG_RATIO_MAX_FACTOR:-inf}"
 REGRID_DELTA="${REGRID_DELTA:-no}"
 GRIDFILE="${GRIDFILE:-}"
 METHOD="${METHOD:-remapbil}"
@@ -153,6 +161,7 @@ echo "DELTA MODE      : ${DELTA_MODE}"
 if [[ "$DELTA_MODE" == "log_ratio" ]]; then
   echo "LOG RATIO FLOOR : ${LOG_RATIO_FLOOR}"
   echo "LOG RATIO POLICY: ${LOG_RATIO_INVALID_POLICY}"
+  echo "LOG RATIO FACTOR: ${LOG_RATIO_MIN_FACTOR} to ${LOG_RATIO_MAX_FACTOR}"
 fi
 echo "REGRID DELTA    : ${REGRID_DELTA}"
 if [[ "$REGRID_DELTA" == "yes" ]]; then
@@ -233,9 +242,24 @@ requested_var = "${VAR}"
 delta_mode = "${DELTA_MODE}"
 log_ratio_floor = float("${LOG_RATIO_FLOOR}")
 log_ratio_invalid_policy = "${LOG_RATIO_INVALID_POLICY}"
+log_ratio_min_factor = float("${LOG_RATIO_MIN_FACTOR}")
+log_ratio_max_factor = float("${LOG_RATIO_MAX_FACTOR}")
 
 if log_ratio_floor < 0:
     raise ValueError(f"LOG_RATIO_FLOOR must be non-negative, got {log_ratio_floor}")
+if log_ratio_min_factor < 0:
+    raise ValueError(
+        f"LOG_RATIO_MIN_FACTOR must be non-negative, got {log_ratio_min_factor}"
+    )
+if log_ratio_max_factor <= 0:
+    raise ValueError(
+        f"LOG_RATIO_MAX_FACTOR must be positive, got {log_ratio_max_factor}"
+    )
+if log_ratio_min_factor > log_ratio_max_factor:
+    raise ValueError(
+        "LOG_RATIO_MIN_FACTOR cannot exceed LOG_RATIO_MAX_FACTOR: "
+        f"{log_ratio_min_factor} > {log_ratio_max_factor}"
+    )
 
 def pick_main_var(ds, requested=None):
     if requested and requested in ds.data_vars:
@@ -271,12 +295,21 @@ with xr.open_dataset(baseline_file) as ds_base, xr.open_dataset(future_file) as 
     finite = np.isfinite(future_values) & np.isfinite(base_values)
     positive = (future_values > 0) & (base_values > 0)
     above_floor = (future_values >= log_ratio_floor) & (base_values >= log_ratio_floor)
-    valid = finite & positive & above_floor
+    source_valid = finite & positive & above_floor
+    factor = np.full(future_values.shape, np.nan, dtype=float)
+    factor[source_valid] = future_values[source_valid] / base_values[source_valid]
+    below_min_factor = source_valid & (factor < log_ratio_min_factor)
+    above_max_factor = source_valid & (factor > log_ratio_max_factor)
+    factor_rejected = below_min_factor | above_max_factor
+    valid = source_valid & ~factor_rejected
     no_change = np.zeros(future_values.shape, dtype=bool)
     delta_values = np.full(future_values.shape, np.nan, dtype=float)
     delta_values[valid] = np.log(future_values[valid]) - np.log(base_values[valid])
     if log_ratio_invalid_policy == "no_change":
-        no_change = finite & ~valid
+        # Preserve the existing treatment of finite nonpositive/floored source
+        # values. Factor-bound failures are deliberately missing so an unstable
+        # multiplicative change cannot contribute a baseline/no-change value.
+        no_change = finite & ~source_valid
         delta_values[no_change] = 0.0
     missing = ~np.isfinite(delta_values)
     da_delta = xr.DataArray(
@@ -291,19 +324,30 @@ with xr.open_dataset(baseline_file) as ds_base, xr.open_dataset(future_file) as 
         "delta_formula": "log(future) - log(baseline)",
         "log_ratio_floor": log_ratio_floor,
         "invalid_log_ratio_policy": log_ratio_invalid_policy,
+        "log_ratio_min_factor": log_ratio_min_factor,
+        "log_ratio_max_factor": log_ratio_max_factor,
+        "log_ratio_factor_policy": "outside inclusive bounds is missing",
         "log_ratio_policy_note": (
             "missing leaves invalid/floored cells as missing; no_change sets "
-            "finite invalid/floored cells to zero log change"
+            "finite invalid/floored cells to zero log change; factor-bound "
+            "failures remain missing under either policy"
         ),
         "log_ratio_valid_cells": int(valid.sum()),
+        "log_ratio_below_min_factor_cells": int(below_min_factor.sum()),
+        "log_ratio_above_max_factor_cells": int(above_max_factor.sum()),
+        "log_ratio_factor_rejected_cells": int(factor_rejected.sum()),
         "log_ratio_no_change_cells": int(no_change.sum()),
         "log_ratio_missing_cells": int(missing.sum()),
         "units": "1",
     })
     print(f"LOG RATIO FLOOR          : {log_ratio_floor}")
     print(f"LOG RATIO POLICY         : {log_ratio_invalid_policy}")
+    print(f"LOG RATIO FACTOR BOUNDS  : {log_ratio_min_factor} to {log_ratio_max_factor}")
     print(f"LOG RATIO FINITE CELLS   : {int(finite.sum())}")
     print(f"LOG RATIO VALID CELLS    : {int(valid.sum())}")
+    print(f"LOG RATIO BELOW MIN      : {int(below_min_factor.sum())}")
+    print(f"LOG RATIO ABOVE MAX      : {int(above_max_factor.sum())}")
+    print(f"LOG RATIO FACTOR REJECTED: {int(factor_rejected.sum())}")
     print(f"LOG RATIO NO-CHANGE CELLS: {int(no_change.sum())}")
     print(f"LOG RATIO MISSING CELLS  : {int(missing.sum())}")
 

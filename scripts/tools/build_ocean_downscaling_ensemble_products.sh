@@ -16,6 +16,7 @@
 #    - Write outputs back into the same curated future tree grammar:
 #        future/ensemble/model_mean/<scenario>/<var>/<window>/<resolution>/
 #        future/ensemble/model_sd/<scenario>/<var>/<window>/<resolution>/
+#        future/ensemble/model_count/<scenario>/<var>/<window>/<resolution>/
 #    - Exclude legacy CESM/RCP-era products by default
 # ==============================================================================
 
@@ -79,11 +80,18 @@ contains_word() {
 
 read -r -a MODEL_LIST <<< "${MODELS}"
 read -r -a EXCLUDE_MODEL_LIST <<< "${EXCLUDE_MODELS}"
-read -r -a VARIABLE_EXCLUDE_RULES <<< "${EXCLUDE_ENSEMBLE_MODELS_BY_VARIABLE}"
+VARIABLE_EXCLUDE_RULES=()
+if [[ -n "${EXCLUDE_ENSEMBLE_MODELS_BY_VARIABLE}" ]]; then
+  read -r -a VARIABLE_EXCLUDE_RULES <<< "${EXCLUDE_ENSEMBLE_MODELS_BY_VARIABLE}"
+fi
 
 variable_specific_excluded_models() {
   local variable="$1"
   local rule rule_var rule_models
+
+  if [[ -z "${EXCLUDE_ENSEMBLE_MODELS_BY_VARIABLE}" ]]; then
+    return 0
+  fi
 
   for rule in "${VARIABLE_EXCLUDE_RULES[@]}"; do
     [[ "${rule}" == *:* ]] || continue
@@ -95,7 +103,10 @@ variable_specific_excluded_models() {
 }
 
 VARIABLE_SPECIFIC_EXCLUDE_MODELS="$(variable_specific_excluded_models "${VAR}")"
-read -r -a VARIABLE_SPECIFIC_EXCLUDE_MODEL_LIST <<< "${VARIABLE_SPECIFIC_EXCLUDE_MODELS}"
+VARIABLE_SPECIFIC_EXCLUDE_MODEL_LIST=()
+if [[ -n "${VARIABLE_SPECIFIC_EXCLUDE_MODELS}" ]]; then
+  read -r -a VARIABLE_SPECIFIC_EXCLUDE_MODEL_LIST <<< "${VARIABLE_SPECIFIC_EXCLUDE_MODELS}"
+fi
 
 declare -a INPUT_FILES=()
 declare -a SOURCE_LABELS=()
@@ -199,26 +210,29 @@ fi
 
 mean_dir="${FUTURE_ROOT}/ensemble/model_mean/${SCENARIO}/${VAR}/${WINDOW}/${RESOLUTION}"
 sd_dir="${FUTURE_ROOT}/ensemble/model_sd/${SCENARIO}/${VAR}/${WINDOW}/${RESOLUTION}"
+count_dir="${FUTURE_ROOT}/ensemble/model_count/${SCENARIO}/${VAR}/${WINDOW}/${RESOLUTION}"
 mean_out="${mean_dir}/ocean_downscaling_ensemble_model_mean_${VAR}_${SCENARIO}_${WINDOW}_${RESOLUTION}.nc"
 sd_out="${sd_dir}/ocean_downscaling_ensemble_model_sd_${VAR}_${SCENARIO}_${WINDOW}_${RESOLUTION}.nc"
+count_out="${count_dir}/ocean_downscaling_ensemble_model_count_${VAR}_${SCENARIO}_${WINDOW}_${RESOLUTION}.nc"
 
-mkdir -p "${mean_dir}" "${sd_dir}"
+mkdir -p "${mean_dir}" "${sd_dir}" "${count_dir}"
 
 if [[ "${OVERWRITE}" != "yes" ]]; then
-  if [[ -f "${mean_out}" && -f "${sd_out}" ]]; then
-    echo "[SKIP] Ensemble outputs exist (OVERWRITE=no): ${mean_out} and ${sd_out}"
+  if [[ -f "${mean_out}" && -f "${sd_out}" && -f "${count_out}" ]]; then
+    echo "[SKIP] Ensemble outputs exist (OVERWRITE=no): ${mean_out}, ${sd_out}, and ${count_out}"
     exit 0
   fi
-  if [[ -f "${mean_out}" || -f "${sd_out}" ]]; then
+  if [[ -f "${mean_out}" || -f "${sd_out}" || -f "${count_out}" ]]; then
     echo "ERROR: Partial ensemble outputs already exist with OVERWRITE=no; rerun with OVERWRITE=yes to refresh" >&2
     echo "  mean: ${mean_out}" >&2
     echo "  sd  : ${sd_out}" >&2
+    echo "  count: ${count_out}" >&2
     exit 1
   fi
 fi
 
 if [[ "${OVERWRITE}" == "yes" ]]; then
-  rm -f "${mean_out}" "${sd_out}"
+  rm -f "${mean_out}" "${sd_out}" "${count_out}"
 fi
 
 echo "[START] SCENARIO=${SCENARIO} VAR=${VAR} WINDOW=${WINDOW} RESOLUTION=${RESOLUTION}"
@@ -230,6 +244,15 @@ fi
 cdo -O ensmean "${INPUT_FILES[@]}" "${mean_out}"
 cdo -O ensstd1 "${INPUT_FILES[@]}" "${sd_out}"
 
+# Convert each member to 1 where VAR is valid and 0 where it is missing, then
+# sum those flags. CDO evaluates the member expressions as input streams, so no
+# full-size intermediate files are written.
+declare -a COUNT_INPUTS=()
+for input_file in "${INPUT_FILES[@]}"; do
+  COUNT_INPUTS+=("-expr,model_count=isMissval(${VAR})?0:1" "${input_file}")
+done
+cdo -O enssum "${COUNT_INPUTS[@]}" "${count_out}"
+
 python3 - <<PY
 import numpy as np
 import xarray as xr
@@ -237,7 +260,11 @@ import xarray as xr
 window = "${WINDOW}"
 variable = "${VAR}"
 source_path = "${SOURCE_PATHS[0]}"
-outputs = ["${mean_out}", "${sd_out}"]
+outputs = [
+    ("${mean_out}", variable),
+    ("${sd_out}", variable),
+    ("${count_out}", "model_count"),
+]
 
 with xr.open_dataset(source_path) as source:
     if variable not in source:
@@ -255,14 +282,22 @@ start = np.datetime64(start_text)
 end = np.datetime64(end_text)
 midpoint = start + (end - start) // 2
 
-for path in outputs:
+for path, output_variable in outputs:
     with xr.open_dataset(path) as ds:
         out = ds.load()
-    if variable not in out:
-        raise ValueError(f"Expected variable {variable!r} not found in {path}")
-    variable_attrs = source_variable_attrs.copy()
-    variable_attrs.update(out[variable].attrs)
-    out[variable].attrs = variable_attrs
+    if output_variable not in out:
+        raise ValueError(f"Expected variable {output_variable!r} not found in {path}")
+    if output_variable == variable:
+        variable_attrs = source_variable_attrs.copy()
+        variable_attrs.update(out[variable].attrs)
+        out[variable].attrs = variable_attrs
+    else:
+        out[output_variable].attrs.update({
+            "long_name": f"Number of valid model contributions for {variable}",
+            "units": "1",
+            "valid_min": 0,
+            "valid_max": ${#INPUT_FILES[@]},
+        })
     if "time" in out.dims:
         if out.sizes["time"] != 1:
             raise ValueError(
@@ -293,7 +328,7 @@ if command -v ncatted >/dev/null 2>&1; then
   members_text="${SOURCE_LABELS[*]}"
   source_files_text="${SOURCE_PATHS[*]}"
   excluded_text="${EXCLUDE_MODEL_LIST[*]}"
-  variable_excluded_text="${VARIABLE_SPECIFIC_EXCLUDE_MODEL_LIST[*]}"
+  variable_excluded_text="${VARIABLE_SPECIFIC_EXCLUDE_MODELS}"
 
   ncatted -O \
     -a title,global,o,c,"Ocean downscaling model ensemble product" \
@@ -331,9 +366,28 @@ if command -v ncatted >/dev/null 2>&1; then
     -a source_files,global,o,c,"${source_files_text}" \
     -a description,global,o,c,"Sample standard deviation across available model products for this scenario, variable, window, and resolution." \
     "${sd_out}"
+
+  ncatted -O \
+    -a title,global,o,c,"Ocean downscaling model ensemble valid-member count" \
+    -a product_statistic,global,o,c,"model_count" \
+    -a ensemble_axis,global,o,c,"model" \
+    -a ensemble_scenario,global,o,c,"${SCENARIO}" \
+    -a ensemble_variable,global,o,c,"${VAR}" \
+    -a ensemble_window,global,o,c,"${WINDOW}" \
+    -a ensemble_resolution,global,o,c,"${RESOLUTION}" \
+    -a n_ensemble_members,global,o,c,"${#INPUT_FILES[@]}" \
+    -a ensemble_members,global,o,c,"${members_text}" \
+    -a excluded_models,global,o,c,"${excluded_text}" \
+    -a variable_specific_excluded_models,global,o,c,"${variable_excluded_text}" \
+    -a exclude_ensemble_models_by_variable,global,o,c,"${EXCLUDE_ENSEMBLE_MODELS_BY_VARIABLE}" \
+    -a source_product_root,global,o,c,"${PRODUCT_ROOT}" \
+    -a source_files,global,o,c,"${source_files_text}" \
+    -a description,global,o,c,"Count of non-missing model values contributing at each cell." \
+    "${count_out}"
 else
   echo "[WARN] ncatted not found; skipping ensemble metadata annotation" >&2
 fi
 
 echo "[WRITE] mean=${mean_out}"
 echo "[WRITE] sd=${sd_out}"
+echo "[WRITE] count=${count_out}"

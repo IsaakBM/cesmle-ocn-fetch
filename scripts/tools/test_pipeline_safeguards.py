@@ -89,6 +89,27 @@ class SafeguardTests(unittest.TestCase):
         result = self.run_script(DELTA, VAR='thetao', BASELINE_FILE=str(base), FUTURE_FILE=str(future), OUT_DIR=str(out), OUT_PREFIX='fixture')
         self.assertNotEqual(result.returncode, 0); self.assertEqual(old.read_bytes(), b'accepted')
 
+    def test_log_ratio_factor_bounds_mask_extremes(self):
+        base = self.root/'base.nc'; future_path = self.root/'future.nc'; out = self.root/'out'
+        baseline = self.field(1.).rename('chl')
+        future_values = baseline.values.copy()
+        future_values[0, 0, 0, 0] = 2.
+        future_values[0, 0, 0, 1] = 200.
+        future_values[0, 0, 1, 0] = 0.005
+        future = baseline.copy(data=future_values).assign_coords(time=[np.datetime64('2050-01-01')])
+        baseline.to_netcdf(base); future.to_netcdf(future_path)
+        result = self.run_script(
+            DELTA, VAR='chl', BASELINE_FILE=str(base), FUTURE_FILE=str(future_path),
+            OUT_DIR=str(out), OUT_PREFIX='fixture', DELTA_MODE='log_ratio',
+            LOG_RATIO_MIN_FACTOR='0.01', LOG_RATIO_MAX_FACTOR='100',
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with xr.open_dataset(out/'fixture_delta_future_minus_baseline.nc') as ds:
+            self.assertAlmostEqual(float(ds.chl[0, 0, 0, 0]), np.log(2.))
+            self.assertTrue(np.isnan(ds.chl[0, 0, 0, 1]))
+            self.assertTrue(np.isnan(ds.chl[0, 0, 1, 0]))
+            self.assertEqual(ds.chl.attrs['log_ratio_factor_rejected_cells'], 2)
+
     def test_real_add_and_mismatch(self):
         base = self.root/'base.nc'; anomaly = self.root/'anomaly.nc'; out = self.root/'out'
         self.field(2.).to_netcdf(base); self.field(4., '2050-01-01').to_netcdf(anomaly)

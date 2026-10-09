@@ -273,6 +273,9 @@ IPSL-CM6A-LR, MPI-ESM1-2-HR, or MPI-ESM1-2-LR and rejected 0.365% of UKESM1-0-LL
 cells across all three scenarios and future windows (Slurm audit job 1174168,
 completed 2026-10-08). Raw ESGF and prepared monthly source files remain
 unchanged; the mask is applied only when deriving the log-ratio change field.
+The categorical `<variable>_log_ratio_qc_valid` field is remapped with nearest
+neighbor and reapplied after operational coastal and shallow-level filling, so
+deliberately rejected cells remain missing in native and regridded products.
 
 ## Record release provenance
 

@@ -248,6 +248,7 @@ fi
 NATIVE_FILE="${OUT_DIR}/${NATIVE_NAME}.nc"
 TMP_NATIVE="${TMP_DIR}/${NATIVE_NAME}.tmp.nc"
 TMP_ANOM_TARGET="${TMP_DIR}/${OUT_PREFIX}_anomaly_on_target_${FUTURE_TAG}.tmp.nc"
+QC_MASK_NAME="${VAR}_log_ratio_qc_valid"
 
 if [[ "$WRITE_FILLED_ANOM" == "yes" ]]; then
   FILLED_ANOM_FILE="${FILLED_ANOM_DIR}/${OUT_PREFIX}_filled_anomaly_${FUTURE_TAG}.nc"
@@ -289,6 +290,28 @@ resolve_anomaly_method() {
       printf '%s\n' "$ANOMALY_AUTO_METHOD_DEFAULT"
       ;;
   esac
+}
+
+remap_preserving_qc_mask() {
+  local src="$1"
+  local dst="$2"
+  local method="$3"
+  local gridfile="$4"
+  local prefix="$5"
+  local data_tmp="${prefix}.data.nc"
+  local mask_tmp="${prefix}.mask.nc"
+  local masked_tmp="${prefix}.masked.nc"
+
+  rm -f "${data_tmp}" "${mask_tmp}" "${masked_tmp}"
+  if cdo -s showname "${src}" | tr ' ' '\n' | grep -Fxq "${QC_MASK_NAME}"; then
+    cdo -L -O "${method},${gridfile}" -delname,"${QC_MASK_NAME}" "${src}" "${data_tmp}"
+    cdo -L -O "remapnn,${gridfile}" -selname,"${QC_MASK_NAME}" "${src}" "${mask_tmp}"
+    cdo -L -O ifthen "${mask_tmp}" "${data_tmp}" "${masked_tmp}"
+    cdo -L -O merge "${masked_tmp}" "${mask_tmp}" "${dst}"
+    rm -f "${data_tmp}" "${mask_tmp}" "${masked_tmp}"
+  else
+    cdo -L -O "${method},${gridfile}" "${src}" "${dst}"
+  fi
 }
 
 echo "============================================================"
@@ -349,7 +372,9 @@ if [[ "$REMAP_ANOMALY_TO_BASELINE" == "yes" ]]; then
   echo "[STEP2] Remapping anomaly onto the trusted baseline grid"
   anom_method="$(resolve_anomaly_method "${ANOMALY_FILE}")"
   echo "INFO: anomaly remap method resolved to: ${anom_method}"
-  cdo -L -O "${anom_method},${ANOMALY_GRIDFILE}" "${ANOMALY_FILE}" "${TMP_ANOM_TARGET}"
+  remap_preserving_qc_mask \
+    "${ANOMALY_FILE}" "${TMP_ANOM_TARGET}" "${anom_method}" \
+    "${ANOMALY_GRIDFILE}" "${TMP_ANOM_TARGET%.nc}.work"
   ANOMALY_FOR_PYTHON="${TMP_ANOM_TARGET}"
   echo "[DONE ] ${TMP_ANOM_TARGET}"
 fi
@@ -769,7 +794,9 @@ base_var = pick_main_var(ds_base)
 
 anom_candidates = [
     v for v in ds_anom.data_vars
-    if "bnds" not in v.lower() and "bounds" not in v.lower()
+    if "bnds" not in v.lower()
+    and "bounds" not in v.lower()
+    and not v.endswith("_log_ratio_qc_valid")
 ]
 if not anom_candidates:
     raise ValueError(f"No valid anomaly variable found in dataset: {list(ds_anom.data_vars)}")
@@ -786,6 +813,10 @@ if anom_var is None:
 
 da_base = ds_base[base_var]
 da_anom = ds_anom[anom_var]
+qc_mask_var = f"{anom_var}_log_ratio_qc_valid"
+da_qc_mask = None
+if qc_mask_var in ds_anom:
+    da_qc_mask = align_to_base_dims(ds_anom[qc_mask_var], da_base, "log-ratio QC mask")
 da_mask = None
 mask_var = None
 if ds_mask is not None:
@@ -1034,6 +1065,17 @@ if fill_top_missing:
         if valid_indices.size > 0:
             first_valid_index = int(valid_indices.min())
 
+# Reapply the categorical scientific QC mask after all operational gap filling.
+# Ordinary coastline/model-mask gaps may be filled, but factor-rejected cells
+# must remain missing so they do not contribute to the individual model or its
+# ensemble statistics.
+qc_rejected_output_count = 0
+if da_qc_mask is not None:
+    qc_valid = np.asarray(da_qc_mask.values) >= 0.5
+    qc_rejected_output_count = int((~qc_valid).sum())
+    da_out = xr.where(qc_valid, da_out, np.nan)
+    da_out.attrs.update(output_attrs)
+
 output_lower_bound, output_upper_bound = parse_output_bounds(output_bounds_spec, base_var)
 bounded_below_count = 0
 bounded_above_count = 0
@@ -1053,6 +1095,25 @@ if output_lower_bound is not None or output_upper_bound is not None:
 ds_out = ds_base.copy()
 ds_out[base_var] = da_out
 ds_out = set_climatology_time(ds_out, output_time_start, output_time_end)
+if da_qc_mask is not None:
+    qc_values = (np.asarray(da_qc_mask.values) >= 0.5).astype(np.int8)
+    qc_coords = {
+        dim: ds_out.coords[dim] if dim in ds_out.coords else da_base.coords[dim]
+        for dim in da_base.dims
+    }
+    ds_out[qc_mask_var] = xr.DataArray(
+        qc_values,
+        coords=qc_coords,
+        dims=da_base.dims,
+        name=qc_mask_var,
+        attrs=dict(da_qc_mask.attrs),
+    )
+    ds_out[qc_mask_var].attrs.update({
+        "long_name": "Log-ratio factor quality-control validity mask",
+        "flag_values": np.array([0, 1], dtype=np.int8),
+        "flag_meanings": "factor_rejected factor_accepted_or_not_evaluated",
+    })
+    ds_out.attrs["log_ratio_qc_mask_variable"] = qc_mask_var
 ds_out[base_var].attrs.pop("coordinates", None)
 ds_out[base_var].encoding.pop("coordinates", None)
 for coord_name in ds_out.coords:
@@ -1063,6 +1124,13 @@ for coord_name in ds_out.coords:
 # NetCDF4 with zlib compression. Old/new file sizes are not a reliable
 # coverage check; compare valid/missing cell counts instead.
 encoding = {base_var: {"zlib": True, "complevel": 1}}
+if da_qc_mask is not None:
+    encoding[qc_mask_var] = {
+        "zlib": True,
+        "complevel": 1,
+        "dtype": "i1",
+        "_FillValue": None,
+    }
 
 print(f"BASE VAR              : {base_var}")
 print(f"ANOM VAR              : {anom_var}")
@@ -1082,6 +1150,7 @@ print(f"FORCE FILL MAX WAVE   : {coastal_force_iterations}")
 print(f"TOP ANOMALY FILLED    : {filled_top_anomaly_count}")
 print(f"FIRST VALID INDEX     : {first_valid_index}")
 print(f"TOP LEVELS FILLED     : {filled_top_count}")
+print(f"QC CELLS KEPT MISSING : {qc_rejected_output_count}")
 print(f"OUTPUT LOWER BOUND    : {output_lower_bound if output_lower_bound is not None else '<none>'}")
 print(f"OUTPUT UPPER BOUND    : {output_upper_bound if output_upper_bound is not None else '<none>'}")
 print(f"OUTPUT BELOW CLIPPED  : {bounded_below_count}")
@@ -1110,7 +1179,9 @@ fi
 
 if [[ "$REGRID_OUTPUT" == "yes" ]]; then
   echo "[STEP5] Regridding final downscaled output"
-  cdo -L -O "${REGRID_METHOD},${REGRID_GRIDFILE}" "${NATIVE_FILE}" "${TMP_REGRID}"
+  remap_preserving_qc_mask \
+    "${NATIVE_FILE}" "${TMP_REGRID}" "${REGRID_METHOD}" \
+    "${REGRID_GRIDFILE}" "${TMP_REGRID%.nc}.work"
   mv -f "${TMP_REGRID}" "${REGRID_FILE}"
   echo "[DONE ] ${REGRID_FILE}"
 fi

@@ -241,8 +241,20 @@ if [[ -n "${VARIABLE_SPECIFIC_EXCLUDE_MODELS}" ]]; then
   echo "[INFO ] Variable-specific excluded models for ${VAR}: ${VARIABLE_SPECIFIC_EXCLUDE_MODELS}"
 fi
 
-cdo -O ensmean "${INPUT_FILES[@]}" "${mean_out}"
-cdo -O ensstd1 "${INPUT_FILES[@]}" "${sd_out}"
+QC_MASK_NAME="${VAR}_log_ratio_qc_valid"
+declare -a STAT_INPUTS=()
+for input_file in "${INPUT_FILES[@]}"; do
+  if cdo -s showname "${input_file}" | tr ' ' '\n' | grep -Fxq "${QC_MASK_NAME}"; then
+    # The per-model QC mask is provenance for rejected cells, not a scientific
+    # ensemble variable. The separate model_count product records its effect.
+    STAT_INPUTS+=("-delname,${QC_MASK_NAME}" "${input_file}")
+  else
+    STAT_INPUTS+=("${input_file}")
+  fi
+done
+
+cdo -O ensmean "${STAT_INPUTS[@]}" "${mean_out}"
+cdo -O ensstd1 "${STAT_INPUTS[@]}" "${sd_out}"
 
 # Convert each member to 1 where VAR is valid and 0 where it is missing, then
 # sum those flags. CDO evaluates the member expressions as input streams, so no

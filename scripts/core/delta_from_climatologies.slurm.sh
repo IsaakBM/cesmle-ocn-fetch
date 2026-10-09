@@ -340,6 +340,24 @@ with xr.open_dataset(baseline_file) as ds_base, xr.open_dataset(future_file) as 
         "log_ratio_missing_cells": int(missing.sum()),
         "units": "1",
     })
+    qc_mask_name = f"{future_var}_log_ratio_qc_valid"
+    da_qc_mask = xr.DataArray(
+        (~factor_rejected).astype(np.int8),
+        coords=da_future.coords,
+        dims=da_future.dims,
+        name=qc_mask_name,
+        attrs={
+            "long_name": "Log-ratio factor quality-control validity mask",
+            "flag_values": np.array([0, 1], dtype=np.int8),
+            "flag_meanings": "factor_rejected factor_accepted_or_not_evaluated",
+            "qc_min_factor": log_ratio_min_factor,
+            "qc_max_factor": log_ratio_max_factor,
+            "comment": (
+                "Zero identifies a positive finite source cell rejected solely "
+                "because its future-to-historical factor was outside the inclusive bounds."
+            ),
+        },
+    )
     print(f"LOG RATIO FLOOR          : {log_ratio_floor}")
     print(f"LOG RATIO POLICY         : {log_ratio_invalid_policy}")
     print(f"LOG RATIO FACTOR BOUNDS  : {log_ratio_min_factor} to {log_ratio_max_factor}")
@@ -353,11 +371,13 @@ with xr.open_dataset(baseline_file) as ds_base, xr.open_dataset(future_file) as 
 
     ds_out = ds_future.copy(deep=True)
     ds_out[future_var] = da_delta
+    ds_out[qc_mask_name] = da_qc_mask
     ds_out.attrs = ds_future.attrs.copy()
     ds_out.attrs.update({
         "delta_mode": delta_mode,
         "delta_baseline_file": baseline_file,
         "delta_future_file": future_file,
+        "log_ratio_qc_mask_variable": qc_mask_name,
     })
     ds_out.to_netcdf(tmp_delta, format="NETCDF4")
 PY
@@ -369,10 +389,26 @@ if [[ "$REGRID_DELTA" == "yes" ]]; then
   REGRID_FILE="${REGRID_OUT_DIR}/${OUT_PREFIX}_delta_${FUTURE_TAG}_minus_${BASELINE_TAG}_${REGRID_SUFFIX}.nc"
   TMP_REGRID="${TMP_DIR}/${OUT_PREFIX}_delta_${FUTURE_TAG}_minus_${BASELINE_TAG}_${REGRID_SUFFIX}.tmp.nc"
 
-  rm -f "${TMP_REGRID}"
+  QC_MASK_NAME="${VAR}_log_ratio_qc_valid"
+  TMP_REGRID_DATA="${TMP_DIR}/${OUT_PREFIX}_delta_${FUTURE_TAG}_minus_${BASELINE_TAG}_${REGRID_SUFFIX}.data.tmp.nc"
+  TMP_REGRID_MASK="${TMP_DIR}/${OUT_PREFIX}_delta_${FUTURE_TAG}_minus_${BASELINE_TAG}_${REGRID_SUFFIX}.mask.tmp.nc"
+  TMP_REGRID_MASKED="${TMP_DIR}/${OUT_PREFIX}_delta_${FUTURE_TAG}_minus_${BASELINE_TAG}_${REGRID_SUFFIX}.masked.tmp.nc"
+
+  rm -f "${TMP_REGRID}" "${TMP_REGRID_DATA}" "${TMP_REGRID_MASK}" "${TMP_REGRID_MASKED}"
 
   echo "[STEP3] Regridding delta"
-  cdo -L -O ${METHOD},"${GRIDFILE}" "${DELTA_FILE}" "${TMP_REGRID}"
+  if cdo -s showname "${DELTA_FILE}" | tr ' ' '\n' | grep -Fxq "${QC_MASK_NAME}"; then
+    # The scientific delta follows the configured interpolation, while the
+    # categorical QC mask uses nearest-neighbor remapping. Reapply the mask
+    # after interpolation so rejected source cells cannot be reconstructed.
+    cdo -L -O ${METHOD},"${GRIDFILE}" -delname,"${QC_MASK_NAME}" "${DELTA_FILE}" "${TMP_REGRID_DATA}"
+    cdo -L -O remapnn,"${GRIDFILE}" -selname,"${QC_MASK_NAME}" "${DELTA_FILE}" "${TMP_REGRID_MASK}"
+    cdo -L -O ifthen "${TMP_REGRID_MASK}" "${TMP_REGRID_DATA}" "${TMP_REGRID_MASKED}"
+    cdo -L -O merge "${TMP_REGRID_MASKED}" "${TMP_REGRID_MASK}" "${TMP_REGRID}"
+    rm -f "${TMP_REGRID_DATA}" "${TMP_REGRID_MASK}" "${TMP_REGRID_MASKED}"
+  else
+    cdo -L -O ${METHOD},"${GRIDFILE}" "${DELTA_FILE}" "${TMP_REGRID}"
+  fi
   mv -f "${TMP_REGRID}" "${REGRID_FILE}"
   echo "[DONE ] ${REGRID_FILE}"
 fi

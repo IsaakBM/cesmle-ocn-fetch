@@ -208,6 +208,13 @@ not contribute a baseline/no-change value to ensemble statistics. The ensemble
 builder writes a `model_count` product so the valid model support is explicit at
 each cell.
 
+The categorical `<variable>_log_ratio_qc_valid` field follows the rejected cells
+through both remapping stages with nearest-neighbor interpolation. Operational
+coastal and shallow-level fills run normally and the QC mask is then reapplied,
+so those deliberate missing values cannot be restored. The ensemble mean and
+standard-deviation calculations exclude the ancillary mask itself; its effect is
+reported through `model_count`.
+
 Expected delta products:
 
 ```text

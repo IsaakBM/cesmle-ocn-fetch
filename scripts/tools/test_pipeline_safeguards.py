@@ -109,6 +109,32 @@ class SafeguardTests(unittest.TestCase):
             self.assertTrue(np.isnan(ds.chl[0, 0, 0, 1]))
             self.assertTrue(np.isnan(ds.chl[0, 0, 1, 0]))
             self.assertEqual(ds.chl.attrs['log_ratio_factor_rejected_cells'], 2)
+            np.testing.assert_array_equal(
+                ds.chl_log_ratio_qc_valid[0, 0], np.array([[1, 0], [0, 1]])
+            )
+
+    def test_log_ratio_qc_mask_survives_operational_fill(self):
+        base = self.root/'base.nc'; anomaly = self.root/'anomaly.nc'; out = self.root/'out'
+        baseline = self.field(2.).rename('chl')
+        delta = self.field(0.).rename('chl').assign_coords(time=[np.datetime64('2050-01-01')])
+        delta.values[0, 0, 0, 0] = np.nan
+        qc = xr.ones_like(delta, dtype=np.int8).rename('chl_log_ratio_qc_valid')
+        qc.values[0, 0, 0, 0] = 0
+        baseline.to_netcdf(base)
+        xr.Dataset({'chl': delta, 'chl_log_ratio_qc_valid': qc}).to_netcdf(anomaly)
+        result = self.run_script(
+            ADD, VAR='chl', BASELINE_FILE=str(base), ANOMALY_FILE=str(anomaly),
+            OUT_DIR=str(out), OUT_PREFIX='fixture', FUTURE_TAG='2050-2060',
+            ANOMALY_MODE='log_ratio', COASTAL_FILL='yes',
+            COASTAL_FILL_METHOD='nearest', COASTAL_FILL_REQUIRE_COMPLETE='yes',
+            FILL_TOP_MISSING='yes', FILL_TOP_MISSING_ANOMALY='yes',
+            REGRID_OUTPUT='no',
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        product = next(out.glob('*.nc'))
+        with xr.open_dataset(product) as ds:
+            self.assertTrue(np.isnan(ds.chl[0, 0, 0, 0]))
+            self.assertEqual(int(ds.chl_log_ratio_qc_valid[0, 0, 0, 0]), 0)
 
     def test_real_add_and_mismatch(self):
         base = self.root/'base.nc'; anomaly = self.root/'anomaly.nc'; out = self.root/'out'

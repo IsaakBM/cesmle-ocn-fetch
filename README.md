@@ -1192,6 +1192,9 @@ Operational sequence for the current IPCC branch:
      they rejected no finite cells in CNRM, IPSL, MPI-HR, or MPI-LR, and
      rejected 61,019 of 16,728,597 UKESM cells (0.365%) across three scenarios
      and three future windows
+   - carries a categorical `<variable>_log_ratio_qc_valid` mask through both
+     remapping stages with nearest-neighbor interpolation; operational coastal
+     and shallow-level filling cannot restore deliberately rejected cells
    - now targets exact expected climatology filenames instead of picking the
      first wildcard match in the directory
 

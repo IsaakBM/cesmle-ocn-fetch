@@ -68,7 +68,10 @@ include_future = include_future == "yes"
 compute_stats = compute_stats == "yes"
 fail_on_issue = fail_on_issue == "yes"
 
-ignored_vars = {"time_bnds", "lat_bnds", "lon_bnds", "depth_bnds", "lev_bnds", "z_t_bnds", "bnds"}
+ignored_vars = {
+    "time_bnds", "climatology_bnds", "lat_bnds", "lon_bnds",
+    "depth_bnds", "lev_bnds", "z_t_bnds", "bnds",
+}
 
 def contains_token(filename, token):
     if not token:
@@ -155,8 +158,20 @@ def audit_one(path, record):
                 status = "missing_time" if status == "ok" else status
                 notes.append("missing time coordinate")
 
-            if "time_bnds" in ds:
-                bnd_years = numeric_years(ds["time_bnds"].values)
+            # CF permits any climatology-bounds variable name as long as the
+            # time coordinate identifies it through the `climatology`
+            # attribute. CDO commonly renames `time_bnds` to
+            # `climatology_bnds` while preserving that reference.
+            bounds_name = ""
+            if "time" in ds:
+                bounds_name = str(ds["time"].attrs.get("climatology", "")).strip()
+            if not bounds_name and "time_bnds" in ds:
+                # Retain compatibility with older products that contain the
+                # conventional variable but omit the coordinate attribute.
+                bounds_name = "time_bnds"
+
+            if bounds_name and bounds_name in ds:
+                bnd_years = numeric_years(ds[bounds_name].values)
                 if bnd_years:
                     bnds_min_year = min(bnd_years)
                     bnds_max_year = max(bnd_years)
@@ -174,12 +189,17 @@ def audit_one(path, record):
                         if int(bnds_min_year) != start_year or int(bnds_max_year) != end_year:
                             status = "time_bounds_mismatch"
                             notes.append(
-                                f"time_bnds years {bnds_min_year}-{bnds_max_year} do not match expected {expected_window}"
+                                f"{bounds_name} years {bnds_min_year}-{bnds_max_year} do not match expected {expected_window}"
                             )
                     else:
                         if status == "ok":
                             status = "missing_time_bounds"
-                        notes.append("missing time_bnds for windowed climatology")
+                        if bounds_name:
+                            notes.append(
+                                f"time climatology attribute references missing variable {bounds_name!r}"
+                            )
+                        else:
+                            notes.append("missing climatology bounds for windowed climatology")
                 except ValueError:
                     notes.append(f"could not parse expected window {expected_window!r}")
 

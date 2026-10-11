@@ -506,7 +506,7 @@ def set_climatology_time(ds, start_text, end_text):
     out.attrs["climatology_window_end"] = end_text
     out.attrs["climatology_time_policy"] = (
         "time coordinate set to midpoint of output climatology window; "
-        "time_bnds stores the configured window bounds"
+        "the variable referenced by time:climatology stores the configured window bounds"
     )
     return out
 

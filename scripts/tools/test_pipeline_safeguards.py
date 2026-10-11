@@ -161,6 +161,21 @@ class SafeguardTests(unittest.TestCase):
         self.assertIn('missing_time_bounds', report.read_text())
         self.assertEqual(self.run_script(AUDIT, **env, FAIL_ON_ISSUE='no').returncode, 0)
 
+        # CDO can rename time_bnds while retaining the CF climatology
+        # reference. The audit must follow that reference rather than require
+        # one hard-coded auxiliary-variable name.
+        field = self.field(time='2055-01-01').to_dataset()
+        field['climatology_bnds'] = xr.DataArray(
+            np.array([[np.datetime64('2050-01-01'), np.datetime64('2060-12-31')]]),
+            dims=('time', 'bnds'),
+            coords={'time': field.time, 'bnds': [0, 1]},
+        )
+        field.time.attrs['climatology'] = 'climatology_bnds'
+        field.to_netcdf(file)
+        result = self.run_script(AUDIT, **env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(',ok,', report.read_text())
+
     def test_expected_missing_product_is_reported(self):
         products = self.root/'products'; products.mkdir()
         expected = self.root/'expected.txt'; expected.write_text('future/missing.nc\n')

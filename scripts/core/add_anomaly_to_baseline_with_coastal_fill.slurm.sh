@@ -312,6 +312,72 @@ remap_preserving_qc_mask() {
   else
     cdo -L -O "${method},${gridfile}" "${src}" "${dst}"
   fi
+
+  # CDO may preserve the raw climatology-bounds values while changing the
+  # time reference units to the midpoint. Copy the small time coordinate and
+  # its referenced bounds back from the scientifically identical source grid
+  # so the remapped file decodes to the original climatology window.
+  python3 - "${src}" "${dst}" <<'PY_RESTORE_CLIMATOLOGY_TIME'
+import sys
+
+from netCDF4 import Dataset
+
+source_path, destination_path = sys.argv[1:]
+
+with Dataset(source_path) as source, Dataset(destination_path, "r+") as destination:
+    if "time" not in source.variables or "time" not in destination.variables:
+        raise ValueError("Cannot preserve climatology metadata without time variables")
+
+    source_time = source.variables["time"]
+    destination_time = destination.variables["time"]
+    source_bounds_name = str(getattr(source_time, "climatology", "")).strip()
+    destination_bounds_name = str(getattr(destination_time, "climatology", "")).strip()
+
+    if not source_bounds_name:
+        # A non-climatological time coordinate has no bounds to restore.
+        raise SystemExit(0)
+    if source_bounds_name not in source.variables:
+        raise ValueError(
+            f"Source time coordinate references missing bounds variable "
+            f"{source_bounds_name!r}: {source_path}"
+        )
+    if not destination_bounds_name or destination_bounds_name not in destination.variables:
+        raise ValueError(
+            f"Remapped time coordinate lacks its referenced climatology bounds: "
+            f"{destination_path}"
+        )
+
+    source_bounds = source.variables[source_bounds_name]
+    destination_bounds = destination.variables[destination_bounds_name]
+    if source_time.shape != destination_time.shape:
+        raise ValueError(
+            f"Time shape changed during remap: {source_time.shape} -> "
+            f"{destination_time.shape}"
+        )
+    if source_bounds.shape != destination_bounds.shape:
+        raise ValueError(
+            f"Climatology-bounds shape changed during remap: "
+            f"{source_bounds.shape} -> {destination_bounds.shape}"
+        )
+
+    destination_time[:] = source_time[:]
+    destination_bounds[:] = source_bounds[:]
+
+    for name in source_time.ncattrs():
+        if name not in {"_FillValue", "climatology"}:
+            destination_time.setncattr(name, source_time.getncattr(name))
+    destination_time.setncattr("climatology", destination_bounds_name)
+
+    for name in source_bounds.ncattrs():
+        if name != "_FillValue":
+            destination_bounds.setncattr(name, source_bounds.getncattr(name))
+
+    destination.sync()
+    print(
+        f"[META ] Restored time and {destination_bounds_name} from "
+        f"{source_bounds_name}"
+    )
+PY_RESTORE_CLIMATOLOGY_TIME
 }
 
 echo "============================================================"

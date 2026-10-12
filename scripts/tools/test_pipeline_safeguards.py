@@ -136,6 +136,51 @@ class SafeguardTests(unittest.TestCase):
             self.assertTrue(np.isnan(ds.chl[0, 0, 0, 0]))
             self.assertEqual(int(ds.chl_log_ratio_qc_valid[0, 0, 0, 0]), 0)
 
+    def test_remap_restores_climatology_time_encoding(self):
+        import netCDF4
+
+        source = self.root/'source.nc'
+        destination = self.root/'destination.nc'
+        with netCDF4.Dataset(source, 'w') as ds:
+            ds.createDimension('time', 1)
+            ds.createDimension('bnds', 2)
+            time = ds.createVariable('time', 'f8', ('time',))
+            time.units = 'days since 2030-01-01 00:00:00'
+            time.calendar = 'proleptic_gregorian'
+            time.climatology = 'time_bnds'
+            time[:] = [2008.5]
+            bounds = ds.createVariable('time_bnds', 'f8', ('time', 'bnds'))
+            bounds.units = time.units
+            bounds.calendar = time.calendar
+            bounds[:] = [[0, 4017]]
+        with netCDF4.Dataset(destination, 'w') as ds:
+            ds.createDimension('time', 1)
+            ds.createDimension('bnds', 2)
+            time = ds.createVariable('time', 'f8', ('time',))
+            time.units = 'days since 2035-07-02 00:00:00'
+            time.calendar = 'proleptic_gregorian'
+            time.climatology = 'climatology_bnds'
+            time[:] = [0]
+            bounds = ds.createVariable('climatology_bnds', 'f8', ('time', 'bnds'))
+            bounds[:] = [[0, 4017]]
+
+        result = subprocess.run(
+            [sys.executable, '-', str(source), str(destination)],
+            input=embedded(ADD, 'PY_RESTORE_CLIMATOLOGY_TIME'),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with netCDF4.Dataset(destination) as ds:
+            self.assertEqual(ds.variables['time'].units, 'days since 2030-01-01 00:00:00')
+            self.assertEqual(ds.variables['time'].climatology, 'climatology_bnds')
+            np.testing.assert_allclose(ds.variables['time'][:], [2008.5])
+            np.testing.assert_allclose(ds.variables['climatology_bnds'][:], [[0, 4017]])
+            self.assertEqual(
+                ds.variables['climatology_bnds'].units,
+                'days since 2030-01-01 00:00:00',
+            )
+
     def test_real_add_and_mismatch(self):
         base = self.root/'base.nc'; anomaly = self.root/'anomaly.nc'; out = self.root/'out'
         self.field(2.).to_netcdf(base); self.field(4., '2050-01-01').to_netcdf(anomaly)

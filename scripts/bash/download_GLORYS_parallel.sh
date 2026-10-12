@@ -20,7 +20,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # ========= Paths =========
 REPO_ROOT="/home/sandbox-sparc/cesmle-ocn-fetch"
-OUTROOT="${REPO_ROOT}/glorys12v1"
+OUTROOT="${OUTROOT:-/home/SB5/reanalysis/glorys12v1/downloads}"
 LOGDIR="${REPO_ROOT}/logs"
 mkdir -p "$OUTROOT" "$LOGDIR"
 

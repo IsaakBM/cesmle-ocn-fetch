@@ -18,7 +18,7 @@ set -euo pipefail
 #   - It builds monthly means and harmonizes them to a 0.05 x 0.05 degree
 #     global grid.
 #   - Expected input layout:
-#       /home/sandbox-sparc/cesmle-ocn-fetch/glorys12v1/<year>/<month>/*.nc*
+#       /home/SB5/reanalysis/glorys12v1/downloads/<year>/<month>/*.nc*
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -64,7 +64,7 @@ make_sbatch_extra_args() {
 # Dataset-specific settings
 # ------------------------------------------------------------------------------
 DATASET_LABEL="glorys12v1"
-INROOT="/home/sandbox-sparc/cesmle-ocn-fetch/glorys12v1"
+INROOT="${INROOT:-/home/SB5/reanalysis/glorys12v1/downloads}"
 OUTROOT="/home/SB5/reanalysis/glorys12v1/monthly_0p05"
 GRIDFILE="${OUTROOT}/grid_0p05_global.txt"
 METHOD="remapbil"

@@ -58,7 +58,7 @@ MONTHS="${MONTHS:-01 02 03 04 05 06 07 08 09 10 11 12}"
 # Dataset-specific settings
 # ------------------------------------------------------------------------------
 DATASET_LABEL="global_ocean_biogeochemistry_hindcast"
-INROOT="/home/sandbox-sparc/cesmle-ocn-fetch/bgc_monthly_0p25"
+INROOT="${INROOT:-/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/downloads}"
 OUTROOT="/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25"
 GRIDFILE="${OUTROOT}/grid_0p25_global.txt"
 METHOD="remapbil"

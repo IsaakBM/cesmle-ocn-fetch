@@ -27,7 +27,9 @@ Use `/home/SB5/reanalysis` for trusted present-day reanalysis, hindcast, and
 baseline variants.
 
 ```text
+/home/SB5/reanalysis/glorys12v1/downloads
 /home/SB5/reanalysis/glorys12v1/monthly_0p05
+/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/downloads
 /home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25
 /home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05
 /home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast

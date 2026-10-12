@@ -2288,8 +2288,9 @@ Examples:
 Common paths used in the current workflows include:
 
 - `/home/sandbox-sparc/cesmle-ocn-fetch`
-- `/home/sandbox-sparc/cesmle-ocn-fetch/bgc_monthly_0p25`
+- `/home/SB5/reanalysis/glorys12v1/downloads`
 - `/home/SB5/reanalysis/glorys12v1/monthly_0p05`
+- `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/downloads`
 - `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25`
 - `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05`
 - `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast`

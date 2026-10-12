@@ -27,7 +27,7 @@ CORE_SCRIPT="${SCRIPT_DIR}/../../core/temporal_aggregate_regrid.slurm.sh"
 # ------------------------------------------------------------------------------
 # Control variables here, one at a time if preferred
 # ------------------------------------------------------------------------------
-VARS=(
+VARS_DEFAULT=(
   chl
   no3
   po4
@@ -38,8 +38,9 @@ VARS=(
   ph
   phyc
 )
+read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
 
-YEARS=(
+YEARS_DEFAULT=(
   2006
   2007
   2008
@@ -50,6 +51,8 @@ YEARS=(
   2013
   2014
 )
+read -r -a YEARS <<< "${YEARS:-${YEARS_DEFAULT[*]}}"
+MONTHS="${MONTHS:-01 02 03 04 05 06 07 08 09 10 11 12}"
 
 # ------------------------------------------------------------------------------
 # Dataset-specific settings
@@ -88,6 +91,7 @@ for v in "${VARS[@]}"; do
     jid=$(DATASET_LABEL="$DATASET_LABEL" \
       VAR="$v" \
       YEAR="$y" \
+      MONTHS="$MONTHS" \
       INROOT="$INROOT" \
       OUTROOT="$OUTROOT" \
       GRIDFILE="$GRIDFILE" \

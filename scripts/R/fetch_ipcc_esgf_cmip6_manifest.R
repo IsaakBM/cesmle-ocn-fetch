@@ -16,9 +16,12 @@
 #        <out-root>/<model>/<member>/<experiment>/<variable>/<filename>
 #    - Existing files are kept when their checksum matches the manifest.
 #    - By default, files are limited to chunks that overlap the processing
-#      windows used by this project:
-#        historical: 2006-2014
-#        future: 2030-2040, 2050-2060, 2090-2100
+#      windows used by this project, including each preceding December needed
+#      for season-year climatologies:
+#        historical: December 2005 through December 2014
+#        future: December 2029 through December 2040,
+#                December 2049 through December 2060, and
+#                December 2089 through December 2100
 #    - If a selected ESGF endpoint fails, the fetcher can try alternate replica
 #      URLs from the full discovered files manifest when available.
 #    - By default, failed files are reported and the fetch continues so one
@@ -74,7 +77,7 @@ variables <- split_env("VARS")
 windows <- data.frame(
   experiment_group = c("historical", "future", "future", "future"),
   label = c("2006-2014", "2030-2040", "2050-2060", "2090-2100"),
-  start = as.Date(c("2006-01-01", "2030-01-01", "2050-01-01", "2090-01-01")),
+  start = as.Date(c("2005-12-01", "2029-12-01", "2049-12-01", "2089-12-01")),
   end = as.Date(c("2014-12-31", "2040-12-31", "2060-12-31", "2100-12-31"))
 )
 

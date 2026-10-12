@@ -51,6 +51,7 @@ YEARS_DEFAULT=(
   2014
 )
 read -r -a YEARS <<< "${YEARS:-${YEARS_DEFAULT[*]}}"
+MONTHS="${MONTHS:-01 02 03 04 05 06 07 08 09 10 11 12}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
 
 make_sbatch_extra_args() {
@@ -98,6 +99,7 @@ for v in "${VARS[@]}"; do
     jid=$(DATASET_LABEL="$DATASET_LABEL" \
       VAR="$v" \
       YEAR="$y" \
+      MONTHS="$MONTHS" \
       INROOT="$INROOT" \
       OUTROOT="$OUTROOT" \
       GRIDFILE="$GRIDFILE" \

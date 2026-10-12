@@ -31,7 +31,14 @@ DATASET_BGC_MONTHLY="cmems_mod_glo_bgc_my_0.25deg_P1M-m"
 # ========= Time window (override at submit time) =========
 YEAR_START="${YEAR_START:-1993}"
 YEAR_END="${YEAR_END:-2025}"
-MONTHS=(01 02 03 04 05 06 07 08 09 10 11 12)
+read -r -a MONTHS <<< "${MONTHS:-01 02 03 04 05 06 07 08 09 10 11 12}"
+
+for month in "${MONTHS[@]}"; do
+  if [[ ! "$month" =~ ^(0[1-9]|1[0-2])$ ]]; then
+    echo "[fatal] Invalid MONTHS entry '${month}'; use two-digit values 01 through 12."
+    exit 1
+  fi
+done
 
 # ========= Parallelism =========
 CPUS="${SLURM_CPUS_PER_TASK:-6}"

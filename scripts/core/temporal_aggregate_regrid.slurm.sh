@@ -48,6 +48,7 @@ set -euo pipefail
 # Optional env vars
 #   INPUT_LAYOUT  : year_month | timeseries (default: year_month)
 #   YEAR          : year to process when INPUT_LAYOUT=year_month
+#   MONTHS        : space-separated two-digit months (default: 01 through 12)
 #   FILE_GLOB     : input file glob (default: *.nc*)
 #   METHOD        : CDO remapping method or auto (default: remapbil)
 #   AUTO_METHOD_DEFAULT     : method used in auto mode for regular grids
@@ -65,6 +66,7 @@ CDO="${CDO:-/usr/bin/cdo}"
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"
 YEAR="${YEAR:-}"
+read -r -a MONTH_LIST <<< "${MONTHS:-01 02 03 04 05 06 07 08 09 10 11 12}"
 INROOT="${INROOT:-}"
 OUTROOT="${OUTROOT:-}"
 GRIDFILE="${GRIDFILE:-}"
@@ -104,6 +106,25 @@ fi
 if [[ "$INPUT_LAYOUT" == "year_month" && -z "$YEAR" ]]; then
   echo "ERROR: YEAR must be set when INPUT_LAYOUT=year_month"
   exit 1
+fi
+
+if [[ "$INPUT_LAYOUT" == "year_month" ]]; then
+  if (( ${#MONTH_LIST[@]} == 0 )); then
+    echo "ERROR: MONTHS must select at least one month"
+    exit 1
+  fi
+  declare -A SEEN_MONTHS=()
+  for month in "${MONTH_LIST[@]}"; do
+    if [[ ! "$month" =~ ^(0[1-9]|1[0-2])$ ]]; then
+      echo "ERROR: Invalid MONTHS entry '${month}'; use two-digit values 01 through 12"
+      exit 1
+    fi
+    if [[ -n "${SEEN_MONTHS[$month]:-}" ]]; then
+      echo "ERROR: Duplicate MONTHS entry: ${month}"
+      exit 1
+    fi
+    SEEN_MONTHS[$month]=1
+  done
 fi
 
 if [[ ! -d "$INROOT" ]]; then
@@ -158,6 +179,9 @@ echo " Input layout   : $INPUT_LAYOUT"
 echo " Variable       : $VAR"
 if [[ -n "$YEAR" ]]; then
   echo " Year           : $YEAR"
+fi
+if [[ "$INPUT_LAYOUT" == "year_month" ]]; then
+  echo " Months         : ${MONTH_LIST[*]}"
 fi
 echo " File glob      : $FILE_GLOB"
 echo " Output dir     : $OUTDIR"
@@ -361,7 +385,7 @@ export DATASET_LABEL INROOT OUTROOT OUTDIR PARTS TMPDIR VAR GRIDFILE METHOD AUTO
 # Main
 # ==============================================================================
 if [[ "$INPUT_LAYOUT" == "year_month" ]]; then
-  printf "%s\n" 01 02 03 04 05 06 07 08 09 10 11 12 \
+  printf "%s\n" "${MONTH_LIST[@]}" \
     | xargs -I{} -P "$NPROC" bash -c 'process_month "$@"' _ "$YEAR" {}
 else
   mapfile -t TS_FILES < <(find "$INROOT" -maxdepth 1 -type f -name "$FILE_GLOB" | sort)

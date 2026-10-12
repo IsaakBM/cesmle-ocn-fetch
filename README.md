@@ -1169,6 +1169,37 @@ Operational sequence for the current IPCC branch:
    - historical baseline window: `2006-2014`
    - future windows: `2030-2040`, `2050-2060`, and `2090-2100`
 
+   The existing whole-window climatology remains the default. Monthly
+   climatologies are an explicit opt-in and use the same runner:
+
+   ```bash
+   CLIMATOLOGY_MODE=monthly \
+   WINDOWS="baseline 2030-2040 2050-2060 2090-2100" \
+   bash scripts/runners/ipcc_esgf/run_climatology_window.sh
+   ```
+
+   `CLIMATOLOGY_MODE=monthly` writes to `clim_monthly/` and produces 13
+   independently validated fields for each variable and window:
+
+   - `..._clim_month_01_<window>.nc` through
+     `..._clim_month_12_<window>.nc` contain the twelve calendar-month
+     climatologies within the requested years;
+   - `..._clim_previous_december_<window>.nc` contains December from the year
+     preceding each season year. For `2006-2014`, this means December
+     `2005-2013`; for `2030-2040`, it means December `2029-2039`.
+
+   Every field must contain exactly one observation per contributing year.
+   Before calculation, the worker also rejects missing or duplicate source
+   months across the full required interval. All 13 temporary results must
+   succeed before any final monthly output is replaced. The auxiliary previous
+   December is retained separately so it cannot be mistaken for the standard
+   December climatology.
+
+   The GLORYS and biogeochemical-hindcast climatology runners accept the same
+   `CLIMATOLOGY_MODE=monthly` setting. Their whole-window defaults and existing
+   `clim_windows/` outputs are unchanged. Monthly production should begin only
+   after the predecessor-December source coverage audit is complete.
+
 4. run [run_delta_from_climatologies.sh](scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh)
    - computes a change field from each discovered future climatology relative
      to historical `2006-2014` climatology

@@ -51,6 +51,12 @@ read -r -a MODELS <<< "${MODELS:-}"
 read -r -a SCENARIOS <<< "${SCENARIOS:-}"
 read -r -a WINDOWS <<< "${WINDOWS:-}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
+CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
+
+if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" ]]; then
+  echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly" >&2
+  exit 1
+fi
 
 contains_filter_value() {
   local value="$1"
@@ -105,6 +111,7 @@ FUT2090_WINDOW_END="2100-12-31"
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs
 
 echo "Submitting IPCC/ESGF climatology window jobs with generic worker:"
+echo "  mode: ${CLIMATOLOGY_MODE}"
 mapfile -t DISCOVERED_GROUPS < <(
   {
     ipcc_esgf_discover_monthly_groups_any_layout "${INROOT_BASE}" "on_glorys"
@@ -147,7 +154,11 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
   fi
 
   VAR_DIR="$(ipcc_esgf_monthly_var_dir_for_group "$INROOT_BASE" "$model" "$member" "$scen" "$v")"
-  OUT_DIR="${VAR_DIR}/clim_windows"
+  OUT_SUBDIR="clim_windows"
+  if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
+    OUT_SUBDIR="clim_monthly"
+  fi
+  OUT_DIR="${VAR_DIR}/${OUT_SUBDIR}"
   TMP_DIR="${VAR_DIR}/tmp_clim"
   file_glob="${v}_*_${model}_${scen}_*.nc"
 
@@ -172,6 +183,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         WINDOW_START="$HIST_WINDOW_START" \
         WINDOW_END="$HIST_WINDOW_END" \
         MERGE_INPUTS="auto" \
+        CLIMATOLOGY_MODE="$CLIMATOLOGY_MODE" \
         OUT_PREFIX="$out_prefix" \
         sbatch --parsable \
         "${sbatch_extra_args[@]}" \
@@ -190,6 +202,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         WINDOW_START="$FUT2030_WINDOW_START" \
         WINDOW_END="$FUT2030_WINDOW_END" \
         MERGE_INPUTS="auto" \
+        CLIMATOLOGY_MODE="$CLIMATOLOGY_MODE" \
         OUT_PREFIX="$out_prefix" \
         sbatch --parsable \
         "${sbatch_extra_args[@]}" \
@@ -208,6 +221,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         WINDOW_START="$FUT2050_WINDOW_START" \
         WINDOW_END="$FUT2050_WINDOW_END" \
         MERGE_INPUTS="auto" \
+        CLIMATOLOGY_MODE="$CLIMATOLOGY_MODE" \
         OUT_PREFIX="$out_prefix" \
         sbatch --parsable \
         "${sbatch_extra_args[@]}" \
@@ -226,6 +240,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         WINDOW_START="$FUT2090_WINDOW_START" \
         WINDOW_END="$FUT2090_WINDOW_END" \
         MERGE_INPUTS="auto" \
+        CLIMATOLOGY_MODE="$CLIMATOLOGY_MODE" \
         OUT_PREFIX="$out_prefix" \
         sbatch --parsable \
         "${sbatch_extra_args[@]}" \

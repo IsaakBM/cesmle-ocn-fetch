@@ -871,6 +871,67 @@ with atomic_product(sys.argv[1]) as candidate:
             xr.testing.assert_equal(outputs[0], outputs[1])
             np.testing.assert_allclose(outputs[1].thetao, 2.)
 
+    def test_monthly_climatologies_include_previous_december(self):
+        times = xr.date_range('1999-12-01', periods=13, freq='MS')
+        field = self.field().isel(time=0, drop=True).expand_dims(time=times).copy()
+        field.values[:] = np.arange(13)[:, None, None, None]
+        inputs = self.root/'monthly_inputs'; inputs.mkdir()
+        series = self.root/'monthly_series.nc'; field.to_netcdf(series)
+        for index, stamp in enumerate(times):
+            yyyymm = f'{stamp.year:04d}{stamp.month:02d}'
+            field.isel(time=slice(index, index + 1)).to_netcdf(inputs/f'thetao_{yyyymm}.nc')
+
+        for kind in ('timeseries', 'monthly_files'):
+            worker = ROOT/f'scripts/core/climatology_window_from_{kind}.slurm.sh'
+            out = self.root/f'{kind}_monthly'
+            env = dict(
+                VAR='thetao', OUT_DIR=str(out), OUT_PREFIX='fixture',
+                FILL_TOP_MISSING='no', CLIMATOLOGY_MODE='monthly',
+            )
+            if kind == 'timeseries':
+                env.update(
+                    IN_FILE=str(series), IN_DIR='', WINDOW_START='2000-01-01',
+                    WINDOW_END='2000-12-31',
+                )
+            else:
+                env.update(
+                    IN_DIR=str(inputs), WINDOW_START='200001', WINDOW_END='200012',
+                    EXPECTED_N='13',
+                )
+            result = self.run_script(worker, **env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            outputs = sorted(out.glob('*.nc'))
+            self.assertEqual(len(outputs), 13)
+
+            with xr.open_dataset(out/'fixture_clim_month_01_2000-2000.nc') as january:
+                np.testing.assert_allclose(january.thetao, 1.)
+                self.assertEqual(january.attrs['climatology_product_type'], 'monthly')
+                self.assertEqual(january.attrs['climatology_month'], 1)
+                self.assertEqual(january.attrs['climatology_field_role'], 'calendar_month')
+                self.assertEqual(january.attrs['climatology_selected_timesteps'], '1')
+            with xr.open_dataset(out/'fixture_clim_previous_december_2000-2000.nc') as previous:
+                np.testing.assert_allclose(previous.thetao, 0.)
+                self.assertEqual(previous.attrs['climatology_month'], 12)
+                self.assertEqual(previous.attrs['climatology_field_role'], 'previous_december')
+
+    def test_monthly_climatology_rejects_missing_month_without_publication(self):
+        times = xr.date_range('1999-12-01', periods=13, freq='MS').delete(4)
+        field = self.field().isel(time=0, drop=True).expand_dims(time=times)
+        inputs = self.root/'incomplete_monthly_inputs'; inputs.mkdir()
+        for index, stamp in enumerate(times):
+            yyyymm = f'{stamp.year:04d}{stamp.month:02d}'
+            field.isel(time=slice(index, index + 1)).to_netcdf(inputs/f'thetao_{yyyymm}.nc')
+        out = self.root/'incomplete_monthly_output'
+        result = self.run_script(
+            ROOT/'scripts/core/climatology_window_from_monthly_files.slurm.sh',
+            VAR='thetao', IN_DIR=str(inputs), OUT_DIR=str(out), OUT_PREFIX='fixture',
+            WINDOW_START='200001', WINDOW_END='200012', EXPECTED_N='13',
+            FILL_TOP_MISSING='no', CLIMATOLOGY_MODE='monthly',
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Missing months', result.stderr)
+        self.assertFalse(list(out.glob('*.nc')))
+
     def test_new_model_input_preflight(self):
         downloads = self.root/'downloads'
         def write_input(experiment, start, periods, member='r1i1p1f1', units='degC'):

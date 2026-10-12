@@ -55,6 +55,10 @@ shopt -s nullglob
 #   FILL_TOP_MISSING: yes | no (default: yes)
 #                     after climatology generation, fill missing top layers in
 #                     each water column from the first deeper valid layer
+#   CLIMATOLOGY_MODE: whole | monthly (default: whole)
+#                     whole preserves the existing single-window product;
+#                     monthly writes January-December climatologies plus an
+#                     auxiliary previous-December climatology
 # ==============================================================================
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"
@@ -69,6 +73,7 @@ WINDOW_END="${WINDOW_END:-201412}"
 EXPECTED_N="${EXPECTED_N:-108}"
 OUT_PREFIX="${OUT_PREFIX:-}"
 FILL_TOP_MISSING="${FILL_TOP_MISSING:-yes}"
+CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
 
 if [[ -z "$VAR" || -z "$IN_DIR" || -z "$OUT_DIR" ]]; then
   echo "ERROR: Missing required environment variables."
@@ -100,6 +105,11 @@ if [[ "$FILL_TOP_MISSING" != "yes" && "$FILL_TOP_MISSING" != "no" ]]; then
   exit 1
 fi
 
+if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" ]]; then
+  echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly"
+  exit 1
+fi
+
 mkdir -p "${OUT_DIR}" "${TMP_DIR}"
 
 echo "============================================================"
@@ -114,6 +124,7 @@ echo "DATE PATTERN: ${DATE_PATTERN}"
 echo "WINDOW      : ${WINDOW_START} to ${WINDOW_END}"
 echo "OUT PREFIX  : ${OUT_PREFIX}"
 echo "FILL TOP    : ${FILL_TOP_MISSING}"
+echo "CLIM MODE   : ${CLIMATOLOGY_MODE}"
 echo "============================================================"
 
 # ------------------------------------------------------------------------------
@@ -122,6 +133,10 @@ echo "============================================================"
 FILES=( "${IN_DIR}"/${FILE_GLOB} )
 
 VALID_FILES=()
+selection_start="${WINDOW_START}"
+if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
+  selection_start="$((10#${WINDOW_START:0:4} - 1))12"
+fi
 for f in "${FILES[@]}"; do
   [[ -f "$f" ]] || continue
 
@@ -132,7 +147,7 @@ for f in "${FILES[@]}"; do
     continue
   fi
 
-  if [[ "${yyyymm}" < "${WINDOW_START}" || "${yyyymm}" > "${WINDOW_END}" ]]; then
+  if [[ "${yyyymm}" < "${selection_start}" || "${yyyymm}" > "${WINDOW_END}" ]]; then
     continue
   fi
 
@@ -165,7 +180,7 @@ COVERAGE_INPUTS=( "${VALID_FILES[@]}" )
 # 360-day or no-leap dates into the Gregorian calendar. Check files separately so
 # overlapping chunks cannot hide duplicate months during a later merge.
 # ------------------------------------------------------------------------------
-python3 - "${WINDOW_START}" "${WINDOW_END}" monthly "${COVERAGE_INPUTS[@]}" <<'PY_MONTHLY_COVERAGE'
+python3 - "${selection_start}" "${WINDOW_END}" monthly "${COVERAGE_INPUTS[@]}" <<'PY_MONTHLY_COVERAGE'
 import collections
 import re
 import subprocess
@@ -229,6 +244,229 @@ except (ValueError, OSError, subprocess.CalledProcessError) as exc:
     sys.exit(1)
 PY_MONTHLY_COVERAGE
 
+write_climatology_metadata() {
+  local path="$1"
+  local start_text="$2"
+  local end_text="$3"
+  local selected_count="$4"
+  local product_type="$5"
+  local month_number="$6"
+  local role="$7"
+
+  python3 - "$path" "$start_text" "$end_text" "$selected_count" "$product_type" "$month_number" "$role" <<'PY_METADATA'
+import calendar
+import sys
+
+import numpy as np
+import xarray as xr
+
+path, start_text, end_text, selected_count, product_type, month_number, role = sys.argv[1:]
+if end_text.endswith("-last"):
+    year, month = map(int, end_text[:-5].split("-"))
+    end_text = f"{year:04d}-{month:02d}-{calendar.monthrange(year, month)[1]:02d}"
+start = np.datetime64(start_text)
+end = np.datetime64(end_text)
+midpoint = start + (end - start) // 2
+
+with xr.open_dataset(path) as ds:
+    out = ds.load()
+if "time" in out.dims:
+    if out.sizes["time"] != 1:
+        raise ValueError(
+            f"Expected singleton climatology time dimension, got {out.sizes['time']}"
+        )
+    out = out.assign_coords(time=("time", np.array([midpoint], dtype="datetime64[ns]")))
+else:
+    out = out.expand_dims(time=np.array([midpoint], dtype="datetime64[ns]"))
+attrs = dict(out["time"].attrs)
+attrs.update({"long_name": "climatology time", "climatology": "time_bnds"})
+out["time"].attrs = attrs
+out["time_bnds"] = xr.DataArray(
+    np.array([[start, end]], dtype="datetime64[ns]"),
+    coords={"time": out["time"], "bnds": [0, 1]},
+    dims=("time", "bnds"),
+)
+out.attrs["climatology_window_start"] = start_text
+out.attrs["climatology_window_end"] = end_text
+out.attrs["climatology_selected_timesteps"] = selected_count
+if product_type:
+    out.attrs["climatology_product_type"] = product_type
+if month_number:
+    out.attrs["climatology_month"] = int(month_number)
+if role:
+    out.attrs["climatology_field_role"] = role
+out.to_netcdf(path, format="NETCDF4")
+PY_METADATA
+}
+
+fill_top_layers() {
+  local infile="$1"
+  local outfile="$2"
+
+  python3 - "$infile" "$outfile" "$VAR" <<'PY_FILL_TOP'
+import sys
+
+import numpy as np
+import xarray as xr
+
+infile, outfile, var_hint = sys.argv[1:]
+ds = xr.open_dataset(infile)
+
+def pick_main_var(dataset, hint):
+    if hint in dataset.data_vars:
+        return hint
+    candidates = [
+        name for name in dataset.data_vars
+        if "bnds" not in name.lower() and "bounds" not in name.lower()
+    ]
+    if not candidates:
+        raise ValueError(f"No valid data variable found in dataset: {list(dataset.data_vars)}")
+    return candidates[0]
+
+main_var = pick_main_var(ds, var_hint)
+da = ds[main_var]
+zdim_names = ("depth", "depth_below_sea", "lev", "z_t")
+zdim_candidates = [dimension for dimension in da.dims if dimension.lower() in zdim_names]
+
+filled_top_count = 0
+first_valid_index = None
+
+if zdim_candidates:
+    zdim = zdim_candidates[0]
+    other_dims = [dimension for dimension in da.dims if dimension != zdim]
+    if other_dims:
+        transposed = da.transpose(zdim, *other_dims)
+        values = transposed.values
+        nlev = values.shape[0]
+        flat = values.reshape(nlev, -1)
+
+        first_valid_indices = np.full(flat.shape[1], -1, dtype=int)
+        for column in range(flat.shape[1]):
+            valid = np.where(np.isfinite(flat[:, column]))[0]
+            if valid.size > 0:
+                first_valid_indices[column] = int(valid[0])
+
+        for column in range(flat.shape[1]):
+            donor_index = first_valid_indices[column]
+            if donor_index <= 0:
+                continue
+            donor_value = flat[donor_index, column]
+            for level_index in range(donor_index):
+                if not np.isfinite(flat[level_index, column]):
+                    flat[level_index, column] = donor_value
+                    filled_top_count += 1
+
+        filled_values = flat.reshape(values.shape)
+        filled = xr.DataArray(
+            filled_values,
+            coords=transposed.coords,
+            dims=transposed.dims,
+            attrs=da.attrs,
+            name=da.name,
+        ).transpose(*da.dims)
+
+        valid_indices = first_valid_indices[first_valid_indices >= 0]
+        if valid_indices.size > 0:
+            first_valid_index = int(valid_indices.min())
+
+        ds[main_var] = filled
+else:
+    zdim = None
+
+encoding = {main_var: {"zlib": True, "complevel": 1}}
+print(f"MAIN VAR           : {main_var}")
+print(f"VERTICAL DIM       : {zdim}")
+print(f"FIRST VALID INDEX  : {first_valid_index}")
+print(f"TOP LEVELS FILLED  : {filled_top_count}")
+ds.to_netcdf(outfile, format="NETCDF4", encoding=encoding)
+ds.close()
+PY_FILL_TOP
+}
+
+if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
+  start_year="${WINDOW_START:0:4}"
+  end_year="${WINDOW_END:0:4}"
+  expected_per_field=$((10#${end_year} - 10#${start_year} + 1))
+  previous_start_year=$((10#${start_year} - 1))
+  previous_end_year=$((10#${end_year} - 1))
+  monthly_temps=()
+  monthly_outputs=()
+
+  echo "[STEP1] Computing twelve calendar-month climatologies"
+  for month in {1..12}; do
+    month_padded="$(printf '%02d' "$month")"
+    month_files=()
+    for input_file in "${VALID_FILES[@]}"; do
+      filename="$(basename "$input_file")"
+      yyyymm="$(printf '%s\n' "$filename" | grep -oE "${DATE_PATTERN}" | head -n 1 || true)"
+      year="${yyyymm:0:4}"
+      input_month="${yyyymm:4:2}"
+      if [[ "$year" -ge "$start_year" && "$year" -le "$end_year" && "$input_month" == "$month_padded" ]]; then
+        month_files+=( "$input_file" )
+      fi
+    done
+    if [[ "${#month_files[@]}" -ne "$expected_per_field" ]]; then
+      echo "ERROR: Month ${month_padded} expected ${expected_per_field} files, found ${#month_files[@]}" >&2
+      exit 1
+    fi
+
+    monthly_tmp="${TMP_DIR}/${OUT_PREFIX}_clim_month_${month_padded}_${start_year}-${end_year}.tmp.nc"
+    monthly_filled="${TMP_DIR}/${OUT_PREFIX}_clim_month_${month_padded}_${start_year}-${end_year}.filled.tmp.nc"
+    monthly_out="${OUT_DIR}/${OUT_PREFIX}_clim_month_${month_padded}_${start_year}-${end_year}.nc"
+    rm -f "$monthly_tmp" "$monthly_filled"
+    cdo -L -O timmean -mergetime "${month_files[@]}" "$monthly_tmp"
+    write_climatology_metadata "$monthly_tmp" \
+      "${start_year}-${month_padded}-01" "${end_year}-${month_padded}-last" \
+      "${#month_files[@]}" "monthly" "$month" "calendar_month"
+    if [[ "$FILL_TOP_MISSING" == "yes" ]]; then
+      fill_top_layers "$monthly_tmp" "$monthly_filled"
+      mv -f "$monthly_filled" "$monthly_tmp"
+    fi
+    monthly_temps+=( "$monthly_tmp" )
+    monthly_outputs+=( "$monthly_out" )
+  done
+
+  previous_files=()
+  for input_file in "${VALID_FILES[@]}"; do
+    filename="$(basename "$input_file")"
+    yyyymm="$(printf '%s\n' "$filename" | grep -oE "${DATE_PATTERN}" | head -n 1 || true)"
+    year="${yyyymm:0:4}"
+    input_month="${yyyymm:4:2}"
+    if [[ "$year" -ge "$previous_start_year" && "$year" -le "$previous_end_year" && "$input_month" == "12" ]]; then
+      previous_files+=( "$input_file" )
+    fi
+  done
+  if [[ "${#previous_files[@]}" -ne "$expected_per_field" ]]; then
+    echo "ERROR: Previous December expected ${expected_per_field} files, found ${#previous_files[@]}" >&2
+    exit 1
+  fi
+
+  previous_tmp="${TMP_DIR}/${OUT_PREFIX}_clim_previous_december_${start_year}-${end_year}.tmp.nc"
+  previous_filled="${TMP_DIR}/${OUT_PREFIX}_clim_previous_december_${start_year}-${end_year}.filled.tmp.nc"
+  previous_out="${OUT_DIR}/${OUT_PREFIX}_clim_previous_december_${start_year}-${end_year}.nc"
+  rm -f "$previous_tmp" "$previous_filled"
+  cdo -L -O timmean -mergetime "${previous_files[@]}" "$previous_tmp"
+  write_climatology_metadata "$previous_tmp" \
+    "${previous_start_year}-12-01" "${previous_end_year}-12-31" \
+    "${#previous_files[@]}" "monthly" "12" "previous_december"
+  if [[ "$FILL_TOP_MISSING" == "yes" ]]; then
+    fill_top_layers "$previous_tmp" "$previous_filled"
+    mv -f "$previous_filled" "$previous_tmp"
+  fi
+  monthly_temps+=( "$previous_tmp" )
+  monthly_outputs+=( "$previous_out" )
+
+  echo "[STEP2] Publishing all 13 monthly climatology fields"
+  for index in "${!monthly_temps[@]}"; do
+    mv -f "${monthly_temps[$index]}" "${monthly_outputs[$index]}"
+    echo "[DONE ] ${monthly_outputs[$index]}"
+  done
+
+  echo
+  echo "All 13 monthly climatology fields completed for VAR=${VAR}"
+  exit 0
+fi
+
 # ------------------------------------------------------------------------------
 # Output names
 # ------------------------------------------------------------------------------
@@ -245,126 +483,14 @@ rm -f "${TMP_OUT}" "${TMP_FILLED}"
 echo "[STEP2] Computing climatological mean directly from monthly files"
 cdo -L -O timmean -mergetime "${VALID_FILES[@]}" "${TMP_OUT}"
 
-python3 - <<PY
-import numpy as np
-import xarray as xr
-
-path = "${TMP_OUT}"
-start_yyyymm = "${WINDOW_START}"
-end_yyyymm = "${WINDOW_END}"
-start_text = f"{start_yyyymm[:4]}-{start_yyyymm[4:6]}-01"
-end_text = f"{end_yyyymm[:4]}-{end_yyyymm[4:6]}-28"
-start = np.datetime64(start_text)
-end = np.datetime64(end_text)
-midpoint = start + (end - start) // 2
-
-with xr.open_dataset(path) as ds:
-    out = ds.load()
-if "time" in out.dims:
-    if out.sizes["time"] != 1:
-        raise ValueError(f"Expected singleton climatology time dimension, got {out.sizes['time']}")
-    out = out.assign_coords(time=("time", np.array([midpoint], dtype="datetime64[ns]")))
-else:
-    out = out.expand_dims(time=np.array([midpoint], dtype="datetime64[ns]"))
-attrs = dict(out["time"].attrs)
-attrs.update({"long_name": "climatology time", "climatology": "time_bnds"})
-out["time"].attrs = attrs
-out["time_bnds"] = xr.DataArray(
-    np.array([[start, end]], dtype="datetime64[ns]"),
-    coords={"time": out["time"], "bnds": [0, 1]},
-    dims=("time", "bnds"),
-)
-out.attrs["climatology_window_start"] = start_text
-out.attrs["climatology_window_end"] = end_text
-out.attrs["climatology_selected_timesteps"] = "${#VALID_FILES[@]}"
-out.to_netcdf(path, format="NETCDF4")
-PY
+write_climatology_metadata "$TMP_OUT" \
+  "${WINDOW_START:0:4}-${WINDOW_START:4:2}-01" \
+  "${WINDOW_END:0:4}-${WINDOW_END:4:2}-28" \
+  "${#VALID_FILES[@]}" "" "" ""
 
 if [[ "$FILL_TOP_MISSING" == "yes" ]]; then
   echo "[STEP3] Filling missing top climatology layers dynamically"
-  python3 - <<PY
-import numpy as np
-import xarray as xr
-
-infile = "${TMP_OUT}"
-outfile = "${TMP_FILLED}"
-var_hint = "${VAR}"
-
-ds = xr.open_dataset(infile)
-
-def pick_main_var(ds, var_hint):
-    if var_hint in ds.data_vars:
-        return var_hint
-    candidates = [
-        v for v in ds.data_vars
-        if "bnds" not in v.lower() and "bounds" not in v.lower()
-    ]
-    if not candidates:
-        raise ValueError(f"No valid data variable found in dataset: {list(ds.data_vars)}")
-    return candidates[0]
-
-main_var = pick_main_var(ds, var_hint)
-da = ds[main_var]
-zdim_names = ("depth", "depth_below_sea", "lev", "z_t")
-zdim_candidates = [d for d in da.dims if d.lower() in zdim_names]
-
-filled_top_count = 0
-first_valid_index = None
-
-if zdim_candidates:
-    zdim = zdim_candidates[0]
-    other_dims = [d for d in da.dims if d != zdim]
-    if other_dims:
-        transposed = da.transpose(zdim, *other_dims)
-        arr = transposed.values
-        nlev = arr.shape[0]
-        flat = arr.reshape(nlev, -1)
-
-        first_valid_indices = np.full(flat.shape[1], -1, dtype=int)
-        for col in range(flat.shape[1]):
-            valid = np.where(np.isfinite(flat[:, col]))[0]
-            if valid.size > 0:
-                first_valid_indices[col] = int(valid[0])
-
-        for col in range(flat.shape[1]):
-            donor_idx = first_valid_indices[col]
-            if donor_idx <= 0:
-                continue
-            donor_val = flat[donor_idx, col]
-            for idx in range(donor_idx):
-                if not np.isfinite(flat[idx, col]):
-                    flat[idx, col] = donor_val
-                    filled_top_count += 1
-
-        filled_arr = flat.reshape(arr.shape)
-        da_filled = xr.DataArray(
-            filled_arr,
-            coords=transposed.coords,
-            dims=transposed.dims,
-            attrs=da.attrs,
-            name=da.name,
-        ).transpose(*da.dims)
-
-        valid_indices = first_valid_indices[first_valid_indices >= 0]
-        if valid_indices.size > 0:
-            first_valid_index = int(valid_indices.min())
-
-        ds[main_var] = da_filled
-    else:
-        zdim = zdim_candidates[0]
-else:
-    zdim = None
-
-encoding = {main_var: {"zlib": True, "complevel": 1}}
-
-print(f"MAIN VAR           : {main_var}")
-print(f"VERTICAL DIM       : {zdim}")
-print(f"FIRST VALID INDEX  : {first_valid_index}")
-print(f"TOP LEVELS FILLED  : {filled_top_count}")
-
-ds.to_netcdf(outfile, format="NETCDF4", encoding=encoding)
-ds.close()
-PY
+  fill_top_layers "$TMP_OUT" "$TMP_FILLED"
   mv -f "${TMP_FILLED}" "${TMP_OUT}"
 fi
 

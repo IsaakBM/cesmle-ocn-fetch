@@ -39,6 +39,12 @@ VARS_DEFAULT=(
 )
 read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
+CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
+
+if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" ]]; then
+  echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly" >&2
+  exit 1
+fi
 
 make_sbatch_extra_args() {
   if [[ -n "$EXCLUDE_NODES" ]]; then
@@ -54,13 +60,21 @@ INROOT_BASE="/home/SB5/reanalysis/glorys12v1/monthly_0p05"
 WINDOW_START="200601"
 WINDOW_END="201412"
 EXPECTED_N=108
+if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
+  EXPECTED_N=109
+fi
 
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs
 
 echo "Submitting GLORYS climatology window jobs with generic worker:"
+echo "  mode: ${CLIMATOLOGY_MODE}"
 for v in "${VARS[@]}"; do
   IN_DIR="${INROOT_BASE}/${v}/parts"
-  OUT_DIR="${INROOT_BASE}/${v}/clim_windows"
+  OUT_SUBDIR="clim_windows"
+  if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
+    OUT_SUBDIR="clim_monthly"
+  fi
+  OUT_DIR="${INROOT_BASE}/${v}/${OUT_SUBDIR}"
   TMP_DIR="${INROOT_BASE}/${v}/tmp_clim"
 
   if [[ ! -d "$IN_DIR" ]]; then
@@ -78,6 +92,7 @@ for v in "${VARS[@]}"; do
     WINDOW_START="$WINDOW_START" \
     WINDOW_END="$WINDOW_END" \
     EXPECTED_N="$EXPECTED_N" \
+    CLIMATOLOGY_MODE="$CLIMATOLOGY_MODE" \
     OUT_PREFIX="${DATASET_LABEL}_${v}" \
     sbatch --parsable \
     "${sbatch_extra_args[@]}" \

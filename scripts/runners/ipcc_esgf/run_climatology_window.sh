@@ -24,6 +24,8 @@ set -euo pipefail
 #   - Historical is typically one long file.
 #   - SSP585 may contain multiple time chunks, which are merged automatically
 #     before the climatology window is selected and averaged.
+#   - Whole-window behavior remains the default; monthly and seasonal products
+#     are explicit CLIMATOLOGY_MODE options.
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,8 +55,8 @@ read -r -a WINDOWS <<< "${WINDOWS:-}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
 CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
 
-if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" ]]; then
-  echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly" >&2
+if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" && "$CLIMATOLOGY_MODE" != "seasonal" ]]; then
+  echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly, seasonal" >&2
   exit 1
 fi
 
@@ -157,6 +159,8 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
   OUT_SUBDIR="clim_windows"
   if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
     OUT_SUBDIR="clim_monthly"
+  elif [[ "$CLIMATOLOGY_MODE" == "seasonal" ]]; then
+    OUT_SUBDIR="clim_seasonal"
   fi
   OUT_DIR="${VAR_DIR}/${OUT_SUBDIR}"
   TMP_DIR="${VAR_DIR}/tmp_clim"

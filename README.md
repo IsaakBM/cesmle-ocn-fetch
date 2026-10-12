@@ -1178,27 +1178,58 @@ Operational sequence for the current IPCC branch:
    bash scripts/runners/ipcc_esgf/run_climatology_window.sh
    ```
 
-   `CLIMATOLOGY_MODE=monthly` writes to `clim_monthly/` and produces 13
+   `CLIMATOLOGY_MODE=monthly` writes to `clim_monthly/` and produces 12
    independently validated fields for each variable and window:
 
    - `..._clim_month_01_<window>.nc` through
      `..._clim_month_12_<window>.nc` contain the twelve calendar-month
-     climatologies within the requested years;
-   - `..._clim_previous_december_<window>.nc` contains December from the year
-     preceding each season year. For `2006-2014`, this means December
-     `2005-2013`; for `2030-2040`, it means December `2029-2039`.
+     climatologies within the requested years.
 
    Every field must contain exactly one observation per contributing year.
    Before calculation, the worker also rejects missing or duplicate source
-   months across the full required interval. All 13 temporary results must
-   succeed before any final monthly output is replaced. The auxiliary previous
-   December is retained separately so it cannot be mistaken for the standard
-   December climatology.
+   months across the requested January-December interval. All 12 temporary
+   results must succeed before any final monthly output is replaced.
 
    The GLORYS and biogeochemical-hindcast climatology runners accept the same
    `CLIMATOLOGY_MODE=monthly` setting. Their whole-window defaults and existing
-   `clim_windows/` outputs are unchanged. Monthly production should begin only
-   after the predecessor-December source coverage audit is complete.
+   `clim_windows/` outputs are unchanged.
+
+   Seasonal climatologies are also explicit opt-in products:
+
+   ```bash
+   CLIMATOLOGY_MODE=seasonal \
+   WINDOWS="baseline 2030-2040 2050-2060 2090-2100" \
+   bash scripts/runners/ipcc_esgf/run_climatology_window.sh
+   ```
+
+   This writes four files under `clim_seasonal/`, named
+   `..._clim_season_DJF_<window>.nc`, `MAM`, `JJA`, and `SON`. A season year is
+   identified by its January year, so DJF 2006 contains December 2005, January
+   2006, and February 2006. Every season year must contain exactly three source
+   months. The preceding December is consumed directly from the prepared source
+   data for DJF and is not published as a thirteenth monthly product. Therefore,
+   seasonal production begins only after the predecessor-December coverage
+   audit is complete. Seasonal mode consumes December preceding the first
+   season year through November of the last season year; the last window-year
+   December belongs to the following DJF and is not used. CDO `yearmonmean`
+   weights those months using their lengths in the decoded source calendar;
+   CDO `timmean` then gives every complete season year equal weight in the final
+   climatology. The worker validates every season year and completes all four
+   temporary fields before replacing final seasonal outputs. GLORYS and
+   biogeochemical-hindcast runners accept the same
+   `CLIMATOLOGY_MODE=seasonal` option.
+
+   Monthly and seasonal files use a canonical singleton climatology time
+   record. `time:climatology` points to the existing `time_bnds(time,bnds)`
+   variable; `time` and `time_bnds` share the same units and
+   `proleptic_gregorian` encoding. The coordinate is the midpoint of the first
+   and last contributing dates, placing calendar-month products in their named
+   month and DJF, MAM, JJA, and SON products in January, April, July, and
+   October, respectively. Each worker decodes and verifies those bounds and the
+   representative month before publishing any final files.
+   The later month-matched delta, downscaling, ensemble, and delivery stages
+   must preserve this canonical time record and repeat the same referential,
+   encoding, bounds, and representative-month checks before publication.
 
 4. run [run_delta_from_climatologies.sh](scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh)
    - computes a change field from each discovered future climatology relative

@@ -12,8 +12,8 @@
 #  Purpose:
 #    - Read one time-series file, or multiple time-series files, for a variable
 #    - Select a requested climatology time window with CDO
-#    - Compute one single climatology file by averaging all values in that
-#      window
+#    - Compute the existing whole-window climatology, 12 monthly climatology
+#      fields, or four calendar-weighted seasonal climatology fields
 #    - Support dataset-agnostic workflows such as CESM members, hindcast files,
 #      or any other long-form monthly time series
 #
@@ -56,10 +56,11 @@ shopt -s nullglob
 #   OUT_PREFIX      : output filename prefix (default: <DATASET_LABEL>_<VAR>)
 #   MERGE_INPUTS    : yes | no (default: auto)
 #                     auto merges when more than one file is provided
-#   CLIMATOLOGY_MODE: whole | monthly (default: whole)
+#   CLIMATOLOGY_MODE: whole | monthly | seasonal (default: whole)
 #                     whole preserves the existing single-window product;
-#                     monthly writes January-December climatologies plus an
-#                     auxiliary previous-December climatology
+#                     monthly writes January-December climatologies; seasonal
+#                     writes DJF, MAM, JJA, and SON climatologies and consumes
+#                     the preceding December required by DJF
 # ==============================================================================
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"
@@ -98,8 +99,8 @@ if [[ "$MERGE_INPUTS" != "yes" && "$MERGE_INPUTS" != "no" && "$MERGE_INPUTS" != 
   exit 1
 fi
 
-if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" ]]; then
-  echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly"
+if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" && "$CLIMATOLOGY_MODE" != "seasonal" ]]; then
+  echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly, seasonal"
   exit 1
 fi
 
@@ -185,11 +186,13 @@ fi
 # overlapping chunks cannot hide duplicate months during a later merge.
 # ------------------------------------------------------------------------------
 coverage_start="${WINDOW_START}"
-if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
+coverage_end="${WINDOW_END}"
+if [[ "$CLIMATOLOGY_MODE" == "seasonal" ]]; then
   coverage_start="$((10#${WINDOW_START:0:4} - 1))-12-01"
+  coverage_end="${WINDOW_END:0:4}-11-30"
 fi
 
-python3 - "${coverage_start}" "${WINDOW_END}" timeseries "${COVERAGE_INPUTS[@]}" <<'PY_MONTHLY_COVERAGE'
+python3 - "${coverage_start}" "${coverage_end}" timeseries "${COVERAGE_INPUTS[@]}" <<'PY_MONTHLY_COVERAGE'
 import collections
 import re
 import subprocess
@@ -268,10 +271,12 @@ fi
 
 echo "[STEP3] Selecting climatology window"
 selection_start="${WINDOW_START}"
-if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
+selection_end="${WINDOW_END}"
+if [[ "$CLIMATOLOGY_MODE" == "seasonal" ]]; then
   selection_start="$((10#${WINDOW_START:0:4} - 1))-12-01"
+  selection_end="${WINDOW_END:0:4}-11-30"
 fi
-cdo -L -O seldate,"${selection_start}","${WINDOW_END}" "${SOURCE_FILE}" "${TMP_SEL}"
+cdo -L -O seldate,"${selection_start}","${selection_end}" "${SOURCE_FILE}" "${TMP_SEL}"
 selected_steps="$(cdo -s ntime "${TMP_SEL}" | tr -d '[:space:]')"
 if [[ -z "${selected_steps}" || "${selected_steps}" -eq 0 ]]; then
   echo "ERROR: No timesteps selected for window ${WINDOW_START} to ${WINDOW_END} from ${SOURCE_FILE}" >&2
@@ -287,14 +292,16 @@ write_climatology_metadata() {
   local product_type="$5"
   local month_number="$6"
   local role="$7"
+  local season_name="$8"
+  local season_year_count="$9"
 
-  python3 - "$path" "$start_text" "$end_text" "$selected_count" "$product_type" "$month_number" "$role" <<'PY_METADATA'
+  python3 - "$path" "$start_text" "$end_text" "$selected_count" "$product_type" "$month_number" "$role" "$season_name" "$season_year_count" <<'PY_METADATA'
 import sys
 
 import numpy as np
 import xarray as xr
 
-path, start_text, end_text, selected_count, product_type, month_number, role = sys.argv[1:]
+path, start_text, end_text, selected_count, product_type, month_number, role, season_name, season_year_count = sys.argv[1:]
 if end_text.endswith("-last"):
     year, month = map(int, end_text[:-5].split("-"))
     end_text = f"{year:04d}-{month:02d}-{calendar.monthrange(year, month)[1]:02d}"
@@ -329,7 +336,83 @@ if month_number:
     out.attrs["climatology_month"] = int(month_number)
 if role:
     out.attrs["climatology_field_role"] = role
-out.to_netcdf(path, format="NETCDF4")
+if season_name:
+    out.attrs["climatology_season"] = season_name
+    out.attrs["climatology_season_years"] = season_year_count
+    out.attrs["climatology_weighting"] = (
+        "source-calendar month length within each season year; "
+        "equal weight across season years"
+    )
+if product_type:
+    out.attrs["climatology_time_policy"] = (
+        "time is the midpoint of time_bnds; time_bnds stores the first and "
+        "last contributing climatology dates"
+    )
+    time_encoding = {
+        "units": f"days since {start_text[:4]}-01-01 00:00:00",
+        "calendar": "proleptic_gregorian",
+        "dtype": "float64",
+    }
+    out.to_netcdf(
+        path,
+        format="NETCDF4",
+        encoding={"time": time_encoding, "time_bnds": dict(time_encoding)},
+    )
+else:
+    # Preserve the established whole-window encoding exactly.
+    out.to_netcdf(path, format="NETCDF4")
+
+if product_type:
+    with xr.open_dataset(path, decode_times=False) as check:
+        if check.sizes.get("time") != 1:
+            raise ValueError("Climatology output must contain one time coordinate")
+        bounds_name = check["time"].attrs.get("climatology")
+        if bounds_name != "time_bnds" or bounds_name not in check.variables:
+            raise ValueError(
+                "time:climatology must reference the existing time_bnds variable"
+            )
+        bounds = check[bounds_name]
+        if bounds.dims != ("time", "bnds") or bounds.shape != (1, 2):
+            raise ValueError(
+                f"time_bnds must have dimensions (time, bnds) and shape (1, 2), got "
+                f"{bounds.dims} and {bounds.shape}"
+            )
+        for attribute in ("units", "calendar"):
+            time_value = check["time"].attrs.get(attribute)
+            bounds_value = bounds.attrs.get(attribute)
+            if time_value != bounds_value:
+                raise ValueError(
+                    f"time and time_bnds {attribute} differ: "
+                    f"{time_value!r} != {bounds_value!r}"
+                )
+        coordinate = float(check["time"].values[0])
+        lower, upper = map(float, bounds.values[0])
+        if not np.isfinite([coordinate, lower, upper]).all() or not lower <= coordinate <= upper:
+            raise ValueError(
+                f"Invalid climatology time placement: bounds=({lower}, {upper}), "
+                f"time={coordinate}"
+            )
+
+    with xr.open_dataset(path) as decoded:
+        decoded_time = np.asarray(decoded["time"].values)[0]
+        decoded_bounds = np.asarray(decoded["time_bnds"].values)[0]
+        expected_bounds = np.array([start, end], dtype="datetime64[ns]")
+        if not np.array_equal(decoded_bounds.astype("datetime64[ns]"), expected_bounds):
+            raise ValueError(
+                f"Decoded time_bnds do not match configured dates: "
+                f"{decoded_bounds!r} != {expected_bounds!r}"
+            )
+        decoded_month = int(np.datetime_as_string(decoded_time, unit="D")[5:7])
+        expected_month = None
+        if product_type == "monthly":
+            expected_month = int(month_number)
+        elif product_type == "seasonal":
+            expected_month = {"DJF": 1, "MAM": 4, "JJA": 7, "SON": 10}[season_name]
+        if expected_month is not None and decoded_month != expected_month:
+            raise ValueError(
+                f"Climatology time is in month {decoded_month:02d}; "
+                f"expected {expected_month:02d} for {role} {season_name or month_number}"
+            )
 PY_METADATA
 }
 
@@ -354,29 +437,12 @@ if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
     fi
     write_climatology_metadata "$monthly_tmp" \
       "${start_year}-${month_padded}-01" "${end_year}-${month_padded}-last" \
-      "$monthly_steps" "monthly" "$month" "calendar_month"
+      "$monthly_steps" "monthly" "$month" "calendar_month" "" ""
     monthly_temps+=( "$monthly_tmp" )
     monthly_outputs+=( "$monthly_out" )
   done
 
-  previous_start_year=$((10#${start_year} - 1))
-  previous_end_year=$((10#${end_year} - 1))
-  previous_tmp="${TMP_DIR}/${OUT_PREFIX}_clim_previous_december_${start_year}-${end_year}.tmp.nc"
-  previous_out="${OUT_DIR}/${OUT_PREFIX}_clim_previous_december_${start_year}-${end_year}.nc"
-  rm -f "$previous_tmp"
-  cdo -L -O timmean -selmon,12 -selyear,"${previous_start_year}/${previous_end_year}" "${TMP_SEL}" "$previous_tmp"
-  previous_steps="$(cdo -s ntime -selmon,12 -selyear,"${previous_start_year}/${previous_end_year}" "${TMP_SEL}" | tr -d '[:space:]')"
-  if [[ "$previous_steps" -ne "$expected_per_field" ]]; then
-    echo "ERROR: Previous December expected ${expected_per_field} timesteps, found ${previous_steps}" >&2
-    exit 1
-  fi
-  write_climatology_metadata "$previous_tmp" \
-    "${previous_start_year}-12-01" "${previous_end_year}-12-31" \
-    "$previous_steps" "monthly" "12" "previous_december"
-  monthly_temps+=( "$previous_tmp" )
-  monthly_outputs+=( "$previous_out" )
-
-  echo "[STEP5] Publishing all 13 monthly climatology fields"
+  echo "[STEP5] Publishing all 12 monthly climatology fields"
   for index in "${!monthly_temps[@]}"; do
     mv -f "${monthly_temps[$index]}" "${monthly_outputs[$index]}"
     echo "[DONE ] ${monthly_outputs[$index]}"
@@ -384,7 +450,108 @@ if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
 
   rm -f "${TMP_MERGED}" "${TMP_SEL}"
   echo
-  echo "All 13 monthly climatology fields completed for VAR=${VAR}"
+  echo "All 12 monthly climatology fields completed for VAR=${VAR}"
+  exit 0
+fi
+
+if [[ "$CLIMATOLOGY_MODE" == "seasonal" ]]; then
+  start_year="${WINDOW_START:0:4}"
+  end_year="${WINDOW_END:0:4}"
+  expected_season_years=$((10#${end_year} - 10#${start_year} + 1))
+  seasonal_temps=()
+  seasonal_outputs=()
+
+  echo "[STEP4] Computing calendar-weighted season-year means"
+  for season in DJF MAM JJA SON; do
+    season_year_means=()
+    for ((year=10#${start_year}; year<=10#${end_year}; year++)); do
+      case "$season" in
+        DJF)
+          season_months="1,2"
+          ;;
+        MAM)
+          season_months="3,4,5"
+          ;;
+        JJA)
+          season_months="6,7,8"
+          ;;
+        SON)
+          season_months="9,10,11"
+          ;;
+      esac
+
+      season_input="${TMP_DIR}/${OUT_PREFIX}_${season}_${year}.selected.tmp.nc"
+      season_year_mean="${TMP_DIR}/${OUT_PREFIX}_${season}_${year}.weighted.tmp.nc"
+      rm -f "$season_input" "$season_year_mean"
+      if [[ "$season" == "DJF" ]]; then
+        december_input="${TMP_DIR}/${OUT_PREFIX}_${season}_${year}.december.tmp.nc"
+        january_february_input="${TMP_DIR}/${OUT_PREFIX}_${season}_${year}.january_february.tmp.nc"
+        rm -f "$december_input" "$january_february_input"
+        cdo -L -O selmon,12 -selyear,"$((year - 1))" "$TMP_SEL" "$december_input"
+        cdo -L -O selmon,"${season_months}" -selyear,"${year}" "$TMP_SEL" "$january_february_input"
+        cdo -L -O mergetime "$december_input" "$january_february_input" "$season_input"
+        rm -f "$december_input" "$january_february_input"
+      else
+        cdo -L -O selmon,"${season_months}" -selyear,"${year}" "$TMP_SEL" "$season_input"
+      fi
+      season_steps="$(cdo -s ntime "$season_input" | tr -d '[:space:]')"
+      if [[ "$season_steps" -ne 3 ]]; then
+        echo "ERROR: ${season} ${year} expected 3 monthly timesteps, found ${season_steps}" >&2
+        exit 1
+      fi
+      cdo -L -O yearmonmean -setyear,"${year}" "$season_input" "$season_year_mean"
+      weighted_steps="$(cdo -s ntime "$season_year_mean" | tr -d '[:space:]')"
+      if [[ "$weighted_steps" -ne 1 ]]; then
+        echo "ERROR: ${season} ${year} expected one weighted season-year mean, found ${weighted_steps}" >&2
+        exit 1
+      fi
+      season_year_means+=( "$season_year_mean" )
+    done
+
+    if [[ "${#season_year_means[@]}" -ne "$expected_season_years" ]]; then
+      echo "ERROR: ${season} expected ${expected_season_years} season-year means, found ${#season_year_means[@]}" >&2
+      exit 1
+    fi
+
+    seasonal_tmp="${TMP_DIR}/${OUT_PREFIX}_clim_season_${season}_${start_year}-${end_year}.tmp.nc"
+    seasonal_out="${OUT_DIR}/${OUT_PREFIX}_clim_season_${season}_${start_year}-${end_year}.nc"
+    rm -f "$seasonal_tmp"
+    cdo -L -O timmean -mergetime "${season_year_means[@]}" "$seasonal_tmp"
+
+    case "$season" in
+      DJF)
+        bounds_start="$((10#${start_year} - 1))-12-01"
+        bounds_end="${end_year}-02-last"
+        ;;
+      MAM)
+        bounds_start="${start_year}-03-01"
+        bounds_end="${end_year}-05-last"
+        ;;
+      JJA)
+        bounds_start="${start_year}-06-01"
+        bounds_end="${end_year}-08-last"
+        ;;
+      SON)
+        bounds_start="${start_year}-09-01"
+        bounds_end="${end_year}-11-last"
+        ;;
+    esac
+    write_climatology_metadata "$seasonal_tmp" "$bounds_start" "$bounds_end" \
+      "$((expected_season_years * 3))" "seasonal" "" "season" "$season" \
+      "$expected_season_years"
+    seasonal_temps+=( "$seasonal_tmp" )
+    seasonal_outputs+=( "$seasonal_out" )
+    rm -f "${season_year_means[@]}"
+  done
+
+  echo "[STEP5] Publishing all four seasonal climatology fields"
+  for index in "${!seasonal_temps[@]}"; do
+    mv -f "${seasonal_temps[$index]}" "${seasonal_outputs[$index]}"
+    echo "[DONE ] ${seasonal_outputs[$index]}"
+  done
+  rm -f "${TMP_MERGED}" "${TMP_SEL}" "${TMP_DIR}"/*.selected.tmp.nc
+  echo
+  echo "All four seasonal climatology fields completed for VAR=${VAR}"
   exit 0
 fi
 
@@ -392,7 +559,7 @@ echo "[STEP4] Computing climatological mean"
 cdo -L -O timmean "${TMP_SEL}" "${TMP_OUT}"
 
 write_climatology_metadata "$TMP_OUT" "$WINDOW_START" "$WINDOW_END" \
-  "$selected_steps" "" "" ""
+  "$selected_steps" "" "" "" "" ""
 
 echo "[STEP5] Writing final output"
 mv -f "${TMP_OUT}" "${OUTFILE}"

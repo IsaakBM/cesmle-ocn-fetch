@@ -17,8 +17,8 @@ set -euo pipefail
 #     a 0.05 x 0.05 degree grid.
 #   - Expected input layout:
 #       /home/SB5/reanalysis/glorys12v1/monthly_0p05/<var>/parts/*.nc
-#   - This runner computes one climatology per variable over the 2006-2014
-#     monthly baseline window.
+#   - Whole-window mode computes one climatology per variable over 2006-2014.
+#     Monthly and seasonal products are explicit CLIMATOLOGY_MODE options.
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,8 +41,8 @@ read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
 CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
 
-if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" ]]; then
-  echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly" >&2
+if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" && "$CLIMATOLOGY_MODE" != "seasonal" ]]; then
+  echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly, seasonal" >&2
   exit 1
 fi
 
@@ -60,9 +60,6 @@ INROOT_BASE="/home/SB5/reanalysis/glorys12v1/monthly_0p05"
 WINDOW_START="200601"
 WINDOW_END="201412"
 EXPECTED_N=108
-if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
-  EXPECTED_N=109
-fi
 
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs
 
@@ -73,6 +70,8 @@ for v in "${VARS[@]}"; do
   OUT_SUBDIR="clim_windows"
   if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
     OUT_SUBDIR="clim_monthly"
+  elif [[ "$CLIMATOLOGY_MODE" == "seasonal" ]]; then
+    OUT_SUBDIR="clim_seasonal"
   fi
   OUT_DIR="${INROOT_BASE}/${v}/${OUT_SUBDIR}"
   TMP_DIR="${INROOT_BASE}/${v}/tmp_clim"

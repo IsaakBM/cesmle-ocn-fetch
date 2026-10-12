@@ -43,6 +43,21 @@ class SafeguardTests(unittest.TestCase):
         da.attrs['units'] = 'degC'
         return da
 
+    def assert_climatology_time(self, path, expected_month, start, end):
+        with xr.open_dataset(path, decode_times=False) as raw:
+            self.assertEqual(raw.time.attrs['climatology'], 'time_bnds')
+            self.assertIn('time_bnds', raw.variables)
+            self.assertEqual(raw.time_bnds.dims, ('time', 'bnds'))
+            self.assertEqual(raw.time_bnds.shape, (1, 2))
+            self.assertEqual(raw.time.attrs['units'], raw.time_bnds.attrs['units'])
+            self.assertEqual(raw.time.attrs['calendar'], raw.time_bnds.attrs['calendar'])
+            self.assertLessEqual(float(raw.time_bnds[0, 0]), float(raw.time[0]))
+            self.assertLessEqual(float(raw.time[0]), float(raw.time_bnds[0, 1]))
+        with xr.open_dataset(path) as decoded:
+            self.assertEqual(int(str(decoded.time.values[0])[5:7]), expected_month)
+            expected = np.array([np.datetime64(start), np.datetime64(end)])
+            np.testing.assert_array_equal(decoded.time_bnds.values[0], expected)
+
     def spatial_helper(self, path):
         text = path.read_text()
         start = text.index('def validate_spatial_coordinates(')
@@ -871,7 +886,7 @@ with atomic_product(sys.argv[1]) as candidate:
             xr.testing.assert_equal(outputs[0], outputs[1])
             np.testing.assert_allclose(outputs[1].thetao, 2.)
 
-    def test_monthly_climatologies_include_previous_december(self):
+    def test_monthly_climatologies_publish_twelve_calendar_months(self):
         times = xr.date_range('1999-12-01', periods=13, freq='MS')
         field = self.field().isel(time=0, drop=True).expand_dims(time=times).copy()
         field.values[:] = np.arange(13)[:, None, None, None]
@@ -896,12 +911,12 @@ with atomic_product(sys.argv[1]) as candidate:
             else:
                 env.update(
                     IN_DIR=str(inputs), WINDOW_START='200001', WINDOW_END='200012',
-                    EXPECTED_N='13',
+                    EXPECTED_N='12',
                 )
             result = self.run_script(worker, **env)
             self.assertEqual(result.returncode, 0, result.stderr)
             outputs = sorted(out.glob('*.nc'))
-            self.assertEqual(len(outputs), 13)
+            self.assertEqual(len(outputs), 12)
 
             with xr.open_dataset(out/'fixture_clim_month_01_2000-2000.nc') as january:
                 np.testing.assert_allclose(january.thetao, 1.)
@@ -909,10 +924,11 @@ with atomic_product(sys.argv[1]) as candidate:
                 self.assertEqual(january.attrs['climatology_month'], 1)
                 self.assertEqual(january.attrs['climatology_field_role'], 'calendar_month')
                 self.assertEqual(january.attrs['climatology_selected_timesteps'], '1')
-            with xr.open_dataset(out/'fixture_clim_previous_december_2000-2000.nc') as previous:
-                np.testing.assert_allclose(previous.thetao, 0.)
-                self.assertEqual(previous.attrs['climatology_month'], 12)
-                self.assertEqual(previous.attrs['climatology_field_role'], 'previous_december')
+            self.assert_climatology_time(
+                out/'fixture_clim_month_01_2000-2000.nc', 1,
+                '2000-01-01', '2000-01-31',
+            )
+            self.assertFalse(list(out.glob('*previous_december*.nc')))
 
     def test_monthly_climatology_rejects_missing_month_without_publication(self):
         times = xr.date_range('1999-12-01', periods=13, freq='MS').delete(4)
@@ -925,12 +941,73 @@ with atomic_product(sys.argv[1]) as candidate:
         result = self.run_script(
             ROOT/'scripts/core/climatology_window_from_monthly_files.slurm.sh',
             VAR='thetao', IN_DIR=str(inputs), OUT_DIR=str(out), OUT_PREFIX='fixture',
-            WINDOW_START='200001', WINDOW_END='200012', EXPECTED_N='13',
+            WINDOW_START='200001', WINDOW_END='200012', EXPECTED_N='12',
             FILL_TOP_MISSING='no', CLIMATOLOGY_MODE='monthly',
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Missing months', result.stderr)
         self.assertFalse(list(out.glob('*.nc')))
+
+    def test_seasonal_climatologies_use_previous_december_and_month_lengths(self):
+        times = xr.date_range('1999-12-01', periods=13, freq='MS')
+        field = self.field().isel(time=0, drop=True).expand_dims(time=times).copy()
+        field.values[:] = np.arange(13)[:, None, None, None]
+        inputs = self.root/'seasonal_inputs'; inputs.mkdir()
+        series = self.root/'seasonal_series.nc'; field.to_netcdf(series)
+        for index, stamp in enumerate(times):
+            yyyymm = f'{stamp.year:04d}{stamp.month:02d}'
+            field.isel(time=slice(index, index + 1)).to_netcdf(inputs/f'thetao_{yyyymm}.nc')
+
+        expected = {
+            'DJF': (31 * 0 + 31 * 1 + 29 * 2) / (31 + 31 + 29),
+            'MAM': (31 * 3 + 30 * 4 + 31 * 5) / (31 + 30 + 31),
+            'JJA': (30 * 6 + 31 * 7 + 31 * 8) / (30 + 31 + 31),
+            'SON': (30 * 9 + 31 * 10 + 30 * 11) / (30 + 31 + 30),
+        }
+        for kind in ('timeseries', 'monthly_files'):
+            worker = ROOT/f'scripts/core/climatology_window_from_{kind}.slurm.sh'
+            out = self.root/f'{kind}_seasonal'
+            env = dict(
+                VAR='thetao', OUT_DIR=str(out), OUT_PREFIX='fixture',
+                FILL_TOP_MISSING='no', CLIMATOLOGY_MODE='seasonal',
+            )
+            if kind == 'timeseries':
+                env.update(
+                    IN_FILE=str(series), IN_DIR='', WINDOW_START='2000-01-01',
+                    WINDOW_END='2000-12-31',
+                )
+            else:
+                env.update(
+                    IN_DIR=str(inputs), WINDOW_START='200001', WINDOW_END='200012',
+                    EXPECTED_N='12',
+                )
+            result = self.run_script(worker, **env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(len(list(out.glob('*.nc'))), 4)
+            for season, expected_value in expected.items():
+                path = out/f'fixture_clim_season_{season}_2000-2000.nc'
+                with xr.open_dataset(path) as seasonal:
+                    np.testing.assert_allclose(seasonal.thetao, expected_value)
+                    self.assertEqual(seasonal.attrs['climatology_product_type'], 'seasonal')
+                    self.assertEqual(seasonal.attrs['climatology_season'], season)
+                    self.assertEqual(seasonal.attrs['climatology_season_years'], '1')
+                    self.assertIn('source-calendar month length', seasonal.attrs['climatology_weighting'])
+            self.assert_climatology_time(
+                out/'fixture_clim_season_DJF_2000-2000.nc', 1,
+                '1999-12-01', '2000-02-29',
+            )
+            self.assert_climatology_time(
+                out/'fixture_clim_season_MAM_2000-2000.nc', 4,
+                '2000-03-01', '2000-05-31',
+            )
+            self.assert_climatology_time(
+                out/'fixture_clim_season_JJA_2000-2000.nc', 7,
+                '2000-06-01', '2000-08-31',
+            )
+            self.assert_climatology_time(
+                out/'fixture_clim_season_SON_2000-2000.nc', 10,
+                '2000-09-01', '2000-11-30',
+            )
 
     def test_new_model_input_preflight(self):
         downloads = self.root/'downloads'

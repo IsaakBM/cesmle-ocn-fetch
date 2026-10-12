@@ -12,10 +12,10 @@
 #  Purpose:
 #    - Read monthly files already prepared for one variable
 #    - Select files that fall within a requested climatology window
-#    - Compute one single climatology file per variable by averaging all monthly
-#      values across that full window
-#    - Follow the same full-window mean logic used in the existing GLORYS
-#      climatology workflow
+#    - Compute the existing whole-window climatology, 12 monthly climatology
+#      fields, or four calendar-weighted seasonal climatology fields
+#    - Preserve the same full-window mean logic used in the existing GLORYS
+#      climatology workflow when the optional modes are not requested
 #
 #  Intended to be run on Slurm-based HPC systems.
 # ==============================================================================
@@ -55,10 +55,11 @@ shopt -s nullglob
 #   FILL_TOP_MISSING: yes | no (default: yes)
 #                     after climatology generation, fill missing top layers in
 #                     each water column from the first deeper valid layer
-#   CLIMATOLOGY_MODE: whole | monthly (default: whole)
+#   CLIMATOLOGY_MODE: whole | monthly | seasonal (default: whole)
 #                     whole preserves the existing single-window product;
-#                     monthly writes January-December climatologies plus an
-#                     auxiliary previous-December climatology
+#                     monthly writes January-December climatologies; seasonal
+#                     writes DJF, MAM, JJA, and SON climatologies and consumes
+#                     the preceding December required by DJF
 # ==============================================================================
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"
@@ -105,8 +106,8 @@ if [[ "$FILL_TOP_MISSING" != "yes" && "$FILL_TOP_MISSING" != "no" ]]; then
   exit 1
 fi
 
-if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" ]]; then
-  echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly"
+if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" && "$CLIMATOLOGY_MODE" != "seasonal" ]]; then
+  echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly, seasonal"
   exit 1
 fi
 
@@ -134,8 +135,10 @@ FILES=( "${IN_DIR}"/${FILE_GLOB} )
 
 VALID_FILES=()
 selection_start="${WINDOW_START}"
-if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
+selection_end="${WINDOW_END}"
+if [[ "$CLIMATOLOGY_MODE" == "seasonal" ]]; then
   selection_start="$((10#${WINDOW_START:0:4} - 1))12"
+  selection_end="${WINDOW_END:0:4}11"
 fi
 for f in "${FILES[@]}"; do
   [[ -f "$f" ]] || continue
@@ -147,7 +150,7 @@ for f in "${FILES[@]}"; do
     continue
   fi
 
-  if [[ "${yyyymm}" < "${selection_start}" || "${yyyymm}" > "${WINDOW_END}" ]]; then
+  if [[ "${yyyymm}" < "${selection_start}" || "${yyyymm}" > "${selection_end}" ]]; then
     continue
   fi
 
@@ -180,7 +183,7 @@ COVERAGE_INPUTS=( "${VALID_FILES[@]}" )
 # 360-day or no-leap dates into the Gregorian calendar. Check files separately so
 # overlapping chunks cannot hide duplicate months during a later merge.
 # ------------------------------------------------------------------------------
-python3 - "${selection_start}" "${WINDOW_END}" monthly "${COVERAGE_INPUTS[@]}" <<'PY_MONTHLY_COVERAGE'
+python3 - "${selection_start}" "${selection_end}" monthly "${COVERAGE_INPUTS[@]}" <<'PY_MONTHLY_COVERAGE'
 import collections
 import re
 import subprocess
@@ -252,15 +255,17 @@ write_climatology_metadata() {
   local product_type="$5"
   local month_number="$6"
   local role="$7"
+  local season_name="$8"
+  local season_year_count="$9"
 
-  python3 - "$path" "$start_text" "$end_text" "$selected_count" "$product_type" "$month_number" "$role" <<'PY_METADATA'
+  python3 - "$path" "$start_text" "$end_text" "$selected_count" "$product_type" "$month_number" "$role" "$season_name" "$season_year_count" <<'PY_METADATA'
 import calendar
 import sys
 
 import numpy as np
 import xarray as xr
 
-path, start_text, end_text, selected_count, product_type, month_number, role = sys.argv[1:]
+path, start_text, end_text, selected_count, product_type, month_number, role, season_name, season_year_count = sys.argv[1:]
 if end_text.endswith("-last"):
     year, month = map(int, end_text[:-5].split("-"))
     end_text = f"{year:04d}-{month:02d}-{calendar.monthrange(year, month)[1]:02d}"
@@ -295,7 +300,83 @@ if month_number:
     out.attrs["climatology_month"] = int(month_number)
 if role:
     out.attrs["climatology_field_role"] = role
-out.to_netcdf(path, format="NETCDF4")
+if season_name:
+    out.attrs["climatology_season"] = season_name
+    out.attrs["climatology_season_years"] = season_year_count
+    out.attrs["climatology_weighting"] = (
+        "source-calendar month length within each season year; "
+        "equal weight across season years"
+    )
+if product_type:
+    out.attrs["climatology_time_policy"] = (
+        "time is the midpoint of time_bnds; time_bnds stores the first and "
+        "last contributing climatology dates"
+    )
+    time_encoding = {
+        "units": f"days since {start_text[:4]}-01-01 00:00:00",
+        "calendar": "proleptic_gregorian",
+        "dtype": "float64",
+    }
+    out.to_netcdf(
+        path,
+        format="NETCDF4",
+        encoding={"time": time_encoding, "time_bnds": dict(time_encoding)},
+    )
+else:
+    # Preserve the established whole-window encoding exactly.
+    out.to_netcdf(path, format="NETCDF4")
+
+if product_type:
+    with xr.open_dataset(path, decode_times=False) as check:
+        if check.sizes.get("time") != 1:
+            raise ValueError("Climatology output must contain one time coordinate")
+        bounds_name = check["time"].attrs.get("climatology")
+        if bounds_name != "time_bnds" or bounds_name not in check.variables:
+            raise ValueError(
+                "time:climatology must reference the existing time_bnds variable"
+            )
+        bounds = check[bounds_name]
+        if bounds.dims != ("time", "bnds") or bounds.shape != (1, 2):
+            raise ValueError(
+                f"time_bnds must have dimensions (time, bnds) and shape (1, 2), got "
+                f"{bounds.dims} and {bounds.shape}"
+            )
+        for attribute in ("units", "calendar"):
+            time_value = check["time"].attrs.get(attribute)
+            bounds_value = bounds.attrs.get(attribute)
+            if time_value != bounds_value:
+                raise ValueError(
+                    f"time and time_bnds {attribute} differ: "
+                    f"{time_value!r} != {bounds_value!r}"
+                )
+        coordinate = float(check["time"].values[0])
+        lower, upper = map(float, bounds.values[0])
+        if not np.isfinite([coordinate, lower, upper]).all() or not lower <= coordinate <= upper:
+            raise ValueError(
+                f"Invalid climatology time placement: bounds=({lower}, {upper}), "
+                f"time={coordinate}"
+            )
+
+    with xr.open_dataset(path) as decoded:
+        decoded_time = np.asarray(decoded["time"].values)[0]
+        decoded_bounds = np.asarray(decoded["time_bnds"].values)[0]
+        expected_bounds = np.array([start, end], dtype="datetime64[ns]")
+        if not np.array_equal(decoded_bounds.astype("datetime64[ns]"), expected_bounds):
+            raise ValueError(
+                f"Decoded time_bnds do not match configured dates: "
+                f"{decoded_bounds!r} != {expected_bounds!r}"
+            )
+        decoded_month = int(np.datetime_as_string(decoded_time, unit="D")[5:7])
+        expected_month = None
+        if product_type == "monthly":
+            expected_month = int(month_number)
+        elif product_type == "seasonal":
+            expected_month = {"DJF": 1, "MAM": 4, "JJA": 7, "SON": 10}[season_name]
+        if expected_month is not None and decoded_month != expected_month:
+            raise ValueError(
+                f"Climatology time is in month {decoded_month:02d}; "
+                f"expected {expected_month:02d} for {role} {season_name or month_number}"
+            )
 PY_METADATA
 }
 
@@ -387,8 +468,6 @@ if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
   start_year="${WINDOW_START:0:4}"
   end_year="${WINDOW_END:0:4}"
   expected_per_field=$((10#${end_year} - 10#${start_year} + 1))
-  previous_start_year=$((10#${start_year} - 1))
-  previous_end_year=$((10#${end_year} - 1))
   monthly_temps=()
   monthly_outputs=()
 
@@ -417,7 +496,7 @@ if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
     cdo -L -O timmean -mergetime "${month_files[@]}" "$monthly_tmp"
     write_climatology_metadata "$monthly_tmp" \
       "${start_year}-${month_padded}-01" "${end_year}-${month_padded}-last" \
-      "${#month_files[@]}" "monthly" "$month" "calendar_month"
+      "${#month_files[@]}" "monthly" "$month" "calendar_month" "" ""
     if [[ "$FILL_TOP_MISSING" == "yes" ]]; then
       fill_top_layers "$monthly_tmp" "$monthly_filled"
       mv -f "$monthly_filled" "$monthly_tmp"
@@ -426,44 +505,127 @@ if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
     monthly_outputs+=( "$monthly_out" )
   done
 
-  previous_files=()
-  for input_file in "${VALID_FILES[@]}"; do
-    filename="$(basename "$input_file")"
-    yyyymm="$(printf '%s\n' "$filename" | grep -oE "${DATE_PATTERN}" | head -n 1 || true)"
-    year="${yyyymm:0:4}"
-    input_month="${yyyymm:4:2}"
-    if [[ "$year" -ge "$previous_start_year" && "$year" -le "$previous_end_year" && "$input_month" == "12" ]]; then
-      previous_files+=( "$input_file" )
-    fi
-  done
-  if [[ "${#previous_files[@]}" -ne "$expected_per_field" ]]; then
-    echo "ERROR: Previous December expected ${expected_per_field} files, found ${#previous_files[@]}" >&2
-    exit 1
-  fi
-
-  previous_tmp="${TMP_DIR}/${OUT_PREFIX}_clim_previous_december_${start_year}-${end_year}.tmp.nc"
-  previous_filled="${TMP_DIR}/${OUT_PREFIX}_clim_previous_december_${start_year}-${end_year}.filled.tmp.nc"
-  previous_out="${OUT_DIR}/${OUT_PREFIX}_clim_previous_december_${start_year}-${end_year}.nc"
-  rm -f "$previous_tmp" "$previous_filled"
-  cdo -L -O timmean -mergetime "${previous_files[@]}" "$previous_tmp"
-  write_climatology_metadata "$previous_tmp" \
-    "${previous_start_year}-12-01" "${previous_end_year}-12-31" \
-    "${#previous_files[@]}" "monthly" "12" "previous_december"
-  if [[ "$FILL_TOP_MISSING" == "yes" ]]; then
-    fill_top_layers "$previous_tmp" "$previous_filled"
-    mv -f "$previous_filled" "$previous_tmp"
-  fi
-  monthly_temps+=( "$previous_tmp" )
-  monthly_outputs+=( "$previous_out" )
-
-  echo "[STEP2] Publishing all 13 monthly climatology fields"
+  echo "[STEP2] Publishing all 12 monthly climatology fields"
   for index in "${!monthly_temps[@]}"; do
     mv -f "${monthly_temps[$index]}" "${monthly_outputs[$index]}"
     echo "[DONE ] ${monthly_outputs[$index]}"
   done
 
   echo
-  echo "All 13 monthly climatology fields completed for VAR=${VAR}"
+  echo "All 12 monthly climatology fields completed for VAR=${VAR}"
+  exit 0
+fi
+
+if [[ "$CLIMATOLOGY_MODE" == "seasonal" ]]; then
+  start_year="${WINDOW_START:0:4}"
+  end_year="${WINDOW_END:0:4}"
+  expected_season_years=$((10#${end_year} - 10#${start_year} + 1))
+  seasonal_temps=()
+  seasonal_outputs=()
+
+  echo "[STEP1] Computing calendar-weighted season-year means"
+  for season in DJF MAM JJA SON; do
+    season_year_means=()
+    for ((year=10#${start_year}; year<=10#${end_year}; year++)); do
+      case "$season" in
+        DJF)
+          required_months=( "$((year - 1))12" "${year}01" "${year}02" )
+          ;;
+        MAM)
+          required_months=( "${year}03" "${year}04" "${year}05" )
+          ;;
+        JJA)
+          required_months=( "${year}06" "${year}07" "${year}08" )
+          ;;
+        SON)
+          required_months=( "${year}09" "${year}10" "${year}11" )
+          ;;
+      esac
+
+      season_files=()
+      for required_month in "${required_months[@]}"; do
+        matched_file=""
+        for input_file in "${VALID_FILES[@]}"; do
+          filename="$(basename "$input_file")"
+          yyyymm="$(printf '%s\n' "$filename" | grep -oE "${DATE_PATTERN}" | head -n 1 || true)"
+          if [[ "$yyyymm" == "$required_month" ]]; then
+            matched_file="$input_file"
+            break
+          fi
+        done
+        if [[ -z "$matched_file" ]]; then
+          echo "ERROR: ${season} ${year} missing source month ${required_month}" >&2
+          exit 1
+        fi
+        season_files+=( "$matched_file" )
+      done
+      if [[ "${#season_files[@]}" -ne 3 ]]; then
+        echo "ERROR: ${season} ${year} expected 3 monthly files, found ${#season_files[@]}" >&2
+        exit 1
+      fi
+
+      season_input="${TMP_DIR}/${OUT_PREFIX}_${season}_${year}.selected.tmp.nc"
+      season_year_mean="${TMP_DIR}/${OUT_PREFIX}_${season}_${year}.weighted.tmp.nc"
+      rm -f "$season_input" "$season_year_mean"
+      cdo -L -O mergetime "${season_files[@]}" "$season_input"
+      cdo -L -O yearmonmean -setyear,"${year}" "$season_input" "$season_year_mean"
+      weighted_steps="$(cdo -s ntime "$season_year_mean" | tr -d '[:space:]')"
+      if [[ "$weighted_steps" -ne 1 ]]; then
+        echo "ERROR: ${season} ${year} expected one weighted season-year mean, found ${weighted_steps}" >&2
+        exit 1
+      fi
+      season_year_means+=( "$season_year_mean" )
+    done
+
+    if [[ "${#season_year_means[@]}" -ne "$expected_season_years" ]]; then
+      echo "ERROR: ${season} expected ${expected_season_years} season-year means, found ${#season_year_means[@]}" >&2
+      exit 1
+    fi
+
+    seasonal_tmp="${TMP_DIR}/${OUT_PREFIX}_clim_season_${season}_${start_year}-${end_year}.tmp.nc"
+    seasonal_filled="${TMP_DIR}/${OUT_PREFIX}_clim_season_${season}_${start_year}-${end_year}.filled.tmp.nc"
+    seasonal_out="${OUT_DIR}/${OUT_PREFIX}_clim_season_${season}_${start_year}-${end_year}.nc"
+    rm -f "$seasonal_tmp" "$seasonal_filled"
+    cdo -L -O timmean -mergetime "${season_year_means[@]}" "$seasonal_tmp"
+
+    case "$season" in
+      DJF)
+        bounds_start="$((10#${start_year} - 1))-12-01"
+        bounds_end="${end_year}-02-last"
+        ;;
+      MAM)
+        bounds_start="${start_year}-03-01"
+        bounds_end="${end_year}-05-last"
+        ;;
+      JJA)
+        bounds_start="${start_year}-06-01"
+        bounds_end="${end_year}-08-last"
+        ;;
+      SON)
+        bounds_start="${start_year}-09-01"
+        bounds_end="${end_year}-11-last"
+        ;;
+    esac
+    write_climatology_metadata "$seasonal_tmp" "$bounds_start" "$bounds_end" \
+      "$((expected_season_years * 3))" "seasonal" "" "season" "$season" \
+      "$expected_season_years"
+    if [[ "$FILL_TOP_MISSING" == "yes" ]]; then
+      fill_top_layers "$seasonal_tmp" "$seasonal_filled"
+      mv -f "$seasonal_filled" "$seasonal_tmp"
+    fi
+    seasonal_temps+=( "$seasonal_tmp" )
+    seasonal_outputs+=( "$seasonal_out" )
+    rm -f "${season_year_means[@]}" "$season_input"
+  done
+
+  echo "[STEP2] Publishing all four seasonal climatology fields"
+  for index in "${!seasonal_temps[@]}"; do
+    mv -f "${seasonal_temps[$index]}" "${seasonal_outputs[$index]}"
+    echo "[DONE ] ${seasonal_outputs[$index]}"
+  done
+  rm -f "${TMP_DIR}"/*.selected.tmp.nc
+  echo
+  echo "All four seasonal climatology fields completed for VAR=${VAR}"
   exit 0
 fi
 
@@ -486,7 +648,7 @@ cdo -L -O timmean -mergetime "${VALID_FILES[@]}" "${TMP_OUT}"
 write_climatology_metadata "$TMP_OUT" \
   "${WINDOW_START:0:4}-${WINDOW_START:4:2}-01" \
   "${WINDOW_END:0:4}-${WINDOW_END:4:2}-28" \
-  "${#VALID_FILES[@]}" "" "" ""
+  "${#VALID_FILES[@]}" "" "" "" "" ""
 
 if [[ "$FILL_TOP_MISSING" == "yes" ]]; then
   echo "[STEP3] Filling missing top climatology layers dynamically"

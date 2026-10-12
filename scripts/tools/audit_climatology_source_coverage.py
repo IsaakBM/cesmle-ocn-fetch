@@ -12,7 +12,7 @@
 #  Purpose:
 #    - Inspect source files without modifying or downloading them
 #    - Verify the calendar-month windows and preceding Decembers required for
-#      the planned 13-field monthly climatology products
+#      the planned 12-field monthly products and four seasonal products
 #    - Distinguish ESGF manifest availability, raw downloads, and prepared
 #      monthly inputs
 #    - Audit GLORYS and biogeochemistry-hindcast baseline inputs separately

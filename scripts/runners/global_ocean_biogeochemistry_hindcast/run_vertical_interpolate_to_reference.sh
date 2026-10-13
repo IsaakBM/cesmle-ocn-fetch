@@ -28,9 +28,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CORE_SCRIPT="${SCRIPT_DIR}/../../core/vertical_interpolate_to_reference.slurm.sh"
 
 # ------------------------------------------------------------------------------
-# Control variables here, one at a time if preferred
+# Control variables. Environment overrides allow a targeted run without
+# changing the full-production defaults below.
 # ------------------------------------------------------------------------------
-VARS=(
+VARS_DEFAULT=(
   chl
   no3
   po4
@@ -41,6 +42,12 @@ VARS=(
   ph
   phyc
 )
+read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
+
+if (( ${#VARS[@]} == 0 )); then
+  echo "ERROR: VARS must select at least one variable" >&2
+  exit 1
+fi
 
 # ------------------------------------------------------------------------------
 # Dataset-specific settings
@@ -53,13 +60,15 @@ SOURCE_ZDIM_NAME="depth_below_sea"
 SOURCE_UNITS_IN="m"
 SOURCE_UNITS_OUT="m"
 SOURCE_SCALE="1"
-FILE_GLOB="*.nc"
+FILE_GLOB="${FILE_GLOB:-*.nc}"
 OUT_SUFFIX="on_glorys"
 MAX_JOBS=5
 
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs
 
 echo "Submitting hindcast vertical interpolation jobs with generic worker:"
+echo "Variables: ${VARS[*]}"
+echo "File glob: ${FILE_GLOB}"
 for v in "${VARS[@]}"; do
   IN_DIR="${INROOT_BASE}/${v}/parts"
   OUT_DIR="${INROOT_BASE}/${v}/on_glorys"

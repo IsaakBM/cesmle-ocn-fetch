@@ -59,9 +59,10 @@ replica_manifest <- env_value(
   file.path(repo_root, "data", "manifests", "ipcc_esgf_nci_cmip6_target_replica_urls.csv")
 )
 replica_fallback <- tolower(env_value("REPLICA_FALLBACK", "yes")) %in% c("yes", "true", "1")
-wget_tries <- env_value("WGET_TRIES", "3")
+wget_tries <- env_value("WGET_TRIES", "10")
 wget_connect_timeout <- env_value("WGET_CONNECT_TIMEOUT", "60")
 wget_read_timeout <- env_value("WGET_READ_TIMEOUT", "900")
+wget_wait_retry <- env_value("WGET_WAIT_RETRY", "10")
 continue_on_error <- tolower(env_value("CONTINUE_ON_ERROR", "yes")) %in% c("yes", "true", "1")
 fail_on_error <- tolower(env_value("FAIL_ON_ERROR", "yes")) %in% c("yes", "true", "1")
 failed_plan <- env_value(
@@ -260,7 +261,9 @@ download_url <- function(url, tmp) {
       "--tries", wget_tries,
       "--connect-timeout", wget_connect_timeout,
       "--read-timeout", wget_read_timeout,
+      "--waitretry", wget_wait_retry,
       "--retry-connrefused",
+      "--continue",
       "-O", tmp,
       url
     )
@@ -291,8 +294,10 @@ download_one <- function(row) {
   errors <- character()
 
   for (url in urls) {
-    if (file.exists(tmp)) unlink(tmp)
     message("  URL: ", url)
+    if (file.exists(tmp)) {
+      message("  Resuming partial file: ", tmp, " (", file.info(tmp)$size, " bytes)")
+    }
 
     status <- download_url(url, tmp)
     if (!identical(status, 0L)) {
@@ -318,7 +323,12 @@ download_one <- function(row) {
     return("downloaded")
   }
 
-  if (file.exists(tmp)) unlink(tmp)
+  if (file.exists(tmp)) {
+    message(
+      "Preserved partial download for a later retry: ", tmp,
+      " (", file.info(tmp)$size, " bytes)"
+    )
+  }
   stop(
     "All download attempts failed for: ", target,
     "\n", paste(errors, collapse = "\n")

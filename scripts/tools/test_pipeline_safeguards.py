@@ -1050,9 +1050,29 @@ with atomic_product(sys.argv[1]) as candidate:
         result = run(LIMIT='1'); self.assertNotEqual(result.returncode, 0); self.assertIn('Conflicting checksums', result.stderr)
         write([row])
         fake_bin = self.root/'bin'; fake_bin.mkdir()
-        wget = fake_bin/'wget'; wget.write_text('#!/bin/sh\nexit 1\n'); wget.chmod(0o755)
+        wget = fake_bin/'wget'
+        wget.write_text(
+            '#!/bin/sh\n'
+            'output=""\n'
+            'previous=""\n'
+            'for argument in "$@"; do\n'
+            '  if [ "$previous" = "-O" ]; then output="$argument"; fi\n'
+            '  previous="$argument"\n'
+            'done\n'
+            'printf partial >> "$output"\n'
+            'printf "%s\\n" "$@" > "${output}.arguments"\n'
+            'exit 1\n'
+        )
+        wget.chmod(0o755)
         result = run(DOWNLOAD='yes', PATH=str(fake_bin)+os.pathsep+self.env['PATH'])
         self.assertNotEqual(result.returncode, 0); self.assertIn('Failed: 1', result.stderr)
+        target = self.root/'fetch'/'Model'/'r1i1p1f1'/'historical'/'thetao'/row['filename']
+        partial = Path(str(target)+'.part')
+        self.assertEqual(partial.read_bytes(), b'partial')
+        arguments = Path(str(partial)+'.arguments').read_text().splitlines()
+        self.assertIn('--continue', arguments)
+        self.assertIn('--waitretry', arguments)
+        self.assertIn('Preserved partial download for a later retry', result.stderr)
 
     def test_provenance_hashes_and_preserves_record(self):
         settings = self.root/'settings.json'; settings.write_text('{"window":"2050-2060"}')

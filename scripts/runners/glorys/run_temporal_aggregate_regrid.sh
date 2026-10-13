@@ -53,6 +53,9 @@ YEARS_DEFAULT=(
 read -r -a YEARS <<< "${YEARS:-${YEARS_DEFAULT[*]}}"
 MONTHS="${MONTHS:-01 02 03 04 05 06 07 08 09 10 11 12}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
+MEM_3D="${MEM_3D:-192G}"
+MEM_2D="${MEM_2D:-32G}"
+WALLTIME="${WALLTIME:-5-00:00:00}"
 
 make_sbatch_extra_args() {
   if [[ -n "$EXCLUDE_NODES" ]]; then
@@ -93,7 +96,16 @@ fi
 echo "Submitting GLORYS monthly jobs by year with generic worker:"
 echo "Dataset: $DATASET_LABEL"
 for v in "${VARS[@]}"; do
+  case "$v" in
+    mlotst|zos|siconc)
+      JOB_MEMORY="$MEM_2D"
+      ;;
+    *)
+      JOB_MEMORY="$MEM_3D"
+      ;;
+  esac
   echo "Variable: $v"
+  echo "  resources: memory=${JOB_MEMORY} walltime=${WALLTIME}"
   for y in "${YEARS[@]}"; do
     mapfile -t sbatch_extra_args < <(make_sbatch_extra_args)
     jid=$(DATASET_LABEL="$DATASET_LABEL" \
@@ -113,6 +125,8 @@ for v in "${VARS[@]}"; do
       sbatch --parsable \
       "${sbatch_extra_args[@]}" \
       --job-name="glorys_${v}_${y}" \
+      --mem="$JOB_MEMORY" \
+      --time="$WALLTIME" \
       "$CORE_SCRIPT")
     echo "  submitted VAR=${v} YEAR=${y} as jobid=${jid}"
   done

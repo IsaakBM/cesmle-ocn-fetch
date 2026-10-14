@@ -530,6 +530,21 @@ fi
                         '-selname,thetao', str(source), str(expected)], check=True, capture_output=True)
         with xr.open_dataset(self.root/'parts/source.grid.nc') as actual, xr.open_dataset(expected) as reference:
             xr.testing.assert_allclose(actual, reference)
+        # Incremental runs retain already-published monthly and time-series
+        # outputs without invoking CDO again.
+        for call, destination in [
+                ('process_month 2001 02', output),
+                ('process_timeseries_file "$SOURCE"', self.root/'parts/source.grid.nc')]:
+            accepted = destination.read_bytes()
+            result = subprocess.run(
+                ['bash', '-c', self.preparation_shell()+'\n'+call],
+                env=dict(env, SOURCE=str(source), OVERWRITE_OUTPUTS='no', CDO='/missing/cdo'),
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('[SKIP] Existing output retained', result.stdout)
+            self.assertEqual(destination.read_bytes(), accepted)
 
     def test_vertical_replacement_and_custom_target(self):
         import shutil

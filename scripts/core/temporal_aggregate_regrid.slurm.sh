@@ -61,6 +61,7 @@ set -euo pipefail
 #   CDO           : CDO executable (default: /usr/bin/cdo)
 #   INPUT_TIMESTEP: daily | monthly | auto (default: auto)
 #                   used only for INPUT_LAYOUT=year_month
+#   OVERWRITE_OUTPUTS: yes | no (default: yes)
 # ==============================================================================
 CDO="${CDO:-/usr/bin/cdo}"
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
@@ -80,6 +81,7 @@ PARTS_SUBDIR="${PARTS_SUBDIR:-parts}"
 TMP_SUBDIR="${TMP_SUBDIR:-tmp}"
 MIN_FREE_GB="${MIN_FREE_GB:-40}"
 INPUT_TIMESTEP="${INPUT_TIMESTEP:-auto}"
+OVERWRITE_OUTPUTS="${OVERWRITE_OUTPUTS:-yes}"
 
 if [[ -z "$VAR" || -z "$INROOT" || -z "$OUTROOT" || -z "$GRIDFILE" ]]; then
   echo "ERROR: Missing required environment variables."
@@ -95,6 +97,11 @@ fi
 
 if [[ "$INPUT_TIMESTEP" != "daily" && "$INPUT_TIMESTEP" != "monthly" && "$INPUT_TIMESTEP" != "auto" ]]; then
   echo "ERROR: INPUT_TIMESTEP must be one of: daily, monthly, auto"
+  exit 1
+fi
+
+if [[ "$OVERWRITE_OUTPUTS" != "yes" && "$OVERWRITE_OUTPUTS" != "no" ]]; then
+  echo "ERROR: OVERWRITE_OUTPUTS must be yes or no"
   exit 1
 fi
 
@@ -194,6 +201,7 @@ if [[ "$METHOD" == "auto" ]]; then
   echo " Auto curvilin  : $AUTO_METHOD_CURVILINEAR"
 fi
 echo " Input timestep : $INPUT_TIMESTEP"
+echo " Overwrite      : $OVERWRITE_OUTPUTS"
 echo " CPUs           : ${SLURM_CPUS_PER_TASK:-4}"
 echo " Parallel months: $NPROC"
 echo " Free tmp fs    : ${FREE_GB}G (min ${MIN_FREE_GB}G)"
@@ -330,6 +338,10 @@ process_month() (
   trap '[[ -z "$PREP_WORK_PATH" ]] || rm -rf -- "$PREP_WORK_PATH"; rmdir -- "$PREP_LOCK_PATH"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
+  if [[ -f "$out" && "$OVERWRITE_OUTPUTS" == "no" ]]; then
+    echo "[SKIP] Existing output retained (freshness not verified): $out"
+    exit 0
+  fi
   work="$(mktemp -d "${out}.work.XXXXXX")"
   PREP_WORK_PATH="$work"
   if [[ "$mode" == "auto" ]]; then
@@ -364,6 +376,10 @@ process_timeseries_file() (
   trap '[[ -z "$PREP_WORK_PATH" ]] || rm -rf -- "$PREP_WORK_PATH"; rmdir -- "$PREP_LOCK_PATH"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
+  if [[ -f "$out" && "$OVERWRITE_OUTPUTS" == "no" ]]; then
+    echo "[SKIP] Existing output retained (freshness not verified): $out"
+    exit 0
+  fi
   work="$(mktemp -d "${out}.work.XXXXXX")"
   PREP_WORK_PATH="$work"
   method_to_use="$(resolve_method "$in")"
@@ -379,7 +395,7 @@ process_timeseries_file() (
 export CDO
 export -f validate_daily_coverage validate_prepared_output
 export -f detect_gridtype resolve_method process_month process_timeseries_file
-export DATASET_LABEL INROOT OUTROOT OUTDIR PARTS TMPDIR VAR GRIDFILE METHOD AUTO_METHOD_DEFAULT AUTO_METHOD_CURVILINEAR FILE_GLOB INPUT_TIMESTEP
+export DATASET_LABEL INROOT OUTROOT OUTDIR PARTS TMPDIR VAR GRIDFILE METHOD AUTO_METHOD_DEFAULT AUTO_METHOD_CURVILINEAR FILE_GLOB INPUT_TIMESTEP OVERWRITE_OUTPUTS
 
 # ==============================================================================
 # Main

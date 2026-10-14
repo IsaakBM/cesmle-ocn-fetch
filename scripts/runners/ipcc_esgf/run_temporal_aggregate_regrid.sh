@@ -56,6 +56,10 @@ read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
 read -r -a MODELS <<< "${MODELS:-}"
 read -r -a SCENARIOS <<< "${SCENARIOS:-}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
+OVERWRITE_OUTPUTS="${OVERWRITE_OUTPUTS:-no}"
+MEM_3D="${MEM_3D:-128G}"
+MEM_2D="${MEM_2D:-32G}"
+WALLTIME="${WALLTIME:-5-00:00:00}"
 
 contains_filter_value() {
   local value="$1"
@@ -166,6 +170,14 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
 
   OUTROOT="${OUTROOT_BASE}/${model}/${member}/${scen}"
   job_label="${DATASET_LABEL}_${model}_${scen}_${member}"
+  case "$v" in
+    zos|mlotst|siconc)
+      JOB_MEMORY="$MEM_2D"
+      ;;
+    *)
+      JOB_MEMORY="$MEM_3D"
+      ;;
+  esac
   mapfile -t sbatch_extra_args < <(make_sbatch_extra_args)
 
   jid=$(DATASET_LABEL="${job_label}" \
@@ -182,11 +194,14 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
       PARTS_SUBDIR="$PARTS_SUBDIR" \
       TMP_SUBDIR="$TMP_SUBDIR" \
       MIN_FREE_GB="$MIN_FREE_GB" \
+      OVERWRITE_OUTPUTS="$OVERWRITE_OUTPUTS" \
       sbatch --parsable \
       "${sbatch_extra_args[@]}" \
       --job-name="ipcc_${scen}_${v}" \
+      --mem="$JOB_MEMORY" \
+      --time="$WALLTIME" \
       "$CORE_SCRIPT")
-  echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} TABLE=${table_id} GRID=${source_grid} as jobid=${jid}"
+  echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} TABLE=${table_id} GRID=${source_grid} MEMORY=${JOB_MEMORY} OVERWRITE=${OVERWRITE_OUTPUTS} as jobid=${jid}"
 done
 
 echo "Done."

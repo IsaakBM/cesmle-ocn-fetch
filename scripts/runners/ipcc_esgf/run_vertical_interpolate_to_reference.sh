@@ -46,6 +46,7 @@ read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
 read -r -a MODELS <<< "${MODELS:-}"
 read -r -a SCENARIOS <<< "${SCENARIOS:-}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
+OVERWRITE_OUTPUTS="${OVERWRITE_OUTPUTS:-no}"
 
 VARS_2D=(
   zos
@@ -161,11 +162,12 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
       SOURCE_SCALE="$SOURCE_SCALE" \
       OUT_SUFFIX="$OUT_SUFFIX" \
       MAX_JOBS="$MAX_JOBS" \
+      OVERWRITE_OUTPUTS="$OVERWRITE_OUTPUTS" \
       sbatch --parsable \
       "${sbatch_extra_args[@]}" \
       --job-name="vint_${scen}_${v}" \
       "$CORE_SCRIPT")
-  echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} as jobid=${jid}"
+  echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} OVERWRITE=${OVERWRITE_OUTPUTS} as jobid=${jid}"
 done
 
 echo "Done."

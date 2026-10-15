@@ -57,8 +57,8 @@ read -r -a MODELS <<< "${MODELS:-}"
 read -r -a SCENARIOS <<< "${SCENARIOS:-}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
 OVERWRITE_OUTPUTS="${OVERWRITE_OUTPUTS:-no}"
-MEM_3D="${MEM_3D:-128G}"
-MEM_2D="${MEM_2D:-32G}"
+MEM_3D="${MEM_3D:-16G}"
+MEM_2D="${MEM_2D:-8G}"
 WALLTIME="${WALLTIME:-5-00:00:00}"
 
 contains_filter_value() {

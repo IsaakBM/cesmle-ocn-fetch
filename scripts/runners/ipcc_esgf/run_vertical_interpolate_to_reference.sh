@@ -47,6 +47,8 @@ read -r -a MODELS <<< "${MODELS:-}"
 read -r -a SCENARIOS <<< "${SCENARIOS:-}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
 OVERWRITE_OUTPUTS="${OVERWRITE_OUTPUTS:-no}"
+MEMORY="${MEMORY:-32G}"
+WALLTIME="${WALLTIME:-5-00:00:00}"
 
 VARS_2D=(
   zos
@@ -166,8 +168,10 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
       sbatch --parsable \
       "${sbatch_extra_args[@]}" \
       --job-name="vint_${scen}_${v}" \
+      --mem="$MEMORY" \
+      --time="$WALLTIME" \
       "$CORE_SCRIPT")
-  echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} OVERWRITE=${OVERWRITE_OUTPUTS} as jobid=${jid}"
+  echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} MEMORY=${MEMORY} OVERWRITE=${OVERWRITE_OUTPUTS} as jobid=${jid}"
 done
 
 echo "Done."

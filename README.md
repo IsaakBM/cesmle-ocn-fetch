@@ -43,6 +43,7 @@ The easiest way to understand the repository is to read it in this order:
 
 If you only need the current logic, focus first on:
 
+- [Monthly And Seasonal Product Design](#monthly-and-seasonal-product-design)
 - [Architecture And Script Roles](#architecture-and-script-roles)
 - [Common Processing Stages](#common-processing-stages)
 - [Current Workflow Families](#current-workflow-families)
@@ -95,6 +96,73 @@ until a trusted present-day baseline is defined.
 branches, but interpreted as related configurations of the MPI-ESM1.2 model
 family rather than fully independent models.
 
+## Monthly And Seasonal Product Design
+
+The accepted whole-window climatologies remain a separate product family. The
+monthly and seasonal branches extend the pipeline with calendar-month and
+complete-season climatologies while retaining the same source preparation,
+vertical matching, change-field, downscaling, ensemble, validation, and delivery
+stages.
+
+### Required temporal coverage
+
+Monthly products contain exactly twelve published climatology fields, January
+through December. There is no thirteenth monthly product. Seasonal DJF needs the
+December immediately before the first named season year, so that month must be
+present in the prepared inputs even though it is not published separately.
+
+| Product window | Published monthly source months | Additional DJF boundary | Complete input coverage retained |
+| --- | --- | --- | --- |
+| Baseline `2006-2014` | January 2006–December 2014 | December 2005 | December 2005–December 2014 |
+| Future `2030-2040` | January 2030–December 2040 | December 2029 | December 2029–December 2040 |
+| Future `2050-2060` | January 2050–December 2060 | December 2049 | December 2049–December 2060 |
+| Future `2090-2100` | January 2090–December 2100 | December 2089 | December 2089–December 2100 |
+
+Season years are named by their January year. For example, DJF 2030 is
+December 2029 plus January and February 2030. Consequently, seasonal products
+for a window ending in 2040 consume source data only through November 2040;
+December 2040 remains necessary for the published December monthly climatology.
+December 2041 is not required for either product family.
+
+### Monthly changes, downscaling, and current speed
+
+Monthly change fields are calendar-month matched:
+
+```text
+future January climatology - historical January climatology
+future February climatology - historical February climatology
+...
+future December climatology - historical December climatology
+```
+
+Variables configured for log-ratio change retain that method independently for
+each calendar month. Each resulting monthly change field is applied only to the
+matching trusted GLORYS or hindcast baseline month. Seasonal climatologies are
+then built from complete season years rather than by relabelling a whole-window
+mean.
+
+For monthly and seasonal current-speed products, calculate the scalar field at
+each monthly timestep before climatological aggregation:
+
+```text
+current_speed = sqrt(uo^2 + vo^2)
+```
+
+Averaging `uo` and `vo` first and then calculating speed would answer a different
+question and is not the method planned for these products.
+
+### Monthly and seasonal ensemble products
+
+Each individual-model monthly or seasonal field feeds three ensemble products:
+
+- ensemble mean;
+- sample standard deviation, normalized by `n - 1`;
+- valid-model count at each cell.
+
+The model-count field is required because the reviewed UKESM chlorophyll mask
+can reduce the number of contributing models locally. A rejected UKESM cell
+remains missing; it is not converted to the baseline or a no-change value.
+
 Current anomaly-add and baseline matrix:
 
 | Variable(s) | Source class | Model processing | Delta regrid | Trusted baseline for add | Native add grid | Coastal/wet-mask rule |
@@ -108,7 +176,7 @@ Current anomaly-add and baseline matrix:
 The future products use a climatological change-field, or delta-change,
 approach. A model-specific change field is calculated from the difference or
 ratio between that model's future-period projection climatology and its
-historical/current reference climatology. That change field is then transferred
+historical `2006-2014` reference climatology. That change field is then transferred
 onto a trusted present-day target baseline, following the official IPCC-TGICA
 [General Guidelines on the Use of Scenario Data](https://web.archive.org/web/20231118225102/https://www.ipcc-data.org/guidelines/TGICA_guidance_sdciaa_v2_final.pdf)
 archived from the IPCC Data Distribution Centre
@@ -120,10 +188,10 @@ it is not a regional dynamical model or a full empirical-statistical model, but
 it is still a complex multi-stage climate/ocean data production pipeline.
 
 ```text
-additive change field = model future climatology - model historical/current climatology
+additive change field = model future climatology - model historical climatology
 additive downscaled projection = trusted target baseline + change field
 
-log-ratio change field = log(model future climatology) - log(model historical/current climatology)
+log-ratio change field = log(model future climatology) - log(model historical climatology)
 log-ratio downscaled projection = trusted target baseline * exp(change field)
 ```
 
@@ -149,20 +217,22 @@ The resulting depth NetCDF tree can be exported to Parquet with
 
 ## Purpose
 
-At a high level, the repository now supports three reusable processing stages:
+At a high level, the repository now supports three reusable preparation stages:
 
 1. monthly preparation and horizontal harmonization
 2. vertical interpolation to a GLORYS reference grid
 3. climatology windows from either monthly files or long time-series files
 
-These stages sit inside a broader downscaling pipeline. After climatologies are
-computed, later steps can still include:
+These stages sit inside the broader production sequence documented above. After
+climatologies are computed, later stages include:
 
 4. model-specific change fields between reference and future climatology windows
 5. addition of change fields to a trusted present-day baseline
 6. final downscaled products
 
-Those stages are reused across different dataset families:
+The pipeline then continues through model ensembles, current-speed derivation,
+validation, organization, and delivery exports. These stages are reused across
+different dataset families:
 
 - GLORYS
 - CESM

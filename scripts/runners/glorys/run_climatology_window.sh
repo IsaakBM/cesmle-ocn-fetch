@@ -40,6 +40,15 @@ VARS_DEFAULT=(
 read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
 CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
+MEM_3D="${MEM_3D:-128G}"
+MEM_2D="${MEM_2D:-32G}"
+WALLTIME="${WALLTIME:-7-00:00:00}"
+
+VARS_2D=(
+  mlotst
+  zos
+  siconc
+)
 
 if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" && "$CLIMATOLOGY_MODE" != "seasonal" ]]; then
   echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly, seasonal" >&2
@@ -76,6 +85,11 @@ for v in "${VARS[@]}"; do
   OUT_DIR="${INROOT_BASE}/${v}/${OUT_SUBDIR}"
   TMP_DIR="${INROOT_BASE}/${v}/tmp_clim"
 
+  JOB_MEMORY="$MEM_3D"
+  if [[ " ${VARS_2D[*]} " == *" ${v} "* ]]; then
+    JOB_MEMORY="$MEM_2D"
+  fi
+
   if [[ ! -d "$IN_DIR" ]]; then
     echo "WARN: Input directory not found, skipping: $IN_DIR"
     continue
@@ -96,8 +110,10 @@ for v in "${VARS[@]}"; do
     sbatch --parsable \
     "${sbatch_extra_args[@]}" \
     --job-name="gclim_${v}" \
+    --mem="$JOB_MEMORY" \
+    --time="$WALLTIME" \
     "$CORE_SCRIPT")
-  echo "  submitted VAR=${v} as jobid=${jid}"
+  echo "  submitted VAR=${v} MEMORY=${JOB_MEMORY} as jobid=${jid}"
 done
 
 echo "Done."

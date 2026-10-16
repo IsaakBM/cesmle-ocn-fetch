@@ -54,6 +54,9 @@ read -r -a SCENARIOS <<< "${SCENARIOS:-}"
 read -r -a WINDOWS <<< "${WINDOWS:-}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
 CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
+MEM_3D="${MEM_3D:-8G}"
+MEM_2D="${MEM_2D:-4G}"
+WALLTIME="${WALLTIME:-7-00:00:00}"
 
 if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" && "$CLIMATOLOGY_MODE" != "seasonal" ]]; then
   echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly, seasonal" >&2
@@ -165,6 +168,10 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
   OUT_DIR="${VAR_DIR}/${OUT_SUBDIR}"
   TMP_DIR="${VAR_DIR}/tmp_clim"
   file_glob="${v}_*_${model}_${scen}_*.nc"
+  JOB_MEMORY="$MEM_3D"
+  if [[ " ${VARS_2D[*]} " == *" ${v} "* ]]; then
+    JOB_MEMORY="$MEM_2D"
+  fi
 
   member="$(ipcc_esgf_resolve_member "$IN_DIR" "$file_glob")" || {
     status=$?
@@ -192,8 +199,10 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         sbatch --parsable \
         "${sbatch_extra_args[@]}" \
         --job-name="clim_${scen}_${v}" \
+        --mem="$JOB_MEMORY" \
+        --time="$WALLTIME" \
         "$CORE_SCRIPT")
-      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=baseline as jobid=${jid}"
+      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=baseline MEMORY=${JOB_MEMORY} as jobid=${jid}"
     fi
   else
     if contains_filter_value "2030-2040" "${WINDOWS[@]}"; then
@@ -211,8 +220,10 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         sbatch --parsable \
         "${sbatch_extra_args[@]}" \
         --job-name="clim2030_${v}" \
+        --mem="$JOB_MEMORY" \
+        --time="$WALLTIME" \
         "$CORE_SCRIPT")
-      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2030-2040 as jobid=${jid2030}"
+      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2030-2040 MEMORY=${JOB_MEMORY} as jobid=${jid2030}"
     fi
 
     if contains_filter_value "2050-2060" "${WINDOWS[@]}"; then
@@ -230,8 +241,10 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         sbatch --parsable \
         "${sbatch_extra_args[@]}" \
         --job-name="clim2050_${v}" \
+        --mem="$JOB_MEMORY" \
+        --time="$WALLTIME" \
         "$CORE_SCRIPT")
-      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2050-2060 as jobid=${jid2050}"
+      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2050-2060 MEMORY=${JOB_MEMORY} as jobid=${jid2050}"
     fi
 
     if contains_filter_value "2090-2100" "${WINDOWS[@]}"; then
@@ -249,8 +262,10 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         sbatch --parsable \
         "${sbatch_extra_args[@]}" \
         --job-name="clim2090_${v}" \
+        --mem="$JOB_MEMORY" \
+        --time="$WALLTIME" \
         "$CORE_SCRIPT")
-      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2090-2100 as jobid=${jid2090}"
+      echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2090-2100 MEMORY=${JOB_MEMORY} as jobid=${jid2090}"
     fi
   fi
 done

@@ -42,6 +42,8 @@ VARS_DEFAULT=(
 read -r -a VARS <<< "${VARS:-${VARS_DEFAULT[*]}}"
 CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
+MEMORY="${MEMORY:-32G}"
+WALLTIME="${WALLTIME:-7-00:00:00}"
 
 if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" && "$CLIMATOLOGY_MODE" != "seasonal" ]]; then
   echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly, seasonal" >&2
@@ -98,8 +100,10 @@ for v in "${VARS[@]}"; do
     sbatch --parsable \
     "${sbatch_extra_args[@]}" \
     --job-name="clim_${v}" \
+    --mem="$MEMORY" \
+    --time="$WALLTIME" \
     "$CORE_SCRIPT")
-  echo "  submitted VAR=${v} as jobid=${jid}"
+  echo "  submitted VAR=${v} MEMORY=${MEMORY} as jobid=${jid}"
 done
 
 echo "Done."

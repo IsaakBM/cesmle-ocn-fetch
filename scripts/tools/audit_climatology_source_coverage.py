@@ -638,9 +638,11 @@ def audit_baseline(dataset, root, variables, stage):
             add_coverage(record, "prepared", coverage, existing_dirs)
             empty_raw = inspect_filename_paths([], start, end)
             empty_raw["method"] = "not_applicable"
+            empty_raw["missing"] = []
             add_coverage(record, "raw", empty_raw, [])
             record.update(
                 {
+                    "raw_complete": "not_applicable",
                     "manifest_row_count": "",
                     "manifest_missing_months": "",
                     "manifest_duplicate_months": "",

@@ -296,6 +296,7 @@ write_climatology_metadata() {
   local season_year_count="$9"
 
   python3 - "$path" "$start_text" "$end_text" "$selected_count" "$product_type" "$month_number" "$role" "$season_name" "$season_year_count" <<'PY_METADATA'
+import calendar
 import sys
 
 import numpy as np

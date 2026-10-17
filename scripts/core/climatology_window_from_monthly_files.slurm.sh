@@ -257,15 +257,28 @@ write_climatology_metadata() {
   local role="$7"
   local season_name="$8"
   local season_year_count="$9"
+  local fill_top_missing="${10:-no}"
 
-  python3 - "$path" "$start_text" "$end_text" "$selected_count" "$product_type" "$month_number" "$role" "$season_name" "$season_year_count" <<'PY_METADATA'
+  python3 - "$path" "$start_text" "$end_text" "$selected_count" "$product_type" "$month_number" "$role" "$season_name" "$season_year_count" "$fill_top_missing" "$VAR" <<'PY_METADATA'
 import calendar
 import sys
 
 import numpy as np
 import xarray as xr
 
-path, start_text, end_text, selected_count, product_type, month_number, role, season_name, season_year_count = sys.argv[1:]
+(
+    path,
+    start_text,
+    end_text,
+    selected_count,
+    product_type,
+    month_number,
+    role,
+    season_name,
+    season_year_count,
+    fill_top_missing,
+    var_hint,
+) = sys.argv[1:]
 if end_text.endswith("-last"):
     year, month = map(int, end_text[:-5].split("-"))
     end_text = f"{year:04d}-{month:02d}-{calendar.monthrange(year, month)[1]:02d}"
@@ -275,6 +288,73 @@ midpoint = start + (end - start) // 2
 
 with xr.open_dataset(path) as ds:
     out = ds.load()
+
+main_var = var_hint if var_hint in out.data_vars else next(
+    (
+        name for name in out.data_vars
+        if "bnds" not in name.lower() and "bounds" not in name.lower()
+    ),
+    None,
+)
+if main_var is None:
+    raise ValueError(f"No scientific data variable found in {path}")
+
+if fill_top_missing == "yes":
+    da = out[main_var]
+    zdim_names = ("depth", "depth_below_sea", "lev", "z_t")
+    zdim_candidates = [
+        dimension for dimension in da.dims
+        if dimension.lower() in zdim_names
+    ]
+    filled_top_count = 0
+    first_valid_index = None
+    if zdim_candidates:
+        zdim = zdim_candidates[0]
+        other_dims = [dimension for dimension in da.dims if dimension != zdim]
+        if other_dims:
+            transposed = da.transpose(zdim, *other_dims)
+            values = np.asarray(transposed.values)
+            nlev = values.shape[0]
+            flat = values.reshape(nlev, -1)
+            finite = np.isfinite(flat)
+            has_valid = finite.any(axis=0)
+            first_valid_indices = np.argmax(finite, axis=0)
+            first_valid_indices[~has_valid] = -1
+
+            valid_columns = np.flatnonzero(first_valid_indices > 0)
+            if valid_columns.size:
+                donor_indices = first_valid_indices[valid_columns]
+                donor_values = flat[donor_indices, valid_columns]
+                for level_index in range(nlev):
+                    eligible = donor_indices > level_index
+                    if not np.any(eligible):
+                        continue
+                    columns = valid_columns[eligible]
+                    missing = ~np.isfinite(flat[level_index, columns])
+                    if np.any(missing):
+                        target_columns = columns[missing]
+                        flat[level_index, target_columns] = donor_values[eligible][missing]
+                        filled_top_count += int(missing.sum())
+
+            valid_indices = first_valid_indices[first_valid_indices >= 0]
+            if valid_indices.size:
+                first_valid_index = int(valid_indices.min())
+
+            out[main_var] = xr.DataArray(
+                flat.reshape(values.shape),
+                coords=transposed.coords,
+                dims=transposed.dims,
+                attrs=da.attrs,
+                name=da.name,
+            ).transpose(*da.dims)
+        else:
+            zdim = None
+    else:
+        zdim = None
+    print(f"MAIN VAR           : {main_var}")
+    print(f"VERTICAL DIM       : {zdim}")
+    print(f"FIRST VALID INDEX  : {first_valid_index}")
+    print(f"TOP LEVELS FILLED  : {filled_top_count}")
 if "time" in out.dims:
     if out.sizes["time"] != 1:
         raise ValueError(
@@ -317,10 +397,16 @@ if product_type:
         "calendar": "proleptic_gregorian",
         "dtype": "float64",
     }
+    encoding = {
+        "time": time_encoding,
+        "time_bnds": dict(time_encoding),
+    }
+    if fill_top_missing == "yes":
+        encoding[main_var] = {"zlib": True, "complevel": 1}
     out.to_netcdf(
         path,
         format="NETCDF4",
-        encoding={"time": time_encoding, "time_bnds": dict(time_encoding)},
+        encoding=encoding,
     )
 else:
     # Preserve the established whole-window encoding exactly.
@@ -490,17 +576,13 @@ if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
     fi
 
     monthly_tmp="${TMP_DIR}/${OUT_PREFIX}_clim_month_${month_padded}_${start_year}-${end_year}.tmp.nc"
-    monthly_filled="${TMP_DIR}/${OUT_PREFIX}_clim_month_${month_padded}_${start_year}-${end_year}.filled.tmp.nc"
     monthly_out="${OUT_DIR}/${OUT_PREFIX}_clim_month_${month_padded}_${start_year}-${end_year}.nc"
-    rm -f "$monthly_tmp" "$monthly_filled"
+    rm -f "$monthly_tmp"
     cdo -L -O timmean -mergetime "${month_files[@]}" "$monthly_tmp"
     write_climatology_metadata "$monthly_tmp" \
       "${start_year}-${month_padded}-01" "${end_year}-${month_padded}-last" \
-      "${#month_files[@]}" "monthly" "$month" "calendar_month" "" ""
-    if [[ "$FILL_TOP_MISSING" == "yes" ]]; then
-      fill_top_layers "$monthly_tmp" "$monthly_filled"
-      mv -f "$monthly_filled" "$monthly_tmp"
-    fi
+      "${#month_files[@]}" "monthly" "$month" "calendar_month" "" "" \
+      "$FILL_TOP_MISSING"
     monthly_temps+=( "$monthly_tmp" )
     monthly_outputs+=( "$monthly_out" )
   done
@@ -583,9 +665,8 @@ if [[ "$CLIMATOLOGY_MODE" == "seasonal" ]]; then
     fi
 
     seasonal_tmp="${TMP_DIR}/${OUT_PREFIX}_clim_season_${season}_${start_year}-${end_year}.tmp.nc"
-    seasonal_filled="${TMP_DIR}/${OUT_PREFIX}_clim_season_${season}_${start_year}-${end_year}.filled.tmp.nc"
     seasonal_out="${OUT_DIR}/${OUT_PREFIX}_clim_season_${season}_${start_year}-${end_year}.nc"
-    rm -f "$seasonal_tmp" "$seasonal_filled"
+    rm -f "$seasonal_tmp"
     cdo -L -O timmean -mergetime "${season_year_means[@]}" "$seasonal_tmp"
 
     case "$season" in
@@ -608,11 +689,7 @@ if [[ "$CLIMATOLOGY_MODE" == "seasonal" ]]; then
     esac
     write_climatology_metadata "$seasonal_tmp" "$bounds_start" "$bounds_end" \
       "$((expected_season_years * 3))" "seasonal" "" "season" "$season" \
-      "$expected_season_years"
-    if [[ "$FILL_TOP_MISSING" == "yes" ]]; then
-      fill_top_layers "$seasonal_tmp" "$seasonal_filled"
-      mv -f "$seasonal_filled" "$seasonal_tmp"
-    fi
+      "$expected_season_years" "$FILL_TOP_MISSING"
     seasonal_temps+=( "$seasonal_tmp" )
     seasonal_outputs+=( "$seasonal_out" )
     rm -f "${season_year_means[@]}" "$season_input"

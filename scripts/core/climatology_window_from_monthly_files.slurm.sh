@@ -60,6 +60,8 @@ shopt -s nullglob
 #                     monthly writes January-December climatologies; seasonal
 #                     writes DJF, MAM, JJA, and SON climatologies and consumes
 #                     the preceding December required by DJF
+#   CLIM_WORKERS    : concurrent month/season tasks (default: allocated CPUs,
+#                     capped at four); use 1 to benchmark serial storage access
 # ==============================================================================
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"
@@ -75,6 +77,22 @@ EXPECTED_N="${EXPECTED_N:-108}"
 OUT_PREFIX="${OUT_PREFIX:-}"
 FILL_TOP_MISSING="${FILL_TOP_MISSING:-yes}"
 CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
+CLIM_WORKERS="${CLIM_WORKERS:-${SLURM_CPUS_PER_TASK:-1}}"
+if ! [[ "$CLIM_WORKERS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: CLIM_WORKERS must be a positive integer" >&2
+  exit 1
+fi
+if (( CLIM_WORKERS > ${SLURM_CPUS_PER_TASK:-$CLIM_WORKERS} )); then
+  echo "ERROR: CLIM_WORKERS exceeds allocated CPUs" >&2
+  exit 1
+fi
+(( CLIM_WORKERS <= 4 )) || CLIM_WORKERS=4
+# Each task uses a separate process/file; avoid hidden BLAS/OpenMP oversubscription.
+if [[ "$CLIMATOLOGY_MODE" != "whole" ]]; then
+  export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+  # Fail before any large reads if the in-place NetCDF finalizer is unavailable.
+  python3 -c 'import netCDF4, numpy'
+fi
 
 if [[ -z "$VAR" || -z "$IN_DIR" || -z "$OUT_DIR" ]]; then
   echo "ERROR: Missing required environment variables."
@@ -126,6 +144,7 @@ echo "WINDOW      : ${WINDOW_START} to ${WINDOW_END}"
 echo "OUT PREFIX  : ${OUT_PREFIX}"
 echo "FILL TOP    : ${FILL_TOP_MISSING}"
 echo "CLIM MODE   : ${CLIMATOLOGY_MODE}"
+echo "FIELD WORKERS: ${CLIM_WORKERS}"
 echo "============================================================"
 
 # ------------------------------------------------------------------------------
@@ -259,107 +278,130 @@ write_climatology_metadata() {
   local season_year_count="$9"
   local fill_top_missing="${10:-no}"
 
-  python3 - "$path" "$start_text" "$end_text" "$selected_count" "$product_type" "$month_number" "$role" "$season_name" "$season_year_count" "$fill_top_missing" "$VAR" <<'PY_METADATA'
+  # Monthly/seasonal outputs are already compressed by CDO. Update only tiny
+  # time metadata and changed top-fill slabs in place in this private temp file.
+  # The established whole-window path below retains its original encoding.
+  if [[ -n "$product_type" ]]; then
+    python3 - "$path" "$start_text" "$end_text" "$selected_count" "$product_type" "$month_number" "$role" "$season_name" "$season_year_count" "$fill_top_missing" "$VAR" <<'PY_FINALIZE'
 import calendar
+import datetime as dt
+import sys
+
+import netCDF4 as nc
+import numpy as np
+
+(path, start_text, end_text, count, kind, month, role, season, years,
+ fill_top, var_hint) = sys.argv[1:]
+if end_text.endswith("-last"):
+    year, mon = map(int, end_text[:-5].split("-"))
+    end_text = f"{year:04d}-{mon:02d}-{calendar.monthrange(year, mon)[1]:02d}"
+start, end = map(dt.datetime.fromisoformat, (start_text, end_text))
+# Match the existing whole-day midpoint policy exactly.
+midpoint = start + dt.timedelta(days=(end - start).days // 2)
+units = f"days since {start.year}-01-01 00:00:00"
+cal = "proleptic_gregorian"
+expected_month = int(month) if kind == "monthly" else {"DJF": 1, "MAM": 4, "JJA": 7, "SON": 10}[season]
+if midpoint.month != expected_month:
+    raise ValueError("Climatology midpoint is outside the expected month")
+with nc.Dataset(path, "r+") as ds:
+    if "time" not in ds.dimensions or len(ds.dimensions["time"]) != 1:
+        raise ValueError("Expected singleton climatology time dimension")
+    main = ds.variables[var_hint]
+    zdim = next((d for d in main.dimensions if d.lower() in
+                 ("depth", "depth_below_sea", "lev", "z_t")), None)
+    filled_count = 0
+    if fill_top == "yes" and zdim and main.ndim > 1:
+        zaxis = main.dimensions.index(zdim)
+        # Bound memory using 16 latitude rows, or one row of another spatial
+        # dimension. Masked fill values, NaNs and infinities all remain missing.
+        slab_dim = next((d for d in main.dimensions if d.lower() in ("lat", "latitude", "y")),
+                        next(d for d in main.dimensions if d not in (zdim, "time")))
+        slab_axis = main.dimensions.index(slab_dim)
+        for offset in range(0, main.shape[slab_axis], 16):
+            key = [slice(None)] * main.ndim
+            key[slab_axis] = slice(offset, offset + 16)
+            slab = np.ma.asarray(main[tuple(key)])
+            values = np.moveaxis(np.asarray(slab.filled(np.nan)), zaxis, 0).copy()
+            flat = values.reshape(values.shape[0], -1)
+            valid = np.isfinite(flat)
+            first = valid.argmax(axis=0)
+            first[~valid.any(axis=0)] = -1
+            columns = np.flatnonzero(first > 0)
+            changed = False
+            if columns.size:
+                donors = flat[first[columns], columns].copy()
+                for level in range(flat.shape[0]):
+                    eligible = first[columns] > level
+                    targets = columns[eligible]
+                    if targets.size:
+                        flat[level, targets] = donors[eligible]
+                        filled_count += targets.size
+                        changed = True
+            if changed:
+                # Preserve interior infinities exactly as the original rule did;
+                # only missing cells above the first finite donor are changed.
+                main[tuple(key)] = np.ma.masked_where(
+                    np.isnan(np.moveaxis(values, 0, zaxis)),
+                    np.moveaxis(values, 0, zaxis),
+                )
+    bounds_name = "time_bnds"
+    if "bnds" not in ds.dimensions:
+        ds.createDimension("bnds", 2)
+    if len(ds.dimensions["bnds"]) != 2:
+        raise ValueError("Expected two climatology bounds")
+    if bounds_name not in ds.variables:
+        ds.createVariable(bounds_name, "f8", ("time", "bnds"))
+    bounds = ds.variables[bounds_name]
+    if bounds.dimensions != ("time", "bnds"):
+        raise ValueError("Incorrect time_bnds dimensions")
+    time = ds.variables["time"]
+    for variable in (time, bounds):
+        variable.setncatts({"units": units, "calendar": cal})
+    if "bounds" in time.ncattrs():
+        time.delncattr("bounds")
+    time.setncatts({"long_name": "climatology time", "climatology": bounds_name})
+    time[:] = nc.date2num([midpoint], units, cal)
+    bounds[:] = nc.date2num([[start, end]], units, cal)
+    attrs = {"climatology_window_start": start_text, "climatology_window_end": end_text,
+             "climatology_selected_timesteps": count, "climatology_product_type": kind,
+             "climatology_field_role": role,
+             "climatology_time_policy": "time is the midpoint of time_bnds; time_bnds stores the first and last contributing climatology dates"}
+    if month:
+        attrs["climatology_month"] = int(month)
+    if season:
+        attrs.update(climatology_season=season, climatology_season_years=years,
+                     climatology_weighting="source-calendar month length within each season year; equal weight across season years")
+    ds.setncatts(attrs)
+# Reopen the serialized time fields, without reading the scientific array.
+with nc.Dataset(path) as ds:
+    time, bounds = ds.variables["time"], ds.variables["time_bnds"]
+    actual = nc.num2date(bounds[:].ravel(), bounds.units, bounds.calendar)
+    if [(v.year, v.month, v.day) for v in actual] != [(v.year, v.month, v.day) for v in (start, end)]:
+        raise ValueError("Serialized climatology bounds differ from requested dates")
+    decoded = nc.num2date(time[:], time.units, time.calendar)[0]
+    if decoded.month != expected_month or not bounds[0, 0] <= time[0] <= bounds[0, 1]:
+        raise ValueError("Invalid serialized climatology time")
+    if time.climatology != "time_bnds" or time.units != bounds.units or time.calendar != bounds.calendar:
+        raise ValueError("Inconsistent time metadata")
+print(f"[FINALIZED] {kind} {month or season}: top cells filled={filled_count}", flush=True)
+PY_FINALIZE
+    return
+  fi
+
+  python3 - "$path" "$start_text" "$end_text" "$selected_count" "$product_type" "$month_number" "$role" "$season_name" "$season_year_count" "$fill_top_missing" "$VAR" <<'PY_METADATA'
 import sys
 
 import numpy as np
 import xarray as xr
 
-(
-    path,
-    start_text,
-    end_text,
-    selected_count,
-    product_type,
-    month_number,
-    role,
-    season_name,
-    season_year_count,
-    fill_top_missing,
-    var_hint,
-) = sys.argv[1:]
-if end_text.endswith("-last"):
-    year, month = map(int, end_text[:-5].split("-"))
-    end_text = f"{year:04d}-{month:02d}-{calendar.monthrange(year, month)[1]:02d}"
-start = np.datetime64(start_text)
-end = np.datetime64(end_text)
+(path, start_text, end_text, count, *_rest) = sys.argv[1:]
+start, end = np.datetime64(start_text), np.datetime64(end_text)
 midpoint = start + (end - start) // 2
-
 with xr.open_dataset(path) as ds:
     out = ds.load()
-
-main_var = var_hint if var_hint in out.data_vars else next(
-    (
-        name for name in out.data_vars
-        if "bnds" not in name.lower() and "bounds" not in name.lower()
-    ),
-    None,
-)
-if main_var is None:
-    raise ValueError(f"No scientific data variable found in {path}")
-
-if fill_top_missing == "yes":
-    da = out[main_var]
-    zdim_names = ("depth", "depth_below_sea", "lev", "z_t")
-    zdim_candidates = [
-        dimension for dimension in da.dims
-        if dimension.lower() in zdim_names
-    ]
-    filled_top_count = 0
-    first_valid_index = None
-    if zdim_candidates:
-        zdim = zdim_candidates[0]
-        other_dims = [dimension for dimension in da.dims if dimension != zdim]
-        if other_dims:
-            transposed = da.transpose(zdim, *other_dims)
-            values = np.asarray(transposed.values)
-            nlev = values.shape[0]
-            flat = values.reshape(nlev, -1)
-            finite = np.isfinite(flat)
-            has_valid = finite.any(axis=0)
-            first_valid_indices = np.argmax(finite, axis=0)
-            first_valid_indices[~has_valid] = -1
-
-            valid_columns = np.flatnonzero(first_valid_indices > 0)
-            if valid_columns.size:
-                donor_indices = first_valid_indices[valid_columns]
-                donor_values = flat[donor_indices, valid_columns]
-                for level_index in range(nlev):
-                    eligible = donor_indices > level_index
-                    if not np.any(eligible):
-                        continue
-                    columns = valid_columns[eligible]
-                    missing = ~np.isfinite(flat[level_index, columns])
-                    if np.any(missing):
-                        target_columns = columns[missing]
-                        flat[level_index, target_columns] = donor_values[eligible][missing]
-                        filled_top_count += int(missing.sum())
-
-            valid_indices = first_valid_indices[first_valid_indices >= 0]
-            if valid_indices.size:
-                first_valid_index = int(valid_indices.min())
-
-            out[main_var] = xr.DataArray(
-                flat.reshape(values.shape),
-                coords=transposed.coords,
-                dims=transposed.dims,
-                attrs=da.attrs,
-                name=da.name,
-            ).transpose(*da.dims)
-        else:
-            zdim = None
-    else:
-        zdim = None
-    print(f"MAIN VAR           : {main_var}")
-    print(f"VERTICAL DIM       : {zdim}")
-    print(f"FIRST VALID INDEX  : {first_valid_index}")
-    print(f"TOP LEVELS FILLED  : {filled_top_count}")
 if "time" in out.dims:
     if out.sizes["time"] != 1:
-        raise ValueError(
-            f"Expected singleton climatology time dimension, got {out.sizes['time']}"
-        )
+        raise ValueError("Expected singleton climatology time dimension")
     out = out.assign_coords(time=("time", np.array([midpoint], dtype="datetime64[ns]")))
 else:
     out = out.expand_dims(time=np.array([midpoint], dtype="datetime64[ns]"))
@@ -373,96 +415,10 @@ out["time_bnds"] = xr.DataArray(
 )
 out.attrs["climatology_window_start"] = start_text
 out.attrs["climatology_window_end"] = end_text
-out.attrs["climatology_selected_timesteps"] = selected_count
-if product_type:
-    out.attrs["climatology_product_type"] = product_type
-if month_number:
-    out.attrs["climatology_month"] = int(month_number)
-if role:
-    out.attrs["climatology_field_role"] = role
-if season_name:
-    out.attrs["climatology_season"] = season_name
-    out.attrs["climatology_season_years"] = season_year_count
-    out.attrs["climatology_weighting"] = (
-        "source-calendar month length within each season year; "
-        "equal weight across season years"
-    )
-if product_type:
-    out.attrs["climatology_time_policy"] = (
-        "time is the midpoint of time_bnds; time_bnds stores the first and "
-        "last contributing climatology dates"
-    )
-    time_encoding = {
-        "units": f"days since {start_text[:4]}-01-01 00:00:00",
-        "calendar": "proleptic_gregorian",
-        "dtype": "float64",
-    }
-    encoding = {
-        "time": time_encoding,
-        "time_bnds": dict(time_encoding),
-    }
-    if fill_top_missing == "yes":
-        encoding[main_var] = {"zlib": True, "complevel": 1}
-    out.to_netcdf(
-        path,
-        format="NETCDF4",
-        encoding=encoding,
-    )
-else:
-    # Preserve the established whole-window encoding exactly.
-    out.to_netcdf(path, format="NETCDF4")
+out.attrs["climatology_selected_timesteps"] = count
+# Preserve the established whole-window encoding exactly.
+out.to_netcdf(path, format="NETCDF4")
 
-if product_type:
-    with xr.open_dataset(path, decode_times=False) as check:
-        if check.sizes.get("time") != 1:
-            raise ValueError("Climatology output must contain one time coordinate")
-        bounds_name = check["time"].attrs.get("climatology")
-        if bounds_name != "time_bnds" or bounds_name not in check.variables:
-            raise ValueError(
-                "time:climatology must reference the existing time_bnds variable"
-            )
-        bounds = check[bounds_name]
-        if bounds.dims != ("time", "bnds") or bounds.shape != (1, 2):
-            raise ValueError(
-                f"time_bnds must have dimensions (time, bnds) and shape (1, 2), got "
-                f"{bounds.dims} and {bounds.shape}"
-            )
-        for attribute in ("units", "calendar"):
-            time_value = check["time"].attrs.get(attribute)
-            bounds_value = bounds.attrs.get(attribute)
-            if time_value != bounds_value:
-                raise ValueError(
-                    f"time and time_bnds {attribute} differ: "
-                    f"{time_value!r} != {bounds_value!r}"
-                )
-        coordinate = float(check["time"].values[0])
-        lower, upper = map(float, bounds.values[0])
-        if not np.isfinite([coordinate, lower, upper]).all() or not lower <= coordinate <= upper:
-            raise ValueError(
-                f"Invalid climatology time placement: bounds=({lower}, {upper}), "
-                f"time={coordinate}"
-            )
-
-    with xr.open_dataset(path) as decoded:
-        decoded_time = np.asarray(decoded["time"].values)[0]
-        decoded_bounds = np.asarray(decoded["time_bnds"].values)[0]
-        expected_bounds = np.array([start, end], dtype="datetime64[ns]")
-        if not np.array_equal(decoded_bounds.astype("datetime64[ns]"), expected_bounds):
-            raise ValueError(
-                f"Decoded time_bnds do not match configured dates: "
-                f"{decoded_bounds!r} != {expected_bounds!r}"
-            )
-        decoded_month = int(np.datetime_as_string(decoded_time, unit="D")[5:7])
-        expected_month = None
-        if product_type == "monthly":
-            expected_month = int(month_number)
-        elif product_type == "seasonal":
-            expected_month = {"DJF": 1, "MAM": 4, "JJA": 7, "SON": 10}[season_name]
-        if expected_month is not None and decoded_month != expected_month:
-            raise ValueError(
-                f"Climatology time is in month {decoded_month:02d}; "
-                f"expected {expected_month:02d} for {role} {season_name or month_number}"
-            )
 PY_METADATA
 }
 
@@ -550,6 +506,22 @@ ds.close()
 PY_FILL_TOP
 }
 
+# Independent fields have distinct temp names. Wait for all tasks in a batch
+# before publishing; any failed task aborts the entire product family.
+field_pids=()
+wait_fields() {
+  local pid failed=0
+  for pid in "${field_pids[@]-}"; do
+    [[ -n "$pid" ]] || continue
+    if ! wait "$pid"; then
+      echo "ERROR: Climatology task ${pid} failed; outputs will not be published" >&2
+      failed=1
+    fi
+  done
+  field_pids=()
+  (( failed == 0 ))
+}
+
 if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
   start_year="${WINDOW_START:0:4}"
   end_year="${WINDOW_END:0:4}"
@@ -558,7 +530,10 @@ if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
   monthly_outputs=()
 
   echo "[STEP1] Computing twelve calendar-month climatologies"
-  for month in {1..12}; do
+  process_month() (
+    set -euo pipefail
+    month="$1"
+    echo "[START] month=${month} $(date -u +%FT%TZ)"
     month_padded="$(printf '%02d' "$month")"
     month_files=()
     for input_file in "${VALID_FILES[@]}"; do
@@ -578,14 +553,22 @@ if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
     monthly_tmp="${TMP_DIR}/${OUT_PREFIX}_clim_month_${month_padded}_${start_year}-${end_year}.tmp.nc"
     monthly_out="${OUT_DIR}/${OUT_PREFIX}_clim_month_${month_padded}_${start_year}-${end_year}.nc"
     rm -f "$monthly_tmp"
-    cdo -L -O timmean -mergetime "${month_files[@]}" "$monthly_tmp"
+    cdo -L -O -P 1 -f nc4c -z zip_1 timmean -mergetime "${month_files[@]}" "$monthly_tmp"
     write_climatology_metadata "$monthly_tmp" \
       "${start_year}-${month_padded}-01" "${end_year}-${month_padded}-last" \
       "${#month_files[@]}" "monthly" "$month" "calendar_month" "" "" \
       "$FILL_TOP_MISSING"
-    monthly_temps+=( "$monthly_tmp" )
-    monthly_outputs+=( "$monthly_out" )
+    echo "[READY] month=${month_padded} $(date -u +%FT%TZ)"
+  )
+  for month in {1..12}; do
+    month_padded="$(printf '%02d' "$month")"
+    monthly_temps+=( "${TMP_DIR}/${OUT_PREFIX}_clim_month_${month_padded}_${start_year}-${end_year}.tmp.nc" )
+    monthly_outputs+=( "${OUT_DIR}/${OUT_PREFIX}_clim_month_${month_padded}_${start_year}-${end_year}.nc" )
+    process_month "$month" &
+    field_pids+=( "$!" )
+    if (( ${#field_pids[@]} >= CLIM_WORKERS )); then wait_fields; fi
   done
+  wait_fields
 
   echo "[STEP2] Publishing all 12 monthly climatology fields"
   for index in "${!monthly_temps[@]}"; do
@@ -606,7 +589,10 @@ if [[ "$CLIMATOLOGY_MODE" == "seasonal" ]]; then
   seasonal_outputs=()
 
   echo "[STEP1] Computing calendar-weighted season-year means"
-  for season in DJF MAM JJA SON; do
+  process_season() (
+    set -euo pipefail
+    season="$1"
+    echo "[START] season=${season} $(date -u +%FT%TZ)"
     season_year_means=()
     for ((year=10#${start_year}; year<=10#${end_year}; year++)); do
       case "$season" in
@@ -649,8 +635,9 @@ if [[ "$CLIMATOLOGY_MODE" == "seasonal" ]]; then
       season_input="${TMP_DIR}/${OUT_PREFIX}_${season}_${year}.selected.tmp.nc"
       season_year_mean="${TMP_DIR}/${OUT_PREFIX}_${season}_${year}.weighted.tmp.nc"
       rm -f "$season_input" "$season_year_mean"
-      cdo -L -O mergetime "${season_files[@]}" "$season_input"
-      cdo -L -O yearmonmean -setyear,"${year}" "$season_input" "$season_year_mean"
+      # Stream the three inputs into the weighted mean instead of materializing
+      # a three-field seasonal input on shared storage.
+      cdo -L -O -P 1 -f nc4c -z zip_1 yearmonmean -setyear,"${year}" -mergetime "${season_files[@]}" "$season_year_mean"
       weighted_steps="$(cdo -s ntime "$season_year_mean" | tr -d '[:space:]')"
       if [[ "$weighted_steps" -ne 1 ]]; then
         echo "ERROR: ${season} ${year} expected one weighted season-year mean, found ${weighted_steps}" >&2
@@ -667,7 +654,7 @@ if [[ "$CLIMATOLOGY_MODE" == "seasonal" ]]; then
     seasonal_tmp="${TMP_DIR}/${OUT_PREFIX}_clim_season_${season}_${start_year}-${end_year}.tmp.nc"
     seasonal_out="${OUT_DIR}/${OUT_PREFIX}_clim_season_${season}_${start_year}-${end_year}.nc"
     rm -f "$seasonal_tmp"
-    cdo -L -O timmean -mergetime "${season_year_means[@]}" "$seasonal_tmp"
+    cdo -L -O -P 1 -f nc4c -z zip_1 timmean -mergetime "${season_year_means[@]}" "$seasonal_tmp"
 
     case "$season" in
       DJF)
@@ -690,10 +677,17 @@ if [[ "$CLIMATOLOGY_MODE" == "seasonal" ]]; then
     write_climatology_metadata "$seasonal_tmp" "$bounds_start" "$bounds_end" \
       "$((expected_season_years * 3))" "seasonal" "" "season" "$season" \
       "$expected_season_years" "$FILL_TOP_MISSING"
-    seasonal_temps+=( "$seasonal_tmp" )
-    seasonal_outputs+=( "$seasonal_out" )
     rm -f "${season_year_means[@]}" "$season_input"
+    echo "[READY] season=${season} $(date -u +%FT%TZ)"
+  )
+  for season in DJF MAM JJA SON; do
+    seasonal_temps+=( "${TMP_DIR}/${OUT_PREFIX}_clim_season_${season}_${start_year}-${end_year}.tmp.nc" )
+    seasonal_outputs+=( "${OUT_DIR}/${OUT_PREFIX}_clim_season_${season}_${start_year}-${end_year}.nc" )
+    process_season "$season" &
+    field_pids+=( "$!" )
+    if (( ${#field_pids[@]} >= CLIM_WORKERS )); then wait_fields; fi
   done
+  wait_fields
 
   echo "[STEP2] Publishing all four seasonal climatology fields"
   for index in "${!seasonal_temps[@]}"; do

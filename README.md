@@ -1264,6 +1264,17 @@ Operational sequence for the current IPCC branch:
    `CLIMATOLOGY_MODE=monthly` setting. Their whole-window defaults and existing
    `clim_windows/` outputs are unchanged.
 
+   For GLORYS and hindcast monthly/seasonal runs, the existing monthly-file
+   worker processes up to four independent months or seasons concurrently,
+   bounded by the allocated CPUs. `CLIM_WORKERS=1` selects serial processing;
+   `CLIM_WORKERS=4` uses the standard four-CPU allocation. Reduce concurrency
+   if shared-storage throughput declines. CDO writes compressed NetCDF4
+   directly; time metadata is updated in place, and top-layer filling reads
+   bounded horizontal blocks and writes only blocks requiring changes.
+   Logs mark each field's start, finalization, and readiness. All fields must
+   finish successfully before publication begins. These settings change
+   execution and storage, while retaining the same temporal means and fill rule.
+
    Seasonal climatologies are also explicit opt-in products:
 
    ```bash

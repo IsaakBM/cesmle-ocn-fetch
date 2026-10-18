@@ -901,6 +901,42 @@ with atomic_product(sys.argv[1]) as candidate:
             xr.testing.assert_equal(outputs[0], outputs[1])
             np.testing.assert_allclose(outputs[1].thetao, 2.)
 
+    def test_climatology_chunked_fill_preserves_missing_columns_and_interior_gaps(self):
+        # More than 16 latitude rows crosses the slab boundary. Compare against
+        # the original per-column fill rule, including inf and entirely dry cells.
+        import netCDF4
+        worker = ROOT/'scripts/core/climatology_window_from_monthly_files.slurm.sh'
+        block = embedded(worker, 'PY_FINALIZE')
+        rng = np.random.default_rng(42)
+        values = rng.normal(size=(1, 5, 35, 4)).astype('float32')
+        values[:, :2, :, 0] = np.nan
+        values[:, :, :, 1] = np.nan
+        values[:, 3, :, 2] = np.nan
+        values[:, 0, :, 3] = np.inf
+        expected = values.copy()
+        for lat in range(35):
+            for lon in range(4):
+                column = expected[0, :, lat, lon]
+                valid = np.flatnonzero(np.isfinite(column))
+                if valid.size:
+                    column[:valid[0]] = column[valid[0]]
+        path = self.root/'chunked.nc'
+        xr.Dataset({'thetao': (('time', 'depth', 'lat', 'lon'), values)},
+                   coords={'time': [np.datetime64('2000-01-15')],
+                           'depth': np.arange(5), 'lat': np.arange(35),
+                           'lon': np.arange(4)}).to_netcdf(
+                               path, encoding={'thetao': {'zlib': True, 'complevel': 1}})
+        result = subprocess.run(
+            [sys.executable, '-', str(path), '2000-01-01', '2000-01-last',
+             '1', 'monthly', '1', 'calendar_month', '', '', 'yes', 'thetao'],
+            input=block, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with xr.open_dataset(path) as actual:
+            np.testing.assert_equal(actual.thetao.values, expected)
+        with netCDF4.Dataset(path) as actual:
+            self.assertTrue(actual.variables['thetao'].filters()['zlib'])
+        self.assert_climatology_time(path, 1, '2000-01-01', '2000-01-31')
+
     def test_monthly_climatologies_publish_twelve_calendar_months(self):
         times = xr.date_range('1999-12-01', periods=13, freq='MS')
         field = self.field().isel(time=0, drop=True).expand_dims(time=times).copy()
@@ -916,7 +952,7 @@ with atomic_product(sys.argv[1]) as candidate:
             out = self.root/f'{kind}_monthly'
             env = dict(
                 VAR='thetao', OUT_DIR=str(out), OUT_PREFIX='fixture',
-                FILL_TOP_MISSING='no', CLIMATOLOGY_MODE='monthly',
+                FILL_TOP_MISSING='no', CLIMATOLOGY_MODE='monthly', CLIM_WORKERS='4',
             )
             if kind == 'timeseries':
                 env.update(
@@ -945,6 +981,37 @@ with atomic_product(sys.argv[1]) as candidate:
             )
             self.assertFalse(list(out.glob('*previous_december*.nc')))
 
+    def test_parallel_climatology_failure_retains_previous_products(self):
+        import shutil
+        times = xr.date_range('2000-01-01', periods=12, freq='MS')
+        inputs = self.root/'parallel_inputs'; inputs.mkdir()
+        for stamp in times:
+            self.field(time=str(stamp.date())).to_netcdf(
+                inputs/f'thetao_{stamp.year:04d}{stamp.month:02d}.nc')
+        out = self.root/'parallel_output'; out.mkdir()
+        existing = out/'fixture_clim_month_01_2000-2000.nc'
+        existing.write_bytes(b'previous accepted January')
+        real_cdo = shutil.which('cdo')
+        self.assertIsNotNone(real_cdo)
+        wrapper_dir = self.root/'bin'; wrapper_dir.mkdir()
+        wrapper = wrapper_dir/'cdo'
+        wrapper.write_text(
+            '#!/usr/bin/env bash\n'
+            'for arg in "$@"; do\n'
+            '  if [[ "$arg" == *clim_month_03_*.tmp.nc ]]; then exit 17; fi\n'
+            'done\n'
+            'exec "' + real_cdo + '" "$@"\n')
+        wrapper.chmod(0o755)
+        result = self.run_script(
+            ROOT/'scripts/core/climatology_window_from_monthly_files.slurm.sh',
+            PATH=str(wrapper_dir)+os.pathsep+self.env['PATH'],
+            VAR='thetao', IN_DIR=str(inputs), OUT_DIR=str(out), OUT_PREFIX='fixture',
+            WINDOW_START='200001', WINDOW_END='200012', EXPECTED_N='12',
+            FILL_TOP_MISSING='no', CLIMATOLOGY_MODE='monthly', CLIM_WORKERS='4')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(existing.read_bytes(), b'previous accepted January')
+        self.assertEqual(list(out.glob('*.nc')), [existing])
+
     def test_monthly_climatology_rejects_missing_month_without_publication(self):
         times = xr.date_range('1999-12-01', periods=13, freq='MS').delete(4)
         field = self.field().isel(time=0, drop=True).expand_dims(time=times)
@@ -957,7 +1024,7 @@ with atomic_product(sys.argv[1]) as candidate:
             ROOT/'scripts/core/climatology_window_from_monthly_files.slurm.sh',
             VAR='thetao', IN_DIR=str(inputs), OUT_DIR=str(out), OUT_PREFIX='fixture',
             WINDOW_START='200001', WINDOW_END='200012', EXPECTED_N='12',
-            FILL_TOP_MISSING='no', CLIMATOLOGY_MODE='monthly',
+            FILL_TOP_MISSING='no', CLIMATOLOGY_MODE='monthly', CLIM_WORKERS='4',
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Missing months', result.stderr)
@@ -984,7 +1051,7 @@ with atomic_product(sys.argv[1]) as candidate:
             out = self.root/f'{kind}_seasonal'
             env = dict(
                 VAR='thetao', OUT_DIR=str(out), OUT_PREFIX='fixture',
-                FILL_TOP_MISSING='no', CLIMATOLOGY_MODE='seasonal',
+                FILL_TOP_MISSING='no', CLIMATOLOGY_MODE='seasonal', CLIM_WORKERS='4',
             )
             if kind == 'timeseries':
                 env.update(

@@ -1286,6 +1286,15 @@ Operational sequence for the current IPCC branch:
    finish successfully before publication begins. These settings change
    execution and storage, while retaining the same temporal means and fill rule.
 
+   The CMIP6 time-series worker selects contributing chunks from decoded source
+   timestamps. Monthly mode streams selection and merging into CDO `ymonmean`
+   and `splitmon`, producing all twelve monthly means in one pass without a
+   full merged or selected time-series intermediate. Seasonal mode retains one
+   compressed selected window, streams each season-year into `yearmonmean`,
+   and reduces up to four seasons concurrently (`CLIM_WORKERS`, bounded by the
+   allocation). Both modes write compressed NetCDF4 directly and update only
+   time metadata in place. The whole-window calculation keeps its existing path.
+
    Seasonal climatologies are also explicit opt-in products:
 
    ```bash

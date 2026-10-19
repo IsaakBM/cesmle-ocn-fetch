@@ -1010,6 +1010,123 @@ fi
         self.assertIn('discovery complete:', result.stdout)
         self.assertIn('submitting MODEL=A', result.stdout)
 
+    def test_timeseries_streamed_months_match_reference_across_calendars(self):
+        import netCDF4
+        import shutil
+        worker = ROOT/'scripts/core/climatology_window_from_timeseries.slurm.sh'
+        real_cdo = shutil.which('cdo')
+        bindir = self.root/'bin'; bindir.mkdir()
+        wrapper = bindir/'cdo'
+        wrapper.write_text('#!/bin/bash\n'
+                           'printf "%s " "$@" >> "$CDO_CALLS"\n'
+                           'printf "\\n" >> "$CDO_CALLS"\n'
+                           'exec "' + real_cdo + '" "$@"\n')
+        wrapper.chmod(0o755)
+        for calendar in ('standard', 'noleap', '360_day'):
+            with self.subTest(calendar=calendar):
+                folder = self.root/calendar; folder.mkdir()
+                times = xr.date_range('2028-01-01', periods=96, freq='MS',
+                                      calendar=calendar, use_cftime=True)
+                # CDO intentionally skips compression for tiny grids. Use a
+                # 32x32 fixture to exercise direct compressed output as well.
+                spatial = self.field().isel(time=0, drop=True).reindex(
+                    lat=np.linspace(-1, 1, 32), lon=np.linspace(0, 2, 32), method='nearest')
+                data = spatial.expand_dims(time=times).copy()
+                data.values[:] = np.arange(96)[:, None, None, None] * 0.125
+                data.values[::5, 0, 0, 0] = np.nan
+                data.values[:, 1, 1, 1] = np.nan
+                for index, section in enumerate((slice(0,36), slice(36,60), slice(60,96))):
+                    data.isel(time=section).to_netcdf(folder/f'chunk_{index}.nc')
+                log = folder/'calls.txt'
+                out = folder/'out'
+                result = self.run_script(
+                    worker, VAR='thetao', IN_DIR=str(folder), FILE_GLOB='chunk_*.nc',
+                    OUT_DIR=str(out), OUT_PREFIX='fixture',
+                    WINDOW_START='2030-01-01', WINDOW_END='2032-12-31',
+                    CLIMATOLOGY_MODE='monthly',
+                    PATH=str(bindir)+os.pathsep+self.env['PATH'], CDO_CALLS=str(log))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                selected = data.sel(time=slice('2030-01-01', '2032-12-30'))
+                for month in range(1, 13):
+                    expected = selected.where(selected.time.dt.month == month, drop=True).mean('time')
+                    path = out/f'fixture_clim_month_{month:02d}_2030-2032.nc'
+                    with xr.open_dataset(path) as actual:
+                        np.testing.assert_allclose(actual.thetao.values[0], expected.values,
+                                                   rtol=1e-12, equal_nan=True)
+                        self.assertEqual(actual.attrs['climatology_selected_timesteps'], '3')
+                    with netCDF4.Dataset(path) as actual:
+                        self.assertTrue(actual.variables['thetao'].filters()['zlib'])
+                calls = log.read_text().splitlines()
+                reduction = [line for line in calls if 'splitmon' in line]
+                self.assertEqual(len(reduction), 1)
+                self.assertNotIn('chunk_2.nc', reduction[0])
+                self.assertIn('Using 2 contributing source chunks', result.stdout)
+                self.assertFalse(list(out.rglob('*_merged_*.nc')))
+                self.assertFalse(list(out.rglob('*_sel_*.nc')))
+                self.assert_climatology_time(
+                    out/'fixture_clim_month_02_2030-2032.nc', 2, '2030-02-01', '2032-02-29')
+
+    def test_timeseries_seasons_match_reviewed_yearmonmean_across_calendars(self):
+        worker = ROOT/'scripts/core/climatology_window_from_timeseries.slurm.sh'
+        for calendar in ('standard', 'noleap', '360_day'):
+            with self.subTest(calendar=calendar):
+                folder = self.root/calendar; folder.mkdir()
+                times = xr.date_range('2029-12-01', periods=37, freq='MS',
+                                      calendar=calendar, use_cftime=True)
+                data = self.field().isel(time=0, drop=True).expand_dims(time=times).copy()
+                data.values[:] = np.arange(37)[:, None, None, None] * 0.25
+                data.values[::4, 0, 0, 0] = np.nan
+                series = folder/'series.nc'; data.to_netcdf(series)
+                out = folder/'out'
+                result = self.run_script(
+                    worker, VAR='thetao', IN_FILE=str(series), OUT_DIR=str(out),
+                    OUT_PREFIX='fixture', WINDOW_START='2030-01-01', WINDOW_END='2032-12-31',
+                    CLIMATOLOGY_MODE='seasonal', CLIM_WORKERS='4')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                for season, months in [('DJF', (12,1,2)), ('MAM', (3,4,5)),
+                                       ('JJA', (6,7,8)), ('SON', (9,10,11))]:
+                    references = []
+                    for year in (2030,2031,2032):
+                        indices = [i for i,t in enumerate(times)
+                                   if (t.year == year and t.month in months and t.month != 12)
+                                   or (season == 'DJF' and t.year == year - 1 and t.month == 12)]
+                        source = folder/f'{season}_{year}.source.nc'
+                        data.isel(time=indices).to_netcdf(source)
+                        reference = folder/f'{season}_{year}.reference.nc'
+                        subprocess.run(['cdo', '-s', '-O', 'yearmonmean', f'-setyear,{year}',
+                                        str(source), str(reference)], check=True, capture_output=True)
+                        with xr.open_dataset(reference) as ds:
+                            references.append(ds.thetao.values[0])
+                    with xr.open_dataset(out/f'fixture_clim_season_{season}_2030-2032.nc') as actual:
+                        np.testing.assert_allclose(actual.thetao.values[0], np.nanmean(references, axis=0),
+                                                   rtol=1e-12, equal_nan=True)
+                self.assert_climatology_time(out/'fixture_clim_season_DJF_2030-2032.nc',
+                                              1, '2029-12-01', '2032-02-29')
+
+    def test_timeseries_failed_reduction_preserves_existing_outputs(self):
+        import shutil
+        worker = ROOT/'scripts/core/climatology_window_from_timeseries.slurm.sh'
+        source = self.root/'series.nc'
+        data = self.field().isel(time=0, drop=True).expand_dims(
+            time=xr.date_range('2000-01-01', periods=12, freq='MS'))
+        data.to_netcdf(source)
+        bindir = self.root/'bin'; bindir.mkdir()
+        wrapper = bindir/'cdo'
+        wrapper.write_text('#!/bin/bash\n'
+                           'for arg in "$@"; do [[ "$arg" != splitmon ]] || exit 17; done\n'
+                           'exec "' + shutil.which('cdo') + '" "$@"\n')
+        wrapper.chmod(0o755)
+        out = self.root/'out'; out.mkdir()
+        accepted = out/'fixture_clim_month_01_2000-2000.nc'
+        accepted.write_bytes(b'accepted January')
+        result = self.run_script(
+            worker, VAR='thetao', IN_FILE=str(source), OUT_DIR=str(out), OUT_PREFIX='fixture',
+            WINDOW_START='2000-01-01', WINDOW_END='2000-12-31', CLIMATOLOGY_MODE='monthly',
+            PATH=str(bindir)+os.pathsep+self.env['PATH'])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(accepted.read_bytes(), b'accepted January')
+        self.assertEqual(list(out.glob('*.nc')), [accepted])
+
     def test_monthly_climatologies_publish_twelve_calendar_months(self):
         times = xr.date_range('1999-12-01', periods=13, freq='MS')
         field = self.field().isel(time=0, drop=True).expand_dims(time=times).copy()

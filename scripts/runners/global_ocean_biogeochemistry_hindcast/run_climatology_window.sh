@@ -67,6 +67,16 @@ EXPECTED_N=108
 
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs
 
+SUBMISSION_LOG="${SUBMISSION_LOG:-/home/sandbox-sparc/cesmle-ocn-fetch/logs/climatology_submissions.tsv}"
+mkdir -p "$(dirname "$SUBMISSION_LOG")"
+record_submission() {
+  # Columns: UTC submission time, job ID, dataset label, variable, window, mode.
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$(date -u +%FT%TZ)" "$1" "$2" "$3" "$4" "$CLIMATOLOGY_MODE" >> "$SUBMISSION_LOG"
+}
+echo "Submission receipts: $SUBMISSION_LOG"
+
+
 echo "Submitting hindcast climatology window jobs with generic worker:"
 echo "  mode: ${CLIMATOLOGY_MODE}"
 for v in "${VARS[@]}"; do
@@ -86,6 +96,7 @@ for v in "${VARS[@]}"; do
   fi
 
   mapfile -t sbatch_extra_args < <(make_sbatch_extra_args)
+  echo "  submitting VAR=${v} WINDOW=${WINDOW_START}-${WINDOW_END}"
   jid=$(DATASET_LABEL="$DATASET_LABEL" \
     VAR="$v" \
     IN_DIR="$IN_DIR" \
@@ -103,7 +114,8 @@ for v in "${VARS[@]}"; do
     --mem="$MEMORY" \
     --time="$WALLTIME" \
     "$CORE_SCRIPT")
+  record_submission "$jid" "$DATASET_LABEL" "$v" "${WINDOW_START}-${WINDOW_END}"
   echo "  submitted VAR=${v} MEMORY=${MEMORY} as jobid=${jid}"
 done
 
-echo "Done."
+echo "Done. Submission receipts: $SUBMISSION_LOG"

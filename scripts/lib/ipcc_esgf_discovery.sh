@@ -72,30 +72,72 @@ ipcc_esgf_discover_monthly_groups_with_members() {
 }
 
 ipcc_esgf_discover_monthly_groups_any_layout() {
-  local root="$1"
-  local subdir="${2:-parts}"
-  local model scenario var member parts_dir
+  local root="$1" subdir="${2:-parts}"
+  # Optional space-separated filters are applied before traversing directories.
+  # Existing two-argument callers retain discovery of every supported group.
+  local model_filter="${3:-}" scenario_filter="${4:-}" var_filter="${5:-}"
+  local member_filter="${6:-auto}"
+  local model_dir layout_dir scenario_dir var_dir parts_dir
+  local model member scenario var item
+  local model_dirs=() scenario_dirs=() var_dirs=()
+  local requested_models=() requested_scenarios=() requested_vars=()
+  read -r -a requested_models <<< "$model_filter"
+  read -r -a requested_scenarios <<< "$scenario_filter"
+  read -r -a requested_vars <<< "$var_filter"
 
   [[ -d "$root" ]] || return 0
-
-  ipcc_esgf_discover_monthly_groups_with_members "$root" "$subdir"
-
-  while IFS= read -r model_dir; do
-    model="$(basename "$model_dir")"
-    while IFS= read -r scenario_dir; do
-      scenario="$(basename "$scenario_dir")"
-      [[ "$scenario" == historical || "$scenario" == ssp[0-9][0-9][0-9] ]] || continue
-      while IFS= read -r var_dir; do
-        var="$(basename "$var_dir")"
-        parts_dir="${var_dir}/${subdir}"
-        [[ -d "$parts_dir" ]] || continue
-        while IFS= read -r member; do
-          [[ -n "$member" ]] || continue
-          printf '%s\t%s\t%s\t%s\n' "$model" "$member" "$scenario" "$var"
-        done < <(ipcc_esgf_members_from_files "$parts_dir" "*.nc" | sort -u)
-      done < <(find "$scenario_dir" -mindepth 1 -maxdepth 1 -type d | sort)
-    done < <(find "$model_dir" -mindepth 1 -maxdepth 1 -type d | sort)
-  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d | sort)
+  if [[ -n "$model_filter" ]]; then
+    for item in "${requested_models[@]}"; do model_dirs+=( "$root/$item" ); done
+  else
+    model_dirs=( "$root"/* )
+  fi
+  for model_dir in "${model_dirs[@]}"; do
+    [[ -d "$model_dir" ]] || continue
+    model="${model_dir##*/}"
+    # The model directory itself represents the legacy memberless layout.
+    for layout_dir in "$model_dir" "$model_dir"/*; do
+      [[ -d "$layout_dir" ]] || continue
+      member="${layout_dir##*/}"
+      if [[ "$layout_dir" == "$model_dir" ]]; then
+        member=""
+      else
+        [[ "$member" =~ ^r[0-9]+i[0-9]+p[0-9]+f[0-9]+$ ]] || continue
+        [[ "$member_filter" == auto || "$member_filter" == "$member" ]] || continue
+      fi
+      scenario_dirs=()
+      if [[ -n "$scenario_filter" ]]; then
+        for item in "${requested_scenarios[@]}"; do scenario_dirs+=( "$layout_dir/$item" ); done
+      else
+        scenario_dirs=( "$layout_dir"/* )
+      fi
+      for scenario_dir in "${scenario_dirs[@]}"; do
+        [[ -d "$scenario_dir" ]] || continue
+        scenario="${scenario_dir##*/}"
+        [[ "$scenario" == historical || "$scenario" == ssp[0-9][0-9][0-9] ]] || continue
+        var_dirs=()
+        if [[ -n "$var_filter" ]]; then
+          for item in "${requested_vars[@]}"; do var_dirs+=( "$scenario_dir/$item" ); done
+        else
+          var_dirs=( "$scenario_dir"/* )
+        fi
+        for var_dir in "${var_dirs[@]}"; do
+          parts_dir="$var_dir/$subdir"
+          [[ -d "$parts_dir" ]] || continue
+          var="${var_dir##*/}"
+          if [[ "$layout_dir" != "$model_dir" ]]; then
+            printf '%s\t%s\t%s\t%s\n' "$model" "$member" "$scenario" "$var"
+          else
+            while IFS= read -r item; do
+              [[ -n "$item" ]] || continue
+              [[ "$member_filter" == auto || "$member_filter" == "$item" ]] || continue
+              printf '%s\t%s\t%s\t%s\n' "$model" "$item" "$scenario" "$var"
+            done < <(ipcc_esgf_members_from_files "$parts_dir" "*.nc" | sort -u)
+          fi
+        done
+      done
+    done
+  done
+  return 0
 }
 
 ipcc_esgf_monthly_stage_dir_for_group() {

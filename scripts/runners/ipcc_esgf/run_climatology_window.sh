@@ -115,12 +115,23 @@ FUT2090_WINDOW_END="2100-12-31"
 
 mkdir -p /home/sandbox-sparc/cesmle-ocn-fetch/logs
 
+SUBMISSION_LOG="${SUBMISSION_LOG:-/home/sandbox-sparc/cesmle-ocn-fetch/logs/climatology_submissions.tsv}"
+mkdir -p "$(dirname "$SUBMISSION_LOG")"
+record_submission() {
+  # Columns: UTC submission time, job ID, dataset label, variable, window, mode.
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$(date -u +%FT%TZ)" "$1" "$2" "$3" "$4" "$CLIMATOLOGY_MODE" >> "$SUBMISSION_LOG"
+}
+echo "Submission receipts: $SUBMISSION_LOG"
+
+
 echo "Submitting IPCC/ESGF climatology window jobs with generic worker:"
 echo "  mode: ${CLIMATOLOGY_MODE}"
+echo "  discovering requested groups: models=${MODELS[*]:-all} scenarios=${SCENARIOS[*]:-all} vars=${VARS[*]}"
 mapfile -t DISCOVERED_GROUPS < <(
   {
-    ipcc_esgf_discover_monthly_groups_any_layout "${INROOT_BASE}" "on_glorys"
-    ipcc_esgf_discover_monthly_groups_any_layout "${INROOT_BASE}" "parts"
+    ipcc_esgf_discover_monthly_groups_any_layout "${INROOT_BASE}" "on_glorys" "${MODELS[*]}" "${SCENARIOS[*]}" "${VARS[*]}" "$MEMBER"
+    ipcc_esgf_discover_monthly_groups_any_layout "${INROOT_BASE}" "parts" "${MODELS[*]}" "${SCENARIOS[*]}" "${VARS[*]}" "$MEMBER"
   } | sort -u
 )
 
@@ -128,6 +139,8 @@ if (( ${#DISCOVERED_GROUPS[@]} == 0 )); then
   echo "ERROR: No model/member/scenario/variable monthly directories discovered under: ${INROOT_BASE}"
   exit 1
 fi
+
+echo "  discovery complete: ${#DISCOVERED_GROUPS[@]} candidate groups"
 
 for group in "${DISCOVERED_GROUPS[@]}"; do
   IFS=$'\t' read -r model member scen v <<< "$group"
@@ -148,6 +161,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
     continue
   fi
 
+  echo "  checking MODEL=${model} MEMBER=${member} SCENARIO=${scen} VAR=${v}"
   source_subdir="on_glorys"
   if [[ " ${VARS_2D[*]} " == *" ${v} "* ]]; then
     source_subdir="parts"
@@ -173,7 +187,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
     JOB_MEMORY="$MEM_2D"
   fi
 
-  member="$(ipcc_esgf_resolve_member "$IN_DIR" "$file_glob")" || {
+  member="$(MEMBER="$member" ipcc_esgf_resolve_member "$IN_DIR" "$file_glob")" || {
     status=$?
     [[ "$status" -eq 2 ]] && continue
     exit "$status"
@@ -185,6 +199,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
 
   if [[ "$scen" == "historical" ]]; then
     if contains_filter_value "baseline" "${WINDOWS[@]}"; then
+      echo "  submitting MODEL=${model} SCENARIO=${scen} VAR=${v} WINDOW=baseline"
       jid=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
         VAR="$v" \
         IN_DIR="$IN_DIR" \
@@ -202,10 +217,12 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         --mem="$JOB_MEMORY" \
         --time="$WALLTIME" \
         "$CORE_SCRIPT")
+      record_submission "${jid}" "${DATASET_LABEL}_${model}_${scen}_${member}" "$v" "baseline"
       echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=baseline MEMORY=${JOB_MEMORY} as jobid=${jid}"
     fi
   else
     if contains_filter_value "2030-2040" "${WINDOWS[@]}"; then
+      echo "  submitting MODEL=${model} SCENARIO=${scen} VAR=${v} WINDOW=2030"
       jid2030=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
         VAR="$v" \
         IN_DIR="$IN_DIR" \
@@ -223,10 +240,12 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         --mem="$JOB_MEMORY" \
         --time="$WALLTIME" \
         "$CORE_SCRIPT")
+      record_submission "${jid2030}" "${DATASET_LABEL}_${model}_${scen}_${member}" "$v" "2030-2040"
       echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2030-2040 MEMORY=${JOB_MEMORY} as jobid=${jid2030}"
     fi
 
     if contains_filter_value "2050-2060" "${WINDOWS[@]}"; then
+      echo "  submitting MODEL=${model} SCENARIO=${scen} VAR=${v} WINDOW=2050"
       jid2050=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
         VAR="$v" \
         IN_DIR="$IN_DIR" \
@@ -244,10 +263,12 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         --mem="$JOB_MEMORY" \
         --time="$WALLTIME" \
         "$CORE_SCRIPT")
+      record_submission "${jid2050}" "${DATASET_LABEL}_${model}_${scen}_${member}" "$v" "2050-2060"
       echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2050-2060 MEMORY=${JOB_MEMORY} as jobid=${jid2050}"
     fi
 
     if contains_filter_value "2090-2100" "${WINDOWS[@]}"; then
+      echo "  submitting MODEL=${model} SCENARIO=${scen} VAR=${v} WINDOW=2090"
       jid2090=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
         VAR="$v" \
         IN_DIR="$IN_DIR" \
@@ -265,9 +286,10 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         --mem="$JOB_MEMORY" \
         --time="$WALLTIME" \
         "$CORE_SCRIPT")
+      record_submission "${jid2090}" "${DATASET_LABEL}_${model}_${scen}_${member}" "$v" "2090-2100"
       echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2090-2100 MEMORY=${JOB_MEMORY} as jobid=${jid2090}"
     fi
   fi
 done
 
-echo "Done."
+echo "Done. Submission receipts: $SUBMISSION_LOG"

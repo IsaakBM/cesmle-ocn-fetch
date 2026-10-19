@@ -937,6 +937,79 @@ with atomic_product(sys.argv[1]) as candidate:
             self.assertTrue(actual.variables['thetao'].filters()['zlib'])
         self.assert_climatology_time(path, 1, '2000-01-01', '2000-01-31')
 
+    def test_filtered_climatology_discovery_supports_both_layouts(self):
+        lib = ROOT/'scripts/lib/ipcc_esgf_discovery.sh'
+        base = self.root/'monthly'
+        groups = [
+            ('A/r1i1p1f1/historical/thetao/on_glorys', None),
+            ('A/r2i1p1f1/historical/thetao/on_glorys', None),
+            ('A/r1i1p1f1/ssp585/thetao/on_glorys', None),
+            ('B/r1i1p1f1/historical/thetao/on_glorys', None),
+            ('Legacy/historical/thetao/on_glorys',
+             'thetao_Omon_Legacy_historical_r1i1p1f1_gn_200001-201412.nc'),
+        ]
+        for relative, filename in groups:
+            folder = base/relative; folder.mkdir(parents=True)
+            if filename:
+                (folder/filename).touch()
+        def discover(*filters):
+            result = subprocess.run(
+                ['bash', '-c', 'source "$1"; shift; ipcc_esgf_discover_monthly_groups_any_layout "$@"',
+                 '_', str(lib), str(base), 'on_glorys', *filters],
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return set(result.stdout.splitlines())
+        self.assertEqual(discover('A', 'historical', 'thetao', 'r1i1p1f1'),
+                         {'A\tr1i1p1f1\thistorical\tthetao'})
+        self.assertEqual(discover('Legacy', 'historical', 'thetao', 'auto'),
+                         {'Legacy\tr1i1p1f1\thistorical\tthetao'})
+        self.assertEqual(len(discover()), 5)
+        self.assertEqual(discover('absent', 'historical', 'thetao'), set())
+
+    def test_climatology_submission_receipts_survive_partial_failure(self):
+        # Intercept sbatch and cluster mkdir; no real jobs or /home writes.
+        bindir = self.root/'bin'; bindir.mkdir()
+        stub = bindir/'mkdir'
+        stub.write_text('#!/bin/bash\nexit 0\n'); stub.chmod(0o755)
+        stub = bindir/'sbatch'
+        stub.write_text('#!/bin/bash\n'
+                        'if [[ "$VAR" == uo ]]; then exit 17; fi\n'
+                        'echo 12345\n')
+        stub.chmod(0o755)
+        startup = self.root/'bash_env'
+        startup.write_text(r"""if ! type mapfile >/dev/null 2>&1; then
+mapfile() {
+    local destination="$2" item index=0
+    unset "$destination"
+    while IFS= read -r item; do
+        eval "$destination[$index]=\"\$item\""
+        index=$((index + 1))
+    done
+    return 0
+}
+fi
+""")
+        base = self.root/'monthly'
+        for var in ('thetao', 'uo'):
+            folder = base/'A/r1i1p1f1/historical'/var/'on_glorys'
+            folder.mkdir(parents=True)
+            (folder/f'{var}_Omon_A_historical_r1i1p1f1_gn_200001-201412.nc').touch()
+        log = self.root/'submissions.tsv'
+        result = self.run_script(
+            ROOT/'scripts/runners/ipcc_esgf/run_climatology_window.sh',
+            PATH=str(bindir)+os.pathsep+self.env['PATH'], BASH_ENV=str(startup),
+            INROOT_BASE=str(base), MODELS='A', SCENARIOS='historical',
+            VARS='thetao uo', WINDOWS='baseline', MEMBER='auto', EXCLUDE_NODES='fixture-node',
+            CLIMATOLOGY_MODE='monthly', SUBMISSION_LOG=str(log))
+        self.assertNotEqual(result.returncode, 0)
+        receipts = log.read_text().splitlines()
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(receipts[0].split('\t')[1:],
+                         ['12345', 'ipcc_esgf_A_historical_r1i1p1f1',
+                          'thetao', 'baseline', 'monthly'])
+        self.assertIn('discovery complete:', result.stdout)
+        self.assertIn('submitting MODEL=A', result.stdout)
+
     def test_monthly_climatologies_publish_twelve_calendar_months(self):
         times = xr.date_range('1999-12-01', periods=13, freq='MS')
         field = self.field().isel(time=0, drop=True).expand_dims(time=times).copy()

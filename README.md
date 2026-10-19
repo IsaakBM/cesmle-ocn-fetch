@@ -1264,6 +1264,17 @@ Operational sequence for the current IPCC branch:
    `CLIMATOLOGY_MODE=monthly` setting. Their whole-window defaults and existing
    `clim_windows/` outputs are unchanged.
 
+   Run climatology runners directly to see discovery and submission progress.
+   Wrapping several runners in `submission="$(...)"` hides their stdout until
+   the entire block finishes, even when some jobs have already been submitted.
+   The CMIP6 runner applies model, scenario, variable, and member filters during
+   discovery, avoiding unrelated directory trees. Each climatology runner logs
+   successful submissions immediately to `logs/climatology_submissions.tsv`.
+   Its columns are UTC submission time, job ID, dataset label, variable, window,
+   and climatology mode. This submission log helps recover IDs after an
+   interruption; it does not automatically detect or prevent duplicate jobs.
+   Check Slurm and the log before repeating an interrupted submission.
+
    For GLORYS and hindcast monthly/seasonal runs, the existing monthly-file
    worker processes up to four independent months or seasons concurrently,
    bounded by the allocated CPUs. `CLIM_WORKERS=1` selects serial processing;

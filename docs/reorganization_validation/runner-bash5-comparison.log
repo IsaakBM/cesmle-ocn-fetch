@@ -1,0 +1,8 @@
+test_defaults_and_submission_blocks_are_unchanged (__main__.RunnerReorganizationTests.test_defaults_and_submission_blocks_are_unchanged) ... ok
+test_original_files_outside_four_runners_are_unchanged (__main__.RunnerReorganizationTests.test_original_files_outside_four_runners_are_unchanged) ... ok
+test_runner_behavior_matches_pinned_main (__main__.RunnerReorganizationTests.test_runner_behavior_matches_pinned_main) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 24.424s
+
+OK

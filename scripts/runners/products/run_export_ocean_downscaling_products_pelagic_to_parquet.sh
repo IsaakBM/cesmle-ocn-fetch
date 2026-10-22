@@ -25,43 +25,8 @@ SPLIT_FUTURE_SCENARIOS="${SPLIT_FUTURE_SCENARIOS:-no}"
 read -r -a FUTURE_MODEL_LIST <<< "${FUTURE_MODELS}"
 read -r -a EXCLUDE_FUTURE_MODEL_LIST <<< "${EXCLUDE_FUTURE_MODELS}"
 
-contains_word() {
-  local needle="$1"
-  shift
-  local candidate
-
-  for candidate in "$@"; do
-    [[ "${candidate}" == "${needle}" ]] && return 0
-  done
-  return 1
-}
-
-include_subtree() {
-  local subtree="$1"
-  local rel_path model
-
-  rel_path="${subtree#${SOURCE_ROOT}/}"
-  case "${rel_path}" in
-    baseline/*)
-      [[ "${INCLUDE_BASELINE}" == "yes" ]] || return 1
-      return 0
-      ;;
-    future/*)
-      model="${rel_path#future/}"
-      model="${model%%/*}"
-      if [[ -n "${EXCLUDE_FUTURE_MODELS}" ]] && contains_word "${model}" "${EXCLUDE_FUTURE_MODEL_LIST[@]}"; then
-        return 1
-      fi
-      if [[ "${FUTURE_MODELS}" != "auto" ]] && ! contains_word "${model}" "${FUTURE_MODEL_LIST[@]}"; then
-        return 1
-      fi
-      return 0
-      ;;
-    *)
-      return 0
-      ;;
-  esac
-}
+# shellcheck source=../../lib/product_export_subtrees.sh
+source "${SCRIPT_DIR}/../../lib/product_export_subtrees.sh"
 
 mkdir -p "${LOG_DIR}"
 
@@ -75,76 +40,7 @@ if [[ ! -d "${SOURCE_ROOT}" ]]; then
   exit 1
 fi
 
-mapfile -t SUBTREES < <(
-  while IFS= read -r subtree; do
-    include_subtree "${subtree}" && printf '%s\n' "${subtree}"
-  done < <(
-    find "${SOURCE_ROOT}/baseline" "${SOURCE_ROOT}/future" \
-      -mindepth 1 \
-      -maxdepth 1 \
-      -type d \
-      ! -name 'tmp*' \
-      2>/dev/null | sort
-  )
-)
-if (( ${#SUBTREES[@]} == 0 )); then
-  echo "ERROR: No baseline/future variable directories found under: ${SOURCE_ROOT}"
-  exit 1
-fi
-
-if [[ "${SPLIT_ENSEMBLE_STATS}" == "yes" ]]; then
-  expanded_subtrees=()
-  for subtree in "${SUBTREES[@]}"; do
-    rel_path="${subtree#${SOURCE_ROOT}/}"
-    if [[ "${rel_path}" == "future/ensemble" ]]; then
-      mapfile -t ensemble_stat_subtrees < <(
-        find "${subtree}" \
-          -mindepth 1 \
-          -maxdepth 1 \
-          -type d \
-          ! -name 'tmp*' \
-          2>/dev/null | sort
-      )
-      if (( ${#ensemble_stat_subtrees[@]} > 0 )); then
-        expanded_subtrees+=("${ensemble_stat_subtrees[@]}")
-      else
-        expanded_subtrees+=("${subtree}")
-      fi
-    else
-      expanded_subtrees+=("${subtree}")
-    fi
-  done
-  SUBTREES=("${expanded_subtrees[@]}")
-fi
-
-if [[ "${SPLIT_FUTURE_SCENARIOS}" == "yes" ]]; then
-  expanded_subtrees=()
-  for subtree in "${SUBTREES[@]}"; do
-    rel_path="${subtree#${SOURCE_ROOT}/}"
-    if [[ "${rel_path}" == future/* ]]; then
-      scenario_depth=2
-      if [[ "${rel_path}" == future/ensemble/* ]]; then
-        scenario_depth=1
-      fi
-      mapfile -t scenario_subtrees < <(
-        find "${subtree}" \
-          -mindepth "${scenario_depth}" \
-          -maxdepth "${scenario_depth}" \
-          -type d \
-          ! -name 'tmp*' \
-          2>/dev/null | sort
-      )
-      if (( ${#scenario_subtrees[@]} > 0 )); then
-        expanded_subtrees+=("${scenario_subtrees[@]}")
-      else
-        expanded_subtrees+=("${subtree}")
-      fi
-    else
-      expanded_subtrees+=("${subtree}")
-    fi
-  done
-  SUBTREES=("${expanded_subtrees[@]}")
-fi
+select_product_export_subtrees
 
 echo "Submitting curated ocean product pelagic Parquet export jobs by subtree:"
 echo "SOURCE ROOT: ${SOURCE_ROOT}"

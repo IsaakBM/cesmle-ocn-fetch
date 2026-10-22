@@ -1,0 +1,14 @@
+............F................................
+======================================================================
+FAIL: test_fetch_manifest_conflicts_empty_selection_and_download_failure (__main__.SafeguardTests.test_fetch_manifest_conflicts_empty_selection_and_download_failure)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/ocn-reorganization-evidence/scripts/tools/test_pipeline_safeguards.py", line 1560, in test_fetch_manifest_conflicts_empty_selection_and_download_failure
+    write([row]); self.assertEqual(run().returncode, 0)
+                  ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 1 != 0
+
+----------------------------------------------------------------------
+Ran 45 tests in 79.382s
+
+FAILED (failures=1)

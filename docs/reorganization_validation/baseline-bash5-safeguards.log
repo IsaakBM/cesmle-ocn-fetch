@@ -1,0 +1,14 @@
+........F....................................
+======================================================================
+FAIL: test_delivery_selection_for_roots_and_subtrees (__main__.SafeguardTests.test_delivery_selection_for_roots_and_subtrees)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/ocn-reorganization-evidence/scripts/tools/test_pipeline_safeguards.py", line 288, in test_delivery_selection_for_roots_and_subtrees
+    self.assertEqual(result.returncode == 0, accepted, (name, relative, subtree, result.stderr))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False != True : ('aggregate_ocean_downscaling_products_by_depth_bins.sh', 'baseline/thetao/file.nc', False, '')
+
+----------------------------------------------------------------------
+Ran 45 tests in 76.723s
+
+FAILED (failures=1)

@@ -448,11 +448,13 @@ fi
         return dict(self.env, CDO=shutil.which('cdo'), VAR='thetao',
                     PARTS=str(self.root/'parts'), GRIDFILE=str(grid), METHOD='remapbil',
                     DATASET_LABEL='fixture', INPUT_TIMESTEP='daily', FILE_GLOB='*.nc',
-                    INROOT=str(self.root/'raw'))
+                    INROOT=str(self.root/'raw'), OVERWRITE_OUTPUTS='yes',
+                    OUTPUT_CHUNK_TYPE='inherit')
 
     def test_preparation_real_values_failures_and_output_locks(self):
         import shutil
         env = self.preparation_env()
+        env['OUTPUT_CHUNK_TYPE'] = 'auto'
         source = self.daily_field('source.nc', 2001, 2, 28)
         folder = self.root/'raw/2001/02'
         folder.mkdir(parents=True)
@@ -545,6 +547,117 @@ fi
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('[SKIP] Existing output retained', result.stdout)
             self.assertEqual(destination.read_bytes(), accepted)
+
+    def test_glorys_automatic_chunks_preserve_fields_and_missing_values(self):
+        import netCDF4 as nc
+        # One full GLORYS horizontal field exercises the size at which CDO 2.4
+        # switches grid chunks to lines. This is a local correctness fixture,
+        # not a throughput benchmark or a cluster job.
+        source, output = self.root/'rows.nc', self.root/'auto.nc'
+        with nc.Dataset(source, 'w', format='NETCDF4_CLASSIC') as ds:
+            for name, size in [('time', None), ('depth', 1), ('lat', 3601), ('lon', 7200), ('bnds', 2)]:
+                ds.createDimension(name, size)
+            time = ds.createVariable('time', 'f8', ('time',))
+            time.units = 'days since 2006-01-01'
+            time.calendar = 'standard'
+            time.bounds = 'time_bnds'
+            time[:] = [45.5]
+            ds.createVariable('time_bnds', 'f8', ('time', 'bnds'))[:] = [[31., 59.]]
+            for name, values, units in [
+                    ('depth', [0.5], 'm'),
+                    ('lat', np.linspace(-90., 90., 3601), 'degrees_north'),
+                    ('lon', np.arange(7200)*0.05-180., 'degrees_east')]:
+                coordinate = ds.createVariable(name, 'f8', (name,))
+                coordinate[:] = values
+                coordinate.units = units
+            ds.variables['depth'].positive = 'down'
+            field = ds.createVariable('so', 'f4', ('time', 'depth', 'lat', 'lon'),
+                                      chunksizes=(1, 1, 1, 7200), fill_value=-32767.)
+            field.units = '1e-3'
+            field[:] = np.float32(35.)
+            field[0, 0, :3, :] = -32767.
+            field[0, 0, 1800, 3600] = np.float32(34.125)
+        env = self.preparation_env()
+        result = subprocess.run(
+            ['bash', '-c', self.preparation_shell()+'\nremap_prepared_output copy "$SOURCE" "$OUTPUT"'],
+            env=dict(env, OUTPUT_CHUNK_TYPE='auto', SOURCE=str(source), OUTPUT=str(output)),
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # Exercise the documented replacement, including exact data comparison,
+        # coordinate validation, publication and removal of the sibling workspace.
+        import shutil
+        production_copy = self.root/'repack.nc'
+        shutil.copyfile(source, production_copy)
+        documentation = (ROOT/'README.md').read_text().split(
+            'Existing prepared files are not changed by a Git update', 1)[1]
+        recipe = documentation.split('```bash\n', 1)[1].split('\n```', 1)[0]
+        recipe = recipe.replace(
+            'file="/home/SB5/reanalysis/glorys12v1/monthly_0p05/so/parts/glorys12v1_so_200602.monmean.0p05.nc"',
+            'file="$SOURCE"')
+        result = subprocess.run(['bash', '-c', recipe],
+            env=dict(self.env, SOURCE=str(production_copy)), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('[REPACKED]', result.stdout)
+        self.assertFalse(Path(str(production_copy)+'.lock').exists())
+        self.assertFalse(list(self.root.glob('repack.nc.rechunk.*')))
+        with nc.Dataset(production_copy) as ds:
+            self.assertGreater(ds.variables['so'].chunking()[2], 1)
+        with nc.Dataset(source) as original, nc.Dataset(output) as actual:
+            field = actual.variables['so']
+            self.assertEqual(field.shape, (1, 1, 3601, 7200))
+            chunks = field.chunking()
+            self.assertIsInstance(chunks, list)
+            self.assertEqual(chunks[:2], [1, 1])
+            self.assertGreater(chunks[2], 1)
+            self.assertEqual(chunks[3], 7200)
+            self.assertEqual(field.dtype, original.variables['so'].dtype)
+            self.assertEqual(field.units, original.variables['so'].units)
+            self.assertEqual(field._FillValue, original.variables['so']._FillValue)
+            self.assertFalse(field.filters()['zlib'])
+            for name in ('depth', 'lat', 'lon'):
+                np.testing.assert_array_equal(actual.variables[name][:], original.variables[name][:])
+            for ds in (original, actual):
+                time = ds.variables['time']
+                dates = nc.num2date(time[:], time.units, time.calendar)
+                bounds = nc.num2date(ds.variables[time.bounds][:], time.units, time.calendar)
+                if ds is original:
+                    expected_dates, expected_bounds = dates, bounds
+                else:
+                    np.testing.assert_array_equal(dates, expected_dates)
+                    np.testing.assert_array_equal(bounds, expected_bounds)
+            for offset in range(0, 3601, 36):
+                key = (0, 0, slice(offset, offset+36), slice(None))
+                expected, values = original.variables['so'][key], field[key]
+                np.testing.assert_array_equal(np.ma.getmaskarray(values), np.ma.getmaskarray(expected))
+                np.testing.assert_array_equal(values.compressed(), expected.compressed())
+
+    def test_glorys_preparation_passes_chunk_policy_to_worker(self):
+        runner = ROOT/'scripts/runners/glorys/run_temporal_aggregate_regrid.sh'
+        script = runner.read_text().replace(
+            '/home/SB5/reanalysis/glorys12v1/monthly_0p05', str(self.root/'prepared')).replace(
+            '/home/sandbox-sparc/cesmle-ocn-fetch/logs', str(self.root/'logs'))
+        compatibility = self.preparation_shell().split('detect_gridtype() {', 1)[0]
+        local_runner = self.root/'runner.sh'
+        local_runner.write_text(compatibility+script)
+        fake_bin = self.root/'bin'
+        fake_bin.mkdir()
+        capture = self.root/'submission.txt'
+        sbatch = fake_bin/'sbatch'
+        sbatch.write_text('#!/bin/sh\nprintf "%s\\n" "$OUTPUT_CHUNK_TYPE" >> "$CAPTURE"\necho 1234\n')
+        sbatch.chmod(0o755)
+        env = dict(self.env, PATH=str(fake_bin)+os.pathsep+self.env['PATH'],
+                   VARS='so', YEARS='2006', MONTHS='02', EXCLUDE_NODES='hpc-09', CAPTURE=str(capture))
+        env.pop('OUTPUT_CHUNK_TYPE', None)
+        for settings in ({}, {'OUTPUT_CHUNK_TYPE': 'inherit'}):
+            result = subprocess.run(['bash', str(local_runner)], env=dict(env, **settings),
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(capture.read_text().splitlines(), ['auto', 'inherit'])
+        result = subprocess.run(['bash', str(local_runner)], env=dict(env, OUTPUT_CHUNK_TYPE='bad'),
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(capture.read_text().splitlines(), ['auto', 'inherit'])
 
     def test_vertical_replacement_and_custom_target(self):
         import shutil

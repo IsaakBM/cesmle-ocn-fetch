@@ -62,6 +62,9 @@ set -euo pipefail
 #   INPUT_TIMESTEP: daily | monthly | auto (default: auto)
 #                   used only for INPUT_LAYOUT=year_month
 #   OVERWRITE_OUTPUTS: yes | no (default: yes)
+#   OUTPUT_CHUNK_TYPE: inherit | auto (default: inherit)
+#                     auto writes NetCDF4 classic with CDO automatic chunks;
+#                     avoids one-row chunks on large GLORYS horizontal grids
 # ==============================================================================
 CDO="${CDO:-/usr/bin/cdo}"
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
@@ -82,6 +85,7 @@ TMP_SUBDIR="${TMP_SUBDIR:-tmp}"
 MIN_FREE_GB="${MIN_FREE_GB:-40}"
 INPUT_TIMESTEP="${INPUT_TIMESTEP:-auto}"
 OVERWRITE_OUTPUTS="${OVERWRITE_OUTPUTS:-yes}"
+OUTPUT_CHUNK_TYPE="${OUTPUT_CHUNK_TYPE:-inherit}"
 
 if [[ -z "$VAR" || -z "$INROOT" || -z "$OUTROOT" || -z "$GRIDFILE" ]]; then
   echo "ERROR: Missing required environment variables."
@@ -102,6 +106,11 @@ fi
 
 if [[ "$OVERWRITE_OUTPUTS" != "yes" && "$OVERWRITE_OUTPUTS" != "no" ]]; then
   echo "ERROR: OVERWRITE_OUTPUTS must be yes or no"
+  exit 1
+fi
+
+if [[ "$OUTPUT_CHUNK_TYPE" != "inherit" && "$OUTPUT_CHUNK_TYPE" != "auto" ]]; then
+  echo "ERROR: OUTPUT_CHUNK_TYPE must be inherit or auto"
   exit 1
 fi
 
@@ -202,6 +211,7 @@ if [[ "$METHOD" == "auto" ]]; then
 fi
 echo " Input timestep : $INPUT_TIMESTEP"
 echo " Overwrite      : $OVERWRITE_OUTPUTS"
+echo " Output chunks  : $OUTPUT_CHUNK_TYPE"
 echo " CPUs           : ${SLURM_CPUS_PER_TASK:-4}"
 echo " Parallel months: $NPROC"
 echo " Free tmp fs    : ${FREE_GB}G (min ${MIN_FREE_GB}G)"
@@ -319,6 +329,17 @@ validate_prepared_output() {
   fi
 }
 
+# Set storage layout only at the final remap; intermediate calculations retain
+# their existing format. CDO 2.4.0 silently changes '-k grid' to line chunks for
+# grids above 16,777,216 cells, so use '-k auto' for the 7200 x 3601 GLORYS grid.
+remap_prepared_output() {
+  if [[ "${OUTPUT_CHUNK_TYPE:-inherit}" == "auto" ]]; then
+    "$CDO" -L -O -P 1 -f nc4c -k auto "$@"
+  else
+    "$CDO" -L -O -P 1 "$@"
+  fi
+}
+
 # Each child owns an output lock and a private workspace beside the final file.
 # Atomic rename cannot cross filesystems. Never remove a pre-existing lock:
 # after an uncatchable kill, confirm no writer remains before manual recovery.
@@ -357,7 +378,7 @@ process_month() (
   fi
   source_file="${files[0]}"
   method_to_use="$(resolve_method "$source_file")"
-  "$CDO" -L -O -P 1 ${method_to_use},"${GRIDFILE}" "$work/month.nc" "$work/output.nc"
+  remap_prepared_output "${method_to_use},${GRIDFILE}" "$work/month.nc" "$work/output.nc"
   validate_prepared_output "$work/output.nc" "$work/month.nc"
   mv -f -- "$work/output.nc" "$out"
   echo "DONE: $out"
@@ -385,7 +406,7 @@ process_timeseries_file() (
   method_to_use="$(resolve_method "$in")"
   # Select once, so validation compares exactly the variables being regridded.
   "$CDO" -L -O -P 1 -selname,"${VAR}" "$in" "$work/selected.nc"
-  "$CDO" -L -O -P 1 ${method_to_use},"${GRIDFILE}" "$work/selected.nc" "$work/output.nc"
+  remap_prepared_output "${method_to_use},${GRIDFILE}" "$work/selected.nc" "$work/output.nc"
   validate_prepared_output "$work/output.nc" "$work/selected.nc"
   mv -f -- "$work/output.nc" "$out"
   echo "DONE: $out"
@@ -394,8 +415,9 @@ process_timeseries_file() (
 
 export CDO
 export -f validate_daily_coverage validate_prepared_output
-export -f detect_gridtype resolve_method process_month process_timeseries_file
+export -f detect_gridtype resolve_method remap_prepared_output process_month process_timeseries_file
 export DATASET_LABEL INROOT OUTROOT OUTDIR PARTS TMPDIR VAR GRIDFILE METHOD AUTO_METHOD_DEFAULT AUTO_METHOD_CURVILINEAR FILE_GLOB INPUT_TIMESTEP OVERWRITE_OUTPUTS
+export OUTPUT_CHUNK_TYPE
 
 # ==============================================================================
 # Main

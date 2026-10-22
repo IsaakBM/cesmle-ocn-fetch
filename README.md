@@ -984,6 +984,79 @@ Current GLORYS logic in the new runner architecture:
 2. compute one `2006-2014` baseline climatology per variable from the monthly
    files
 
+GLORYS preparation defaults to `OUTPUT_CHUNK_TYPE=auto`: the final remap uses
+the installed CDO's `-f nc4c -k auto` options. This changes storage layout, not
+the remapping method, precision, missing-value rule, grid, or dates. The generic
+worker and other dataset runners retain the previous policy unless explicitly
+given this option; `OUTPUT_CHUNK_TYPE=inherit` restores it for GLORYS as well.
+
+This choice is important with CDO 2.4.0: its `-k grid` implementation falls back
+to one-latitude-row chunks above 16,777,216 horizontal cells. The 7200 x 3601
+GLORYS grid exceeds that limit. `-k auto` instead groups 36 latitude rows at
+that resolution (approximately 1 MB per float32 chunk), reducing chunk
+management and small-read overhead. This is a storage optimization, not a
+guarantee of throughput on a shared filesystem. The implementation is documented
+in the [official CDO 2.4.0 source](https://code.mpimet.mpg.de/attachments/29313),
+`libcdi/src/cdf_write.c`.
+
+Existing prepared files are not changed by a Git update or a climatology
+resubmission. Repack affected row-chunked inputs once with the installed CDO:
+
+```bash
+# Run on a compute allocation, with no active readers/writers of this input.
+# Use an actual existing prepared-file path; retain its production filename.
+file="/home/SB5/reanalysis/glorys12v1/monthly_0p05/so/parts/glorys12v1_so_200602.monmean.0p05.nc"
+(
+  set -euo pipefail
+  mkdir "${file}.lock"
+  work=""
+  trap '[[ -z "$work" ]] || rm -rf -- "$work"; rmdir -- "${file}.lock"' EXIT
+  work="$(mktemp -d "${file}.rechunk.XXXXXX")"
+  cdo -L -O -f nc4c -k auto copy "$file" "$work/output.nc"
+  # Integrity checks, not a throughput benchmark. diffn reads scientific data.
+  cdo -L -s diffn "$file" "$work/output.nc"
+  python3 - "$file" "$work/output.nc" so <<'PY'
+import sys
+import netCDF4 as nc
+import numpy as np
+
+source, target, name = sys.argv[1:]
+with nc.Dataset(source) as before, nc.Dataset(target) as after:
+    original, replacement = before.variables[name], after.variables[name]
+    assert original.dimensions == replacement.dimensions
+    assert original.shape == replacement.shape and original.dtype == replacement.dtype
+    assert original.units == replacement.units
+    np.testing.assert_equal(original._FillValue, replacement._FillValue)
+    for coordinate in ('depth', 'lat', 'lon'):
+        np.testing.assert_array_equal(before.variables[coordinate][:], after.variables[coordinate][:])
+    old_time, new_time = before.variables['time'], after.variables['time']
+    calendar = getattr(old_time, 'calendar', 'standard')
+    assert calendar == getattr(new_time, 'calendar', 'standard')
+    np.testing.assert_array_equal(
+        nc.num2date(old_time[:], old_time.units, calendar),
+        nc.num2date(new_time[:], new_time.units, calendar))
+    for attribute in ('bounds', 'climatology'):
+        if attribute in old_time.ncattrs():
+            np.testing.assert_array_equal(
+                nc.num2date(before.variables[getattr(old_time, attribute)][:], old_time.units, calendar),
+                nc.num2date(after.variables[getattr(new_time, attribute)][:], new_time.units, calendar))
+    chunks = replacement.chunking()
+    assert isinstance(chunks, list) and chunks[:2] == [1, 1]
+    assert chunks[2] > 1 and chunks[3] == replacement.shape[3]
+print('PASS: values, missing values, coordinates, dates, and chunk layout checked')
+PY
+  mv -f -- "$work/output.nc" "$file"
+  echo "[REPACKED] $file"
+)
+```
+
+The sibling workspace keeps incomplete copies out of the monthly input glob.
+The original stays in place if copying or validation fails; a same-filesystem
+rename publishes a successful replacement. Repacking requires a full read and
+write once. It does not require re-downloading, regridding, new software, or new
+scripts. Restrict the operation to affected prepared inputs; raw downloads and
+accepted climatologies are not part of this conversion.
+
 Important notes:
 
 - the modern GLORYS runner family is intentionally minimal because this branch

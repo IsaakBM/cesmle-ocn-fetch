@@ -56,6 +56,13 @@ EXCLUDE_NODES="${EXCLUDE_NODES:-}"
 MEM_3D="${MEM_3D:-192G}"
 MEM_2D="${MEM_2D:-32G}"
 WALLTIME="${WALLTIME:-5-00:00:00}"
+# Explicit auto avoids CDO 2.4.0's grid-to-lines fallback on the 0.05-degree grid.
+# Set inherit to retain the previous storage policy; scientific values are unchanged.
+OUTPUT_CHUNK_TYPE="${OUTPUT_CHUNK_TYPE:-auto}"
+if [[ "$OUTPUT_CHUNK_TYPE" != "auto" && "$OUTPUT_CHUNK_TYPE" != "inherit" ]]; then
+  echo "ERROR: OUTPUT_CHUNK_TYPE must be auto or inherit" >&2
+  exit 1
+fi
 
 make_sbatch_extra_args() {
   if [[ -n "$EXCLUDE_NODES" ]]; then
@@ -95,6 +102,7 @@ fi
 
 echo "Submitting GLORYS monthly jobs by year with generic worker:"
 echo "Dataset: $DATASET_LABEL"
+echo "Output chunks: $OUTPUT_CHUNK_TYPE"
 for v in "${VARS[@]}"; do
   case "$v" in
     mlotst|zos|siconc)
@@ -122,6 +130,7 @@ for v in "${VARS[@]}"; do
       MIN_FREE_GB="$MIN_FREE_GB" \
       INPUT_TIMESTEP="$INPUT_TIMESTEP" \
       INPUT_LAYOUT="$INPUT_LAYOUT" \
+      OUTPUT_CHUNK_TYPE="$OUTPUT_CHUNK_TYPE" \
       sbatch --parsable \
       "${sbatch_extra_args[@]}" \
       --job-name="glorys_${v}_${y}" \

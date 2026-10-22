@@ -1315,6 +1315,134 @@ fi
         self.assertEqual(existing.read_bytes(), b'previous accepted January')
         self.assertEqual(list(out.glob('*.nc')), [existing])
 
+    def scratch_monthly_fixture(self):
+        inputs, scratch, output = (self.root/name for name in ('inputs', 'scratch', 'output'))
+        inputs.mkdir(); scratch.mkdir(); output.mkdir()
+        (scratch/'another_job.txt').write_text('keep')
+        for index, stamp in enumerate(xr.date_range('2000-01-01', periods=36, freq='MS')):
+            field = self.field(float(index), time=str(stamp.date()))
+            field.values[0, 0, 0, 0] = np.nan
+            field.values[0, :, 1, 1] = np.nan
+            field.to_netcdf(inputs/f'thetao_{stamp.year:04d}{stamp.month:02d}.nc')
+        return dict(VAR='thetao', IN_DIR=str(inputs), OUT_DIR=str(output), OUT_PREFIX='fixture',
+                    WINDOW_START='200001', WINDOW_END='200212', EXPECTED_N='36',
+                    CLIMATOLOGY_MODE='monthly', CLIM_WORKERS='1', FILL_TOP_MISSING='no',
+                    CLIM_SCRATCH_ROOT=str(scratch), CLIM_SCRATCH_HEADROOM_GB='0')
+
+    def test_monthly_scratch_stages_only_needed_inputs_and_reuses_requested_month(self):
+        import shutil
+        worker = ROOT/'scripts/core/climatology_window_from_monthly_files.slurm.sh'
+        env = self.scratch_monthly_fixture()
+        inputs, scratch, out = map(Path, (env['IN_DIR'], env['CLIM_SCRATCH_ROOT'], env['OUT_DIR']))
+        hashes = {p.name: hashlib.sha256(p.read_bytes()).digest() for p in inputs.glob('*.nc')}
+        reference = self.root/'reference'
+        result = self.run_script(worker, **dict(env, OUT_DIR=str(reference), CLIM_SCRATCH_ROOT=''))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        temporary = out/'tmp_clim'; temporary.mkdir()
+        january = temporary/'fixture_clim_month_01_2000-2002.tmp.nc'
+        shutil.copyfile(reference/'fixture_clim_month_01_2000-2002.nc', january)
+        accepted = january.read_bytes()
+        bindir = self.root/'bin'; bindir.mkdir()
+        calls = self.root/'cdo_calls.txt'
+        wrapper = bindir/'cdo'
+        wrapper.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "$CALLS"\nexec "'+shutil.which('cdo')+'" "$@"\n')
+        wrapper.chmod(0o755)
+        result = self.run_script(worker, **dict(env, CLIM_REUSE_MONTHS='01', CALLS=str(calls),
+                                                PATH=str(bindir)+os.pathsep+self.env['PATH']))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('[REUSE] month=01', result.stdout)
+        self.assertEqual(result.stdout.count('[COPY IN]'), 33)
+        self.assertEqual(result.stdout.count('[RETURNED]'), 11)
+        reductions = [line for line in calls.read_text().splitlines() if 'timmean' in line]
+        self.assertEqual(len(reductions), 11)
+        self.assertTrue(all(str(scratch) in line and str(inputs) not in line for line in reductions))
+        self.assertEqual((out/'fixture_clim_month_01_2000-2002.nc').read_bytes(), accepted)
+        for month in range(1, 13):
+            name = f'fixture_clim_month_{month:02d}_2000-2002.nc'
+            with xr.open_dataset(out/name) as actual, xr.open_dataset(reference/name) as expected:
+                xr.testing.assert_equal(actual, expected)
+        self.assertEqual({p.name: hashlib.sha256(p.read_bytes()).digest() for p in inputs.glob('*.nc')}, hashes)
+        self.assertEqual([p.name for p in scratch.iterdir()], ['another_job.txt'])
+        self.assertFalse(list(temporary.glob('*.lock')))
+        self.assertFalse(list(temporary.glob('*.publish.*')))
+
+    def test_monthly_scratch_failures_clean_only_private_files_and_preserve_products(self):
+        import shutil
+        worker = ROOT/'scripts/core/climatology_window_from_monthly_files.slurm.sh'
+        env = self.scratch_monthly_fixture()
+        scratch, out = map(Path, (env['CLIM_SCRATCH_ROOT'], env['OUT_DIR']))
+        accepted = out/'fixture_clim_month_01_2000-2002.nc'
+        accepted.write_bytes(b'accepted product')
+        bindir = self.root/'bin'; bindir.mkdir()
+        wrapper = bindir/'cp'
+        wrapper.write_text('#!/bin/bash\nfor last; do :; done\n'
+                           'case "$FAIL_AT:$last" in\n'
+                           'in:*/month_*/*|out:*.publish.*/output.nc) printf partial > "$last"; exit 17;;\n'
+                           'esac\nexec "'+shutil.which('cp')+'" "$@"\n')
+        wrapper.chmod(0o755)
+        for failure in ('in', 'out'):
+            result = self.run_script(worker, **dict(env, FAIL_AT=failure,
+                                                    PATH=str(bindir)+os.pathsep+self.env['PATH']))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(accepted.read_bytes(), b'accepted product')
+            self.assertEqual([p.name for p in scratch.iterdir()], ['another_job.txt'])
+            self.assertFalse(list((out/'tmp_clim').glob('*.lock')))
+            self.assertFalse(list((out/'tmp_clim').glob('*.publish.*')))
+        result = self.run_script(worker, **dict(env, CLIM_SCRATCH_HEADROOM_GB='9999999999'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Insufficient scratch space', result.stderr)
+        self.assertNotIn('[COPY IN]', result.stdout)
+        self.assertEqual([p.name for p in scratch.iterdir()], ['another_job.txt'])
+        temporary = out/'tmp_clim/fixture_clim_month_01_2000-2002.tmp.nc'
+        temporary.write_bytes(b'partial previous field')
+        result = self.run_script(worker, **dict(env, CLIM_REUSE_MONTHS='01'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(temporary.read_bytes(), b'partial previous field')
+        self.assertEqual(accepted.read_bytes(), b'accepted product')
+        self.assertEqual([p.name for p in scratch.iterdir()], ['another_job.txt'])
+
+    def test_monthly_scratch_rejects_parallel_fields_and_existing_lock(self):
+        worker = ROOT/'scripts/core/climatology_window_from_monthly_files.slurm.sh'
+        env = self.scratch_monthly_fixture()
+        result = self.run_script(worker, **dict(env, CLIM_WORKERS='4'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('CLIM_WORKERS=1', result.stderr)
+        lock = Path(env['OUT_DIR'])/'tmp_clim/fixture_monthly_200001-200212.lock'
+        lock.mkdir(parents=True)
+        result = self.run_script(worker, **env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('outputs locked', result.stderr)
+        self.assertTrue(lock.exists())
+
+    def test_monthly_scratch_cancellation_removes_only_job_workspace(self):
+        import shutil
+        import signal
+        import time
+        worker = ROOT/'scripts/core/climatology_window_from_monthly_files.slurm.sh'
+        settings = self.scratch_monthly_fixture()
+        bindir = self.root/'bin'; bindir.mkdir()
+        marker = self.root/'copy_started'
+        cp = bindir/'cp'
+        cp.write_text('#!/bin/bash\ntouch "$MARKER"\nsleep 30\nexec "'+shutil.which('cp')+'" "$@"\n')
+        cp.chmod(0o755)
+        process = subprocess.Popen(['bash', str(worker)], cwd=ROOT,
+            env=dict(self.env, **settings, PATH=str(bindir)+os.pathsep+self.env['PATH'], MARKER=str(marker)),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+        try:
+            deadline = time.monotonic()+15
+            while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(.05)
+            self.assertTrue(marker.exists())
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGTERM)
+            stdout, stderr = process.communicate(timeout=10)
+        self.assertNotEqual(process.returncode, 0)
+        scratch = Path(settings['CLIM_SCRATCH_ROOT'])
+        self.assertEqual([p.name for p in scratch.iterdir()], ['another_job.txt'])
+        self.assertFalse(list((Path(settings['OUT_DIR'])/'tmp_clim').glob('*.lock')))
+        self.assertFalse(list(Path(settings['OUT_DIR']).glob('*.nc')))
+
     def test_monthly_climatology_rejects_missing_month_without_publication(self):
         times = xr.date_range('1999-12-01', periods=13, freq='MS').delete(4)
         field = self.field().isel(time=0, drop=True).expand_dims(time=times)

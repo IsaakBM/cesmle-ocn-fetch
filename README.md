@@ -999,8 +999,63 @@ guarantee of throughput on a shared filesystem. The implementation is documented
 in the [official CDO 2.4.0 source](https://code.mpimet.mpg.de/attachments/29313),
 `libcdi/src/cdf_write.c`.
 
+For monthly climatology production, the existing monthly-file worker can stage
+the required inputs and calculate on scratch without repacking or modifying
+prepared inputs. GRIT documents `/home/hpc-scratch` as its NVMe scratch resource,
+open to users but not backed up; unused files can be removed after three months.
+See [GRIT scratch storage](https://bookstack.grit.ucsb.edu/books/hpc-usage/page/scratch-space).
+
+```bash
+CLIMATOLOGY_MODE=monthly \
+CLIM_SCRATCH_ROOT="/home/hpc-scratch/${USER}/cesmle-ocn-fetch" \
+CLIM_WORKERS=1 \
+VARS="so" \
+bash scripts/runners/glorys/run_climatology_window.sh
+```
+
+Staging is opt-in and currently supports **monthly mode only**, with one field
+worker per job. Whole-window and seasonal processing retain their existing
+behavior; passing a scratch root for those modes fails before calculation.
+The worker creates a unique scratch directory containing the variable and
+Slurm job ID. Each month stages only its contributing input files using plain
+file copies, then runs the existing CDO mean and metadata/top-fill finalizer
+entirely on scratch. Before each month it checks free space against the input
+bytes, two uncompressed field sizes, and a reserve of
+`CLIM_SCRATCH_HEADROOM_GB=10`. This does not reserve shared storage space.
+New fields calculated on scratch use `-k auto` for their output layout; no
+conversion pass over the permanent inputs is performed.
+
+The completed field is copied into a private sibling workspace on the output
+filesystem. Byte count, dimensions, coordinate values, and serialized time
+metadata are checked before replacing its shared temporary field. All 12 fields
+must succeed before final monthly publication. Permanent input and output paths
+remain on `/home/SB5`. The logs separate `[COPY IN]`, `[COPIED]`, `[CALCULATE]`,
+`[COPY OUT]`, `[RETURNED]`, and `[READY]` with UTC timestamps, so elapsed time
+includes staging and publication rather than just the CDO calculation.
+
+Each finished month removes its scratch files. Normal job exit, handled failures,
+and normal cancellation remove only that job's workspace, leaving the configured
+scratch parent and other jobs' files alone. A node failure or uncatchable kill
+can leave a workspace or output lock; identify it by the job ID, confirm no writer
+remains, and remove only that abandoned workspace/lock. Do not clear shared
+scratch directories. A lock prevents duplicate monthly writers for the same
+variable and window.
+
+Known finalized monthly temporary fields can be explicitly reused with
+`CLIM_REUSE_MONTHS="01"` (space-separated two-digit months). Only request this
+for fields previously completed with the same scientific settings. The worker
+checks product type, month, contributing count, source shape/coordinates/units,
+time bounds, and that no contributing source file is newer than the field. It
+does not infer completion from file size or automatically reuse unknown partial
+outputs, and these checks do not reconstruct missing provenance for old fields.
+A requested field that fails validation stops the run without overwriting it.
+Do not apply a salinity-specific reuse list to other variables indiscriminately.
+
 Existing prepared files are not changed by a Git update or a climatology
-resubmission. Repack affected row-chunked inputs once with the installed CDO:
+resubmission. Repacking is **not required for scratch staging**. If a separate
+storage-layout conversion is warranted for repeated future use, it can be done
+with installed CDO as below; its full read/write and comparison cost must be
+included when deciding whether to convert inputs:
 
 ```bash
 # Run on a compute allocation, with no active readers/writers of this input.

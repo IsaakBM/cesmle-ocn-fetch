@@ -43,6 +43,11 @@ CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
 MEM_3D="${MEM_3D:-128G}"
 MEM_2D="${MEM_2D:-32G}"
 WALLTIME="${WALLTIME:-7-00:00:00}"
+CLIM_SCRATCH_ROOT="${CLIM_SCRATCH_ROOT:-}"
+CLIM_REUSE_MONTHS="${CLIM_REUSE_MONTHS:-}"
+if [[ -n "$CLIM_SCRATCH_ROOT" ]]; then
+  CLIM_WORKERS="${CLIM_WORKERS:-1}"
+fi
 
 VARS_2D=(
   mlotst
@@ -52,6 +57,10 @@ VARS_2D=(
 
 if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" && "$CLIMATOLOGY_MODE" != "seasonal" ]]; then
   echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly, seasonal" >&2
+  exit 1
+fi
+if [[ -n "$CLIM_SCRATCH_ROOT" && ( "$CLIMATOLOGY_MODE" != monthly || "$CLIM_WORKERS" != 1 ) ]]; then
+  echo "ERROR: Scratch staging requires CLIMATOLOGY_MODE=monthly and CLIM_WORKERS=1" >&2
   exit 1
 fi
 
@@ -84,6 +93,7 @@ echo "Submission receipts: $SUBMISSION_LOG"
 
 echo "Submitting GLORYS climatology window jobs with generic worker:"
 echo "  mode: ${CLIMATOLOGY_MODE}"
+echo "  scratch: ${CLIM_SCRATCH_ROOT:-<disabled>}"
 for v in "${VARS[@]}"; do
   IN_DIR="${INROOT_BASE}/${v}/parts"
   OUT_SUBDIR="clim_windows"
@@ -117,6 +127,8 @@ for v in "${VARS[@]}"; do
     WINDOW_END="$WINDOW_END" \
     EXPECTED_N="$EXPECTED_N" \
     CLIMATOLOGY_MODE="$CLIMATOLOGY_MODE" \
+    CLIM_SCRATCH_ROOT="$CLIM_SCRATCH_ROOT" \
+    CLIM_REUSE_MONTHS="$CLIM_REUSE_MONTHS" \
     OUT_PREFIX="${DATASET_LABEL}_${v}" \
     sbatch --parsable \
     "${sbatch_extra_args[@]}" \

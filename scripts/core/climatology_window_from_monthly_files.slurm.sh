@@ -62,6 +62,11 @@ shopt -s nullglob
 #                     the preceding December required by DJF
 #   CLIM_WORKERS    : concurrent month/season tasks (default: allocated CPUs,
 #                     capped at four); use 1 to benchmark serial storage access
+#   CLIM_SCRATCH_ROOT: optional scratch parent for monthly input staging and
+#                     calculation; defaults to no staging. Requires one worker.
+#   CLIM_SCRATCH_HEADROOM_GB: free-space reserve after estimated working set (10)
+#   CLIM_REUSE_MONTHS: explicit completed monthly temp fields to reuse, e.g. 01;
+#                     only for known finished fields from the same settings
 # ==============================================================================
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"
@@ -77,7 +82,14 @@ EXPECTED_N="${EXPECTED_N:-108}"
 OUT_PREFIX="${OUT_PREFIX:-}"
 FILL_TOP_MISSING="${FILL_TOP_MISSING:-yes}"
 CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
-CLIM_WORKERS="${CLIM_WORKERS:-${SLURM_CPUS_PER_TASK:-1}}"
+CLIM_SCRATCH_ROOT="${CLIM_SCRATCH_ROOT:-}"
+CLIM_SCRATCH_HEADROOM_GB="${CLIM_SCRATCH_HEADROOM_GB:-10}"
+CLIM_REUSE_MONTHS="${CLIM_REUSE_MONTHS:-}"
+if [[ -n "$CLIM_SCRATCH_ROOT" ]]; then
+  CLIM_WORKERS="${CLIM_WORKERS:-1}"
+else
+  CLIM_WORKERS="${CLIM_WORKERS:-${SLURM_CPUS_PER_TASK:-1}}"
+fi
 if ! [[ "$CLIM_WORKERS" =~ ^[1-9][0-9]*$ ]]; then
   echo "ERROR: CLIM_WORKERS must be a positive integer" >&2
   exit 1
@@ -87,6 +99,29 @@ if (( CLIM_WORKERS > ${SLURM_CPUS_PER_TASK:-$CLIM_WORKERS} )); then
   exit 1
 fi
 (( CLIM_WORKERS <= 4 )) || CLIM_WORKERS=4
+if [[ -n "$CLIM_SCRATCH_ROOT" ]]; then
+  if [[ "$CLIMATOLOGY_MODE" != monthly || "$CLIM_WORKERS" != 1 ]]; then
+    echo "ERROR: Scratch staging currently requires monthly mode and CLIM_WORKERS=1" >&2
+    exit 1
+  fi
+  if [[ "$CLIM_SCRATCH_ROOT" != /* || ! "$CLIM_SCRATCH_HEADROOM_GB" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: Use an absolute scratch path and a nonnegative integer headroom" >&2
+    exit 1
+  fi
+fi
+if [[ -n "$CLIM_REUSE_MONTHS" && "$CLIMATOLOGY_MODE" != monthly ]]; then
+  echo "ERROR: CLIM_REUSE_MONTHS requires monthly mode" >&2
+  exit 1
+fi
+reuse_months=()
+read -r -a reuse_months <<< "$CLIM_REUSE_MONTHS"
+for reuse_month in "${reuse_months[@]-}"; do
+  [[ -z "$reuse_month" ]] && continue
+  if [[ ! "$reuse_month" =~ ^(0[1-9]|1[0-2])$ ]]; then
+    echo "ERROR: CLIM_REUSE_MONTHS entries must be 01 through 12" >&2
+    exit 1
+  fi
+done
 # Each task uses a separate process/file; avoid hidden BLAS/OpenMP oversubscription.
 if [[ "$CLIMATOLOGY_MODE" != "whole" ]]; then
   export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
@@ -145,6 +180,8 @@ echo "OUT PREFIX  : ${OUT_PREFIX}"
 echo "FILL TOP    : ${FILL_TOP_MISSING}"
 echo "CLIM MODE   : ${CLIMATOLOGY_MODE}"
 echo "FIELD WORKERS: ${CLIM_WORKERS}"
+echo "SCRATCH ROOT: ${CLIM_SCRATCH_ROOT:-<disabled>}"
+echo "REUSE MONTHS: ${CLIM_REUSE_MONTHS:-<none>}"
 echo "============================================================"
 
 # ------------------------------------------------------------------------------
@@ -529,9 +566,47 @@ if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
   monthly_temps=()
   monthly_outputs=()
 
+  # One writer per variable/window, including during staging and final publication.
+  monthly_lock="${TMP_DIR}/${OUT_PREFIX}_monthly_${WINDOW_START}-${WINDOW_END}.lock"
+  if ! mkdir "$monthly_lock" 2>/dev/null; then
+    echo "ERROR: Monthly outputs locked: $monthly_lock; confirm the previous job stopped before removing a stale lock" >&2
+    exit 1
+  fi
+  scratch_job_dir=""
+  cleanup_monthly_job() {
+    local pid
+    for pid in "${field_pids[@]-}"; do
+      [[ -n "$pid" ]] || continue
+      kill -TERM "$pid" 2>/dev/null || true
+    done
+    for pid in "${field_pids[@]-}"; do
+      [[ -n "$pid" ]] || continue
+      wait "$pid" 2>/dev/null || true
+    done
+    [[ -z "$scratch_job_dir" ]] || rm -rf -- "$scratch_job_dir"
+    rmdir -- "$monthly_lock"
+  }
+  trap cleanup_monthly_job EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  if [[ -n "$CLIM_SCRATCH_ROOT" ]]; then
+    mkdir -p "$CLIM_SCRATCH_ROOT"
+    scratch_job_dir="$(mktemp -d "${CLIM_SCRATCH_ROOT%/}/clim_${VAR}_${SLURM_JOB_ID:-local}.XXXXXX")"
+    echo "[SCRATCH] $scratch_job_dir"
+  fi
+
   echo "[STEP1] Computing twelve calendar-month climatologies"
   process_month() (
     set -euo pipefail
+    field_scratch=""
+    publish_dir=""
+    cleanup_month() {
+      [[ -z "$publish_dir" ]] || rm -rf -- "$publish_dir"
+      [[ -z "$field_scratch" ]] || rm -rf -- "$field_scratch"
+    }
+    trap cleanup_month EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
     month="$1"
     echo "[START] month=${month} $(date -u +%FT%TZ)"
     month_padded="$(printf '%02d' "$month")"
@@ -552,12 +627,113 @@ if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
 
     monthly_tmp="${TMP_DIR}/${OUT_PREFIX}_clim_month_${month_padded}_${start_year}-${end_year}.tmp.nc"
     monthly_out="${OUT_DIR}/${OUT_PREFIX}_clim_month_${month_padded}_${start_year}-${end_year}.nc"
-    rm -f "$monthly_tmp"
-    cdo -L -O -P 1 -f nc4c -z zip_1 timmean -mergetime "${month_files[@]}" "$monthly_tmp"
-    write_climatology_metadata "$monthly_tmp" \
+    if [[ " ${CLIM_REUSE_MONTHS} " == *" ${month_padded} "* ]]; then
+      python3 - "$monthly_tmp" "$VAR" "$month" "$start_year" "$end_year" "${month_files[@]}" <<'PY_REUSE_MONTH'
+import calendar
+import datetime as dt
+import os
+import sys
+import netCDF4 as nc
+import numpy as np
+
+path, name, month, start, end, *sources = sys.argv[1:]
+month, start, end = map(int, (month, start, end))
+with nc.Dataset(path) as ds, nc.Dataset(sources[0]) as source:
+    assert ds.climatology_product_type == 'monthly'
+    assert int(ds.climatology_month) == month
+    assert int(ds.climatology_selected_timesteps) == len(sources)
+    expected_start = dt.datetime(start, month, 1)
+    expected_end = dt.datetime(end, month, calendar.monthrange(end, month)[1])
+    assert ds.climatology_window_start == expected_start.date().isoformat()
+    assert ds.climatology_window_end == expected_end.date().isoformat()
+    assert ds.variables[name].shape == source.variables[name].shape
+    assert ds.variables[name].units == source.variables[name].units
+    for dimension in ds.variables[name].dimensions:
+        if dimension != 'time':
+            np.testing.assert_array_equal(ds.variables[dimension][:], source.variables[dimension][:])
+    time, bounds = ds.variables['time'], ds.variables['time_bnds']
+    assert len(time) == 1 and time.climatology == 'time_bnds'
+    assert time.units == bounds.units and time.calendar == bounds.calendar
+    np.testing.assert_array_equal(bounds[:], nc.date2num([[expected_start, expected_end]], time.units, time.calendar))
+    assert bounds[0, 0] <= time[0] <= bounds[0, 1]
+assert all(os.stat(source).st_mtime_ns <= os.stat(path).st_mtime_ns for source in sources), 'Input newer than requested completed field'
+PY_REUSE_MONTH
+      echo "[REUSE] month=${month_padded} previously finalized field: $monthly_tmp"
+      exit 0
+    fi
+
+    calculation_tmp="$monthly_tmp"
+    calculation_files=( "${month_files[@]}" )
+    if [[ -n "$scratch_job_dir" ]]; then
+      python3 - "$scratch_job_dir" "$VAR" "$CLIM_SCRATCH_HEADROOM_GB" "${month_files[@]}" <<'PY_SCRATCH_SPACE'
+import os
+import shutil
+import sys
+import netCDF4 as nc
+
+root, name, reserve, *sources = sys.argv[1:]
+source_bytes = sum(os.stat(path).st_size for path in sources)
+with nc.Dataset(sources[0]) as ds:
+    variable = ds.variables[name]
+    output_bytes = variable.size * variable.dtype.itemsize
+required = source_bytes + 2 * output_bytes + int(reserve) * 1024**3
+available = shutil.disk_usage(root).free
+print(f'[SPACE] inputs={source_bytes} estimated_required={required} available={available}', flush=True)
+if available < required:
+    raise SystemExit('ERROR: Insufficient scratch space; no inputs staged')
+PY_SCRATCH_SPACE
+      field_scratch="$(mktemp -d "${scratch_job_dir}/month_${month_padded}.XXXXXX")"
+      calculation_files=()
+      for input_file in "${month_files[@]}"; do
+        staged_file="${field_scratch}/$(basename "$input_file")"
+        echo "[COPY IN] $(date -u +%FT%TZ) $input_file"
+        cp -- "$input_file" "$staged_file"
+        python3 - "$input_file" "$staged_file" <<'PY_COPY_SIZE'
+import os
+import sys
+assert os.stat(sys.argv[1]).st_size == os.stat(sys.argv[2]).st_size, 'Incomplete staged copy'
+PY_COPY_SIZE
+        calculation_files+=( "$staged_file" )
+        echo "[COPIED] $(date -u +%FT%TZ) $input_file"
+      done
+      calculation_tmp="${field_scratch}/$(basename "$monthly_tmp")"
+    else
+      rm -f "$monthly_tmp"
+    fi
+    echo "[CALCULATE] month=${month_padded} $(date -u +%FT%TZ)"
+    if [[ -n "$field_scratch" ]]; then
+      cdo -L -O -P 1 -f nc4c -k auto -z zip_1 timmean -mergetime "${calculation_files[@]}" "$calculation_tmp"
+    else
+      cdo -L -O -P 1 -f nc4c -z zip_1 timmean -mergetime "${calculation_files[@]}" "$calculation_tmp"
+    fi
+    write_climatology_metadata "$calculation_tmp" \
       "${start_year}-${month_padded}-01" "${end_year}-${month_padded}-last" \
       "${#month_files[@]}" "monthly" "$month" "calendar_month" "" "" \
       "$FILL_TOP_MISSING"
+    if [[ -n "$field_scratch" ]]; then
+      publish_dir="$(mktemp -d "${TMP_DIR}/.${OUT_PREFIX}_month_${month_padded}.publish.XXXXXX")"
+      echo "[COPY OUT] month=${month_padded} $(date -u +%FT%TZ)"
+      cp -- "$calculation_tmp" "$publish_dir/output.nc"
+      python3 - "$calculation_tmp" "$publish_dir/output.nc" "$VAR" <<'PY_RETURNED_FIELD'
+import os
+import sys
+import netCDF4 as nc
+import numpy as np
+
+original, returned, name = sys.argv[1:]
+assert os.stat(original).st_size == os.stat(returned).st_size, 'Incomplete returned copy'
+with nc.Dataset(original) as before, nc.Dataset(returned) as after:
+    assert before.variables[name].shape == after.variables[name].shape
+    assert before.variables[name].dtype == after.variables[name].dtype
+    for coordinate in before.variables[name].dimensions:
+        np.testing.assert_array_equal(before.variables[coordinate][:], after.variables[coordinate][:])
+    np.testing.assert_array_equal(before.variables['time_bnds'][:], after.variables['time_bnds'][:])
+    for attribute in ('units', 'calendar', 'climatology'):
+        assert getattr(before.variables['time'], attribute) == getattr(after.variables['time'], attribute)
+PY_RETURNED_FIELD
+      mv -f -- "$publish_dir/output.nc" "$monthly_tmp"
+      echo "[RETURNED] month=${month_padded} $(date -u +%FT%TZ)"
+    fi
     echo "[READY] month=${month_padded} $(date -u +%FT%TZ)"
   )
   for month in {1..12}; do

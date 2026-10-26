@@ -54,9 +54,21 @@ read -r -a SCENARIOS <<< "${SCENARIOS:-}"
 read -r -a WINDOWS <<< "${WINDOWS:-}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
 CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
+CLIM_SCRATCH_POLICY="${CLIM_SCRATCH_POLICY:-per_month}"
+CLIM_SCRATCH_ROOT="${CLIM_SCRATCH_ROOT:-}"
+CLIM_SCRATCH_HEADROOM_GB="${CLIM_SCRATCH_HEADROOM_GB:-10}"
 MEM_3D="${MEM_3D:-8G}"
 MEM_2D="${MEM_2D:-4G}"
 WALLTIME="${WALLTIME:-7-00:00:00}"
+
+if [[ "$CLIM_SCRATCH_POLICY" != per_month && "$CLIM_SCRATCH_POLICY" != shared ]]; then
+  echo "ERROR: CLIM_SCRATCH_POLICY must be per_month or shared" >&2
+  exit 1
+fi
+if [[ "$CLIM_SCRATCH_POLICY" == shared && ( -z "$CLIM_SCRATCH_ROOT" || "$CLIMATOLOGY_MODE" == whole ) ]]; then
+  echo "ERROR: Shared scratch requires CLIM_SCRATCH_ROOT and monthly or seasonal mode" >&2
+  exit 1
+fi
 
 if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" && "$CLIMATOLOGY_MODE" != "seasonal" ]]; then
   echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly, seasonal" >&2
@@ -210,6 +222,9 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         WINDOW_END="$HIST_WINDOW_END" \
         MERGE_INPUTS="auto" \
         CLIMATOLOGY_MODE="$CLIMATOLOGY_MODE" \
+        CLIM_SCRATCH_POLICY="$CLIM_SCRATCH_POLICY" \
+        CLIM_SCRATCH_ROOT="$CLIM_SCRATCH_ROOT" \
+        CLIM_SCRATCH_HEADROOM_GB="$CLIM_SCRATCH_HEADROOM_GB" \
         OUT_PREFIX="$out_prefix" \
         sbatch --parsable \
         "${sbatch_extra_args[@]}" \
@@ -233,6 +248,9 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         WINDOW_END="$FUT2030_WINDOW_END" \
         MERGE_INPUTS="auto" \
         CLIMATOLOGY_MODE="$CLIMATOLOGY_MODE" \
+        CLIM_SCRATCH_POLICY="$CLIM_SCRATCH_POLICY" \
+        CLIM_SCRATCH_ROOT="$CLIM_SCRATCH_ROOT" \
+        CLIM_SCRATCH_HEADROOM_GB="$CLIM_SCRATCH_HEADROOM_GB" \
         OUT_PREFIX="$out_prefix" \
         sbatch --parsable \
         "${sbatch_extra_args[@]}" \
@@ -256,6 +274,9 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         WINDOW_END="$FUT2050_WINDOW_END" \
         MERGE_INPUTS="auto" \
         CLIMATOLOGY_MODE="$CLIMATOLOGY_MODE" \
+        CLIM_SCRATCH_POLICY="$CLIM_SCRATCH_POLICY" \
+        CLIM_SCRATCH_ROOT="$CLIM_SCRATCH_ROOT" \
+        CLIM_SCRATCH_HEADROOM_GB="$CLIM_SCRATCH_HEADROOM_GB" \
         OUT_PREFIX="$out_prefix" \
         sbatch --parsable \
         "${sbatch_extra_args[@]}" \
@@ -279,6 +300,9 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         WINDOW_END="$FUT2090_WINDOW_END" \
         MERGE_INPUTS="auto" \
         CLIMATOLOGY_MODE="$CLIMATOLOGY_MODE" \
+        CLIM_SCRATCH_POLICY="$CLIM_SCRATCH_POLICY" \
+        CLIM_SCRATCH_ROOT="$CLIM_SCRATCH_ROOT" \
+        CLIM_SCRATCH_HEADROOM_GB="$CLIM_SCRATCH_HEADROOM_GB" \
         OUT_PREFIX="$out_prefix" \
         sbatch --parsable \
         "${sbatch_extra_args[@]}" \

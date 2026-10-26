@@ -33,6 +33,25 @@
 #SBATCH --error=/home/sandbox-sparc/cesmle-ocn-fetch/logs/clim_timeseries_%j.err
 #SBATCH --chdir=/home/sandbox-sparc/cesmle-ocn-fetch
 
+if [[ "${CLIM_SCRATCH_POLICY:-per_month}" == shared ]]; then
+  shared_helper="$(dirname "${BASH_SOURCE[0]}")/climatology_window_from_monthly_files.slurm.sh"
+  # sbatch executes a spooled script, not the repository path. The configured
+  # --chdir is the repository root, which supplies the helper in that case.
+  if [[ ! -f "$shared_helper" ]]; then
+    shared_helper="${PWD}/scripts/core/climatology_window_from_monthly_files.slurm.sh"
+  fi
+  if [[ ! -f "$shared_helper" ]]; then
+    echo "ERROR: Shared scratch helper missing; run from the repository root" >&2
+    exit 1
+  fi
+  source "$shared_helper"
+  clim_shared_scratch "$0" timeseries
+  exit "$?"
+elif [[ "${CLIM_SCRATCH_POLICY:-per_month}" != per_month ]]; then
+  echo "ERROR: CLIM_SCRATCH_POLICY must be per_month or shared" >&2
+  exit 1
+fi
+
 set -euo pipefail
 shopt -s nullglob
 
@@ -63,6 +82,9 @@ shopt -s nullglob
 #                     the preceding December required by DJF
 #   CLIM_WORKERS    : concurrent seasonal fields (default: allocated CPUs,
 #                     capped at four); monthly means use one streamed CDO pass
+#   CLIM_SCRATCH_POLICY: shared opts into retained input caching and calculation
+#                     on CLIM_SCRATCH_ROOT for monthly/seasonal mode. The default
+#                     per_month value leaves this worker's existing behavior.
 # ==============================================================================
 DATASET_LABEL="${DATASET_LABEL:-dataset}"
 VAR="${VAR:-}"

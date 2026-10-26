@@ -44,6 +44,7 @@ MEM_3D="${MEM_3D:-128G}"
 MEM_2D="${MEM_2D:-32G}"
 WALLTIME="${WALLTIME:-7-00:00:00}"
 CLIM_SCRATCH_ROOT="${CLIM_SCRATCH_ROOT:-}"
+CLIM_SCRATCH_POLICY="${CLIM_SCRATCH_POLICY:-per_month}"
 CLIM_REUSE_MONTHS="${CLIM_REUSE_MONTHS:-}"
 if [[ -n "$CLIM_SCRATCH_ROOT" ]]; then
   CLIM_WORKERS="${CLIM_WORKERS:-1}"
@@ -55,11 +56,20 @@ VARS_2D=(
   siconc
 )
 
+if [[ "$CLIM_SCRATCH_POLICY" != per_month && "$CLIM_SCRATCH_POLICY" != shared ]]; then
+  echo "ERROR: CLIM_SCRATCH_POLICY must be per_month or shared" >&2
+  exit 1
+fi
+if [[ "$CLIM_SCRATCH_POLICY" == shared && ( -z "$CLIM_SCRATCH_ROOT" || "$CLIMATOLOGY_MODE" == whole ) ]]; then
+  echo "ERROR: Shared scratch requires CLIM_SCRATCH_ROOT and monthly or seasonal mode" >&2
+  exit 1
+fi
+
 if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" && "$CLIMATOLOGY_MODE" != "seasonal" ]]; then
   echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly, seasonal" >&2
   exit 1
 fi
-if [[ -n "$CLIM_SCRATCH_ROOT" && ( "$CLIMATOLOGY_MODE" != monthly || "$CLIM_WORKERS" != 1 ) ]]; then
+if [[ -n "$CLIM_SCRATCH_ROOT" && "$CLIM_SCRATCH_POLICY" != shared && ( "$CLIMATOLOGY_MODE" != monthly || "$CLIM_WORKERS" != 1 ) ]]; then
   echo "ERROR: Scratch staging requires CLIMATOLOGY_MODE=monthly and CLIM_WORKERS=1" >&2
   exit 1
 fi
@@ -128,6 +138,7 @@ for v in "${VARS[@]}"; do
     EXPECTED_N="$EXPECTED_N" \
     CLIMATOLOGY_MODE="$CLIMATOLOGY_MODE" \
     CLIM_SCRATCH_ROOT="$CLIM_SCRATCH_ROOT" \
+    CLIM_SCRATCH_POLICY="$CLIM_SCRATCH_POLICY" \
     CLIM_REUSE_MONTHS="$CLIM_REUSE_MONTHS" \
     OUT_PREFIX="${DATASET_LABEL}_${v}" \
     sbatch --parsable \

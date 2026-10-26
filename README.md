@@ -1013,7 +1013,8 @@ VARS="so" \
 bash scripts/runners/glorys/run_climatology_window.sh
 ```
 
-Staging is opt-in and currently supports **monthly mode only**, with one field
+The default `CLIM_SCRATCH_POLICY=per_month` staging is opt-in and supports
+**monthly mode only**, with one field
 worker per job. Whole-window and seasonal processing retain their existing
 behavior; passing a scratch root for those modes fails before calculation.
 The worker creates a unique scratch directory containing the variable and
@@ -1040,6 +1041,75 @@ can leave a workspace or output lock; identify it by the job ID, confirm no writ
 remains, and remove only that abandoned workspace/lock. Do not clear shared
 scratch directories. A lock prevents duplicate monthly writers for the same
 variable and window.
+
+#### Retained scratch inputs for monthly and seasonal production
+
+`CLIM_SCRATCH_POLICY=shared` is a separate, opt-in policy supported by both
+climatology workers and the GLORYS, hindcast, and IPCC/ESGF runners. Existing
+jobs and the default `per_month` policy keep their established behavior.
+No software is installed; shared mode requires the existing `rsync`, Python
+NumPy/netCDF4 dependencies, and CDO.
+
+For each January-December year window, shared mode verifies the union of monthly
+and seasonal source coverage before transferring: the preceding December through
+the final December, exactly one observation per month. Consequently a monthly
+job in shared mode also requires the DJF boundary input. Time-series mode copies
+whole contributing source chunks; it does not extract or copy only their
+selected timesteps. An unusually long source chunk can therefore have a large
+initial staging cost. Unrelated chunks are excluded.
+
+```bash
+# Example settings for a subsequent GLORYS monthly submission, not a command
+# to replace an active recovery job. Run the seasonal submission afterward,
+# with the same root and input paths, to reuse the staged inputs.
+CLIM_SCRATCH_POLICY=shared \
+CLIM_SCRATCH_ROOT="/home/hpc-scratch/${USER}/cesmle-ocn-fetch" \
+CLIMATOLOGY_MODE=monthly CLIM_WORKERS=1 VARS=so \
+bash scripts/runners/glorys/run_climatology_window.sh
+```
+
+The worker prints its exact `[SHARED CACHE]` directory. Accepted copies are
+recorded using canonical source path, size and modification time, plus the
+staged file's size and modification time. A subsequent job reports `[CACHE HIT]`
+and avoids copying files whose provenance still matches. Changed sources or
+changed staged files are transferred again. This detects ordinary changes, not
+silent corruption that preserves those attributes; it is not a full scientific
+array checksum. The cache is shared across windows using the same input location
+and variable, with a private input view exposing only contributing files.
+
+Transfers use one installed rsync process at a time, without `-z` or other
+compression. Partial data is retained using `--partial-dir`; `--no-whole-file`
+allows rsync to use it on retry. A resumed mounted-path transfer may still read
+the full source over NFS to calculate differences. Do not assume this makes the
+first transfer faster or eliminates source reads during partial recovery. The
+main savings come from avoiding transfers of already accepted files.
+
+Both monthly and seasonal calculations, including the time-series seasonal
+selected window and weighted season-year intermediates, run in a private scratch
+workspace with one field worker. Existing averaging, source-calendar weighting,
+missing-value handling, metadata and top-fill methods remain in use. Outputs
+are returned to a private publication directory on SB5, checked for size,
+dimensions, coordinates and time metadata, and only then replace final files.
+Publication is atomic per file, not a transaction across the whole family.
+`[PUBLISHED]` identifies canonical products; the nested worker also logs its
+scratch outputs while calculating.
+
+Space checks include uncached source bytes, conservative uncompressed working
+fields, the time-series selected window where applicable, and
+`CLIM_SCRATCH_HEADROOM_GB` (default 10). They do not reserve space against other
+jobs. Accepted inputs and resumable partials remain after success or failure;
+normal exit/handled cancellation cleans the private calculation/publication
+workspace and releases locks. Node failure can leave private workspaces and
+stale locks. A lock rejects competing users of the same cache, so run monthly
+and seasonal jobs sharing it sequentially. Confirm the writer stopped before
+removing a stale lock; never remove a live job's files.
+
+After all products that need the cache have completed and passed validation,
+remove only its exact printed cache directory, after confirming no active job
+uses it. Retention is explicit: completing one family does not automatically
+delete inputs still needed by another family or future window. Canonical data
+remain on SB5; GRIT scratch is temporary, unbacked-up storage. Shared mode does
+not consume the legacy `CLIM_REUSE_MONTHS` setting, and refuses it when nonempty.
 
 Known finalized monthly temporary fields can be explicitly reused with
 `CLIM_REUSE_MONTHS="01"` (space-separated two-digit months). Only request this

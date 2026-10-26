@@ -33,6 +33,284 @@
 #SBATCH --error=/home/sandbox-sparc/cesmle-ocn-fetch/logs/clim_window_%j.err
 #SBATCH --chdir=/home/sandbox-sparc/cesmle-ocn-fetch
 
+# Shared scratch orchestration is also used by the time-series worker. Sourcing
+# this file only defines the helper; it must never start the monthly-file job.
+clim_shared_scratch() {
+  python3 - "$1" "$2" <<'PY_SHARED_SCRATCH'
+import datetime as dt
+import glob
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+
+import netCDF4 as nc
+import numpy as np
+
+worker, kind = sys.argv[1:]
+env = dict(os.environ)
+mode = env.get('CLIMATOLOGY_MODE', 'whole')
+name = env.get('VAR', '')
+root = Path(env.get('CLIM_SCRATCH_ROOT', ''))
+if mode not in ('monthly', 'seasonal') or not name or not env.get('OUT_DIR'):
+    raise SystemExit('ERROR: Shared scratch requires VAR, OUT_DIR and monthly or seasonal mode')
+if not env.get('CLIM_SCRATCH_ROOT') or not root.is_absolute():
+    raise SystemExit('ERROR: Shared scratch requires an absolute CLIM_SCRATCH_ROOT')
+if env.get('CLIM_REUSE_MONTHS', '').strip():
+    raise SystemExit('ERROR: Shared scratch does not consume legacy CLIM_REUSE_MONTHS fields')
+reserve = env.get('CLIM_SCRATCH_HEADROOM_GB', '10')
+if not reserve.isdigit():
+    raise SystemExit('ERROR: CLIM_SCRATCH_HEADROOM_GB must be a nonnegative integer')
+for executable in ('rsync', 'bash'):
+    if not shutil.which(executable):
+        raise SystemExit(f'ERROR: Installed {executable} is required; nothing installed automatically')
+
+def years(value):
+    return int(value[:4])
+
+start = env.get('WINDOW_START', '200601' if kind == 'monthly' else '2006-01-01')
+end = env.get('WINDOW_END', '201412' if kind == 'monthly' else '2014-12-31')
+pattern = r'\d{6}' if kind == 'monthly' else r'\d{4}-\d{2}-\d{2}'
+if not re.fullmatch(pattern, start) or not re.fullmatch(pattern, end):
+    raise SystemExit('ERROR: Invalid shared-scratch window format')
+if start[4:] != ('01' if kind == 'monthly' else '-01-01') or end[4:] != ('12' if kind == 'monthly' else '-12-31'):
+    raise SystemExit('ERROR: Shared scratch requires complete January-December year windows')
+first, last = years(start), years(end)
+if not 1 < first <= last:
+    raise SystemExit('ERROR: Invalid shared-scratch year range')
+# Union of monthly and seasonal coverage: preceding December through final
+# December. Both modes therefore reuse the same accepted source copies.
+needed = {(year, month) for year in range(first, last + 1) for month in range(1, 13)}
+needed.add((first - 1, 12))
+if env.get('IN_FILE') and kind == 'timeseries':
+    if env.get('IN_DIR'):
+        raise SystemExit('ERROR: Provide IN_FILE or IN_DIR, not both')
+    sources = [Path(env['IN_FILE']).resolve()]
+else:
+    if not env.get('IN_DIR'):
+        raise SystemExit('ERROR: Missing IN_DIR')
+    sources = sorted(Path(p).resolve() for p in glob.glob(str(Path(env['IN_DIR']) / env.get('FILE_GLOB', '*.nc'))) if Path(p).is_file())
+if not sources:
+    raise SystemExit('ERROR: No source files found')
+merge = env.get('MERGE_INPUTS', 'auto')
+if kind == 'timeseries' and merge not in ('auto', 'yes', 'no'):
+    raise SystemExit('ERROR: Invalid MERGE_INPUTS')
+if kind == 'timeseries' and merge == 'no':
+    sources = sources[:1]
+coverage = {}
+selected = []
+field_bytes = 0
+for source in sources:
+    with nc.Dataset(source) as ds:
+        if name not in ds.variables or 'time' not in ds.variables:
+            raise SystemExit(f'ERROR: Missing {name}/time: {source}')
+        time = ds.variables['time']
+        dates = nc.num2date(time[:], time.units, getattr(time, 'calendar', 'standard'))
+        pairs = [(date.year, date.month) for date in dates]
+        if kind == 'monthly':
+            stamp = re.search(env.get('DATE_PATTERN', '[0-9]{6}'), source.name)
+            if not stamp:
+                continue
+            text = stamp.group()
+            expected_pair = (int(text[:4]), int(text[4:6]))
+            if expected_pair not in needed:
+                continue
+            if pairs != [expected_pair]:
+                raise SystemExit(f'ERROR: Filename/time mismatch or nonsingleton monthly input: {source}')
+        contributing = [pair for pair in pairs if pair in needed]
+        if not contributing:
+            continue
+        for pair in contributing:
+            coverage[pair] = coverage.get(pair, 0) + 1
+        var = ds.variables[name]
+        if 'time' not in var.dimensions:
+            raise SystemExit(f'ERROR: Scientific variable has no time dimension: {source}')
+        spatial_size = int(np.prod([length for dim, length in zip(var.dimensions, var.shape) if dim != 'time']))
+        field_bytes = max(field_bytes, spatial_size * max(8, var.dtype.itemsize))
+        selected.append(source)
+if set(coverage) != needed or any(count != 1 for count in coverage.values()):
+    raise SystemExit('ERROR: Shared scratch needs exactly one input per month, including preceding December; source coverage failed before copying')
+if len({p.name for p in selected}) != len(selected):
+    raise SystemExit('ERROR: Source basenames collide')
+
+out = Path(env['OUT_DIR']).resolve()
+prefix = env.get('OUT_PREFIX') or f"{env.get('DATASET_LABEL', 'dataset')}_{name}"
+canonical_tmp = Path(env.get('TMP_DIR') or out / 'tmp_clim').resolve()
+out.mkdir(parents=True, exist_ok=True)
+canonical_tmp.mkdir(parents=True, exist_ok=True)
+# The same family lock used by the legacy monthly worker prevents competing
+# publication. Seasonal locks are mode-specific; the cache lock serializes use.
+family_lock = canonical_tmp / f'{prefix}_{mode}_{first:04d}01-{last:04d}12.lock'
+root.mkdir(parents=True, exist_ok=True)
+identity = json.dumps([kind, name, str(Path(env.get('IN_DIR') or selected[0]).resolve())])
+key = hashlib.sha256(identity.encode()).hexdigest()[:20]
+cache = root / f'clim_cache_{key}'
+marker = cache / 'owner.json'
+owner = {'version': 1, 'uid': os.getuid(), 'identity': identity}
+if not cache.exists():
+    cache.mkdir(mode=0o700)
+    marker.write_text(json.dumps(owner))
+if cache.is_symlink() or cache.stat().st_uid != os.getuid() or json.loads(marker.read_text()) != owner:
+    raise SystemExit(f'ERROR: Unrecognized scratch cache; untouched: {cache}')
+cache_lock = cache / '.lock'
+held = []
+work = None
+publication = None
+child = None
+
+def stopped(signum, frame):
+    if child is not None and child.poll() is None:
+        os.killpg(child.pid, signal.SIGTERM)
+        try:
+            child.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.wait()
+    raise SystemExit(128 + signum)
+
+for signum in (signal.SIGINT, signal.SIGTERM):
+    signal.signal(signum, stopped)
+
+def run(command, **kwargs):
+    global child
+    child = subprocess.Popen(command, start_new_session=True, **kwargs)
+    status = child.wait()
+    child = None
+    if status:
+        raise subprocess.CalledProcessError(status, command)
+
+def signature(path):
+    stat = path.stat()
+    return {'path': str(path), 'bytes': stat.st_size, 'mtime_ns': stat.st_mtime_ns}
+
+def record(path, value):
+    temporary = path.with_name(path.name + '.new')
+    temporary.write_text(json.dumps(value, sort_keys=True))
+    os.replace(temporary, path)
+
+def check_output(original, returned):
+    if original.stat().st_size != returned.stat().st_size:
+        raise ValueError('Returned file size mismatch')
+    with nc.Dataset(original) as a, nc.Dataset(returned) as b:
+        for dataset in (a, b):
+            if dataset.variables[name].shape[dataset.variables[name].dimensions.index('time')] != 1:
+                raise ValueError('Expected singleton output time')
+            if dataset.climatology_product_type != mode or dataset.variables['time'].climatology != 'time_bnds':
+                raise ValueError('Invalid output climatology metadata')
+        if a.variables[name].shape != b.variables[name].shape or a.variables[name].dtype != b.variables[name].dtype:
+            raise ValueError('Returned scientific variable layout mismatch')
+        for coordinate in (*a.variables[name].dimensions, 'time_bnds'):
+            np.testing.assert_array_equal(a.variables[coordinate][:], b.variables[coordinate][:])
+        if set(a.ncattrs()) != set(b.ncattrs()):
+            raise ValueError('Returned global metadata mismatch')
+        for attr in a.ncattrs():
+            np.testing.assert_array_equal(a.getncattr(attr), b.getncattr(attr))
+        for coordinate in ('time', 'time_bnds'):
+            for attr in ('units', 'calendar'):
+                if getattr(a.variables[coordinate], attr) != getattr(b.variables[coordinate], attr):
+                    raise ValueError('Returned time encoding mismatch')
+
+try:
+    for lock in (family_lock, cache_lock):
+        try:
+            lock.mkdir()
+        except FileExistsError:
+            raise SystemExit(f'ERROR: Outputs/cache locked; confirm previous writer stopped before removing stale lock: {lock}')
+        held.append(lock)
+    print(f'[SHARED CACHE] {cache}', flush=True)
+    inputs = cache / 'inputs'
+    inputs.mkdir(exist_ok=True)
+    manifest_path = cache / 'sources.json'
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
+    signatures = {source.name: signature(source) for source in selected}
+    reusable = {source.name for source in selected if manifest.get(source.name, {}).get('source') == signatures[source.name]
+                and (inputs / source.name).is_file()
+                and manifest[source.name].get('staged') == signature(inputs / source.name)}
+    missing_bytes = sum(source.stat().st_size for source in selected if source.name not in reusable)
+    # All result/intermediate files live on scratch. Time-series seasonal mode
+    # also materializes its selected window there. Count uncompressed fields.
+    work_bytes = (last - first + 21) * field_bytes
+    if kind == 'timeseries':
+        work_bytes += len(needed) * field_bytes
+    required = missing_bytes + work_bytes + int(reserve) * 1024**3
+    available = shutil.disk_usage(cache).free
+    print(f'[SPACE] new_inputs={missing_bytes} workspace={work_bytes} required={required} available={available}', flush=True)
+    if available < required:
+        raise SystemExit('ERROR: Insufficient shared scratch space; no inputs transferred')
+    for source in selected:
+        staged = inputs / source.name
+        if source.name in reusable:
+            print(f'[CACHE HIT] {source}', flush=True)
+            continue
+        # A stale provenance record must never bless an interrupted replacement.
+        manifest.pop(source.name, None)
+        record(manifest_path, manifest)
+        print(f'[COPY IN] {dt.datetime.now(dt.timezone.utc).isoformat()} {source}', flush=True)
+        run(['rsync', '-t', '--ignore-times', '--partial', '--partial-dir=.rsync-partial', '--no-whole-file',
+             '--', str(source), str(staged)])
+        if signature(source) != signatures[source.name] or staged.stat().st_size != source.stat().st_size:
+            raise ValueError(f'Source changed or incomplete staged input: {source}')
+        with nc.Dataset(staged) as ds:
+            if name not in ds.variables or 'time' not in ds.variables:
+                raise ValueError(f'Unreadable staged variable/time: {staged}')
+        manifest[source.name] = {'source': signatures[source.name], 'staged': signature(staged)}
+        record(manifest_path, manifest)
+        print(f'[COPIED] {dt.datetime.now(dt.timezone.utc).isoformat()} {source}', flush=True)
+    work = Path(tempfile.mkdtemp(prefix=f'work_{mode}_', dir=cache))
+    # Cache may also contain chunks staged by other windows. Expose exactly this
+    # window's contributing sources in a private view, without duplicating bytes.
+    view = work / 'inputs'
+    view.mkdir()
+    for source in selected:
+        (view / source.name).symlink_to(inputs / source.name)
+    scratch_out = work / 'outputs'
+    child_env = dict(env, CLIM_SCRATCH_POLICY='per_month', CLIM_SCRATCH_ROOT='',
+                     CLIM_WORKERS='1', OUT_DIR=str(scratch_out), TMP_DIR=str(work / 'tmp'),
+                     OUT_PREFIX=prefix, WINDOW_START=start, WINDOW_END=end)
+    child_env.pop('IN_FILE', None)
+    child_env['IN_DIR'] = str(view)
+    child_env['FILE_GLOB'] = env.get('FILE_GLOB', '*.nc')
+    run(['bash', worker], env=child_env)
+    suffixes = [f'month_{m:02d}' for m in range(1, 13)] if mode == 'monthly' else [f'season_{s}' for s in ('DJF', 'MAM', 'JJA', 'SON')]
+    names = [f'{prefix}_clim_{suffix}_{first}-{last}.nc' for suffix in suffixes]
+    if any(signature(source) != signatures[source.name] for source in selected):
+        raise ValueError('Source changed during calculation; canonical outputs retained')
+    publication = Path(tempfile.mkdtemp(prefix=f'.{prefix}_{mode}.publish.', dir=out))
+    for filename in names:
+        original, returned = scratch_out / filename, publication / filename
+        run(['rsync', '-t', '--', str(original), str(returned)])
+        check_output(original, returned)
+    # All candidates returned and checked before any accepted final is replaced.
+    for filename in names:
+        os.replace(publication / filename, out / filename)
+        print(f'[PUBLISHED] {out / filename}', flush=True)
+    print(f'[CACHE RETAINED] {cache} (inputs reusable by subsequent monthly/seasonal jobs)', flush=True)
+finally:
+    for private in (publication, work):
+        if private is not None:
+            shutil.rmtree(private)
+    for lock in reversed(held):
+        lock.rmdir()
+PY_SHARED_SCRATCH
+}
+
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+if [[ "${CLIM_SCRATCH_POLICY:-per_month}" == shared ]]; then
+  clim_shared_scratch "$0" monthly
+  exit "$?"
+elif [[ "${CLIM_SCRATCH_POLICY:-per_month}" != per_month ]]; then
+  echo "ERROR: CLIM_SCRATCH_POLICY must be per_month or shared" >&2
+  exit 1
+fi
+
 set -euo pipefail
 shopt -s nullglob
 
@@ -64,6 +342,9 @@ shopt -s nullglob
 #                     capped at four); use 1 to benchmark serial storage access
 #   CLIM_SCRATCH_ROOT: optional scratch parent for monthly input staging and
 #                     calculation; defaults to no staging. Requires one worker.
+#   CLIM_SCRATCH_POLICY: per_month (existing default) | shared. Shared retains a
+#                     source cache across monthly/seasonal jobs; all calculation
+#                     and intermediates run on scratch. See README for lifecycle.
 #   CLIM_SCRATCH_HEADROOM_GB: free-space reserve after estimated working set (10)
 #   CLIM_REUSE_MONTHS: explicit completed monthly temp fields to reuse, e.g. 01;
 #                     only for known finished fields from the same settings

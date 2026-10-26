@@ -1600,4 +1600,227 @@ fi
         self.assertNotEqual(subprocess.run(args, env=env, capture_output=True).returncode, 0)
 
 
+class SharedScratchTests(unittest.TestCase):
+    """Exercise orchestration with mocked NetCDF/CDO boundaries, no cluster I/O.
+
+    Scientific equivalence remains covered by the existing worker fixtures. These
+    tests isolate cache invalidation, locking and publication failure behavior.
+    """
+    def setUp(self):
+        import types
+        from unittest import mock
+        self.mock = mock
+        self.types = types
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.inputs = self.root/'inputs'; self.inputs.mkdir()
+        self.copies = []
+        self.fail_copy = False
+        self.fail_worker = False
+        self.env = dict(VAR='thetao', IN_DIR=str(self.inputs), OUT_DIR=str(self.root/'monthly'),
+                        TMP_DIR=str(self.root/'canonical_tmp'), OUT_PREFIX='fixture',
+                        WINDOW_START='200001', WINDOW_END='200012', EXPECTED_N='12',
+                        CLIMATOLOGY_MODE='monthly', CLIM_SCRATCH_POLICY='shared',
+                        CLIM_SCRATCH_ROOT=str(self.root/'scratch'), CLIM_SCRATCH_HEADROOM_GB='0')
+        for stamp in ['1999-12-01'] + [f'2000-{month:02d}-01' for month in range(1, 13)]:
+            self.write_source(self.inputs/f'thetao_{stamp[:7].replace("-", "")}.nc', [stamp])
+
+    def write_source(self, path, dates):
+        path.write_text(json.dumps({'dates': dates, 'attrs': {}, 'values': {}, 'units': 'days', 'calendar': 'standard'}))
+
+    def run_shared(self, **changes):
+        import contextlib
+        import datetime
+        import io
+        import shutil
+        import types
+        settings = dict(self.env, **changes)
+        kind = settings.pop('_kind', 'monthly')
+        test = self
+
+        class Variable:
+            def __init__(self, dataset, name):
+                self.dataset, self.name = dataset, name
+                self.dimensions = ('time', 'lev', 'lat', 'lon') if name == 'thetao' else ('time', 'bnds') if name == 'time_bnds' else (name,)
+                self.shape = (len(dataset.data['dates']), 2, 2, 2) if name == 'thetao' else (1, 2) if name == 'time_bnds' else (len(dataset.data['dates']),) if name == 'time' else (2,)
+                self.dtype = types.SimpleNamespace(itemsize=4)
+                self.units = dataset.data['units']
+                self.calendar = dataset.data['calendar']
+                self.climatology = 'time_bnds'
+            def __getitem__(self, key):
+                return self.dataset.data['dates'] if self.name == 'time' else self.dataset.data['values'].get(self.name, [0, 1])
+
+        class Dataset:
+            def __init__(self, path):
+                self.data = json.loads(Path(path).read_text())
+                self.variables = {name: Variable(self, name) for name in ('thetao', 'time', 'lev', 'lat', 'lon', 'time_bnds')}
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def ncattrs(self): return list(self.data['attrs'])
+            def getncattr(self, attr): return self.data['attrs'][attr]
+            def __getattr__(self, attr): return self.data['attrs'][attr]
+
+        class Process:
+            def __init__(self, command, **kwargs):
+                self.returncode = 0
+                if command[0] == 'rsync':
+                    source, target = map(Path, command[-2:])
+                    test.copies.append(command)
+                    if test.fail_copy:
+                        self.returncode = 19
+                    else:
+                        shutil.copy2(source, target)
+                else:
+                    child = kwargs['env']
+                    test.assertEqual(child['CLIM_SCRATCH_ROOT'], '')
+                    test.assertEqual(child['CLIM_WORKERS'], '1')
+                    test.assertTrue(Path(child['TMP_DIR']).is_relative_to(test.root/'scratch'))
+                    if test.fail_worker:
+                        self.returncode = 17
+                        return
+                    folder = Path(child['OUT_DIR']); folder.mkdir()
+                    mode = child['CLIMATOLOGY_MODE']
+                    suffixes = [f'month_{m:02d}' for m in range(1, 13)] if mode == 'monthly' else [f'season_{s}' for s in ('DJF', 'MAM', 'JJA', 'SON')]
+                    for suffix in suffixes:
+                        data = {'dates': ['2000-01-01'], 'attrs': {'climatology_product_type': mode},
+                                'values': {'time_bnds': [[0, 365]]}, 'units': 'days', 'calendar': 'standard'}
+                        (folder/f'fixture_clim_{suffix}_2000-2000.nc').write_text(json.dumps(data))
+            def wait(self, **kwargs): return self.returncode
+            def poll(self): return self.returncode
+
+        nc = types.SimpleNamespace(Dataset=Dataset, num2date=lambda values, *args: [datetime.datetime.fromisoformat(v) for v in values])
+        def equal(a, b):
+            test.assertEqual(a, b)
+        import math
+        fake_numpy = types.SimpleNamespace(prod=math.prod, testing=types.SimpleNamespace(assert_array_equal=equal))
+        worker = ROOT/'scripts/core/climatology_window_from_monthly_files.slurm.sh'
+        code = embedded(worker, 'PY_SHARED_SCRATCH')
+        stream = io.StringIO()
+        with self.mock.patch.dict(os.environ, settings, clear=True), \
+             self.mock.patch.dict(sys.modules, {'netCDF4': nc, 'numpy': fake_numpy}), \
+             self.mock.patch.object(sys, 'argv', ['python', str(worker), kind]), \
+             self.mock.patch.object(subprocess, 'Popen', Process), \
+             self.mock.patch.object(shutil, 'which', return_value='/usr/bin/tool'), \
+             contextlib.redirect_stdout(stream):
+            exec(compile(code, str(worker), 'exec'), {'__name__': '__main__'})
+        return stream.getvalue()
+
+    def test_monthly_then_seasonal_reuses_all_staged_sources(self):
+        self.run_shared()
+        self.assertEqual(len(self.copies), 25)  # 13 inputs + 12 returned fields
+        self.copies.clear()
+        result = self.run_shared(CLIMATOLOGY_MODE='seasonal', OUT_DIR=str(self.root/'seasonal'))
+        self.assertEqual(result.count('[CACHE HIT]'), 13)
+        self.assertEqual(len(self.copies), 4)  # only the four results cross storage
+        self.assertTrue(all('-z' not in command for command in self.copies))
+        self.assertEqual(len(list((self.root/'seasonal').glob('*.nc'))), 4)
+        cache = next((self.root/'scratch').glob('clim_cache_*'))
+        self.assertFalse((cache/'.lock').exists())
+        self.assertFalse(list(cache.glob('work_*')))
+
+    def test_source_change_and_staged_mutation_force_retransfer(self):
+        self.run_shared()
+        source = self.inputs/'thetao_200001.nc'
+        source.write_text(source.read_text() + ' ')
+        cache = next((self.root/'scratch').glob('clim_cache_*'))
+        staged = cache/'inputs'/'thetao_200002.nc'
+        staged.write_text(staged.read_text() + ' ')
+        self.copies.clear()
+        result = self.run_shared()
+        self.assertEqual(result.count('[CACHE HIT]'), 11)
+        self.assertEqual(len(self.copies), 14)
+        self.assertTrue(all('--ignore-times' in command for command in self.copies[:2]))
+
+    def test_failure_retains_cache_and_accepted_outputs(self):
+        self.run_shared()
+        final = self.root/'monthly'/'fixture_clim_month_01_2000-2000.nc'
+        accepted = final.read_bytes()
+        self.fail_worker = True
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.run_shared()
+        self.assertEqual(final.read_bytes(), accepted)
+        self.fail_worker = False
+        self.copies.clear()
+        self.assertEqual(self.run_shared().count('[CACHE HIT]'), 13)
+        self.assertEqual(len(self.copies), 12)
+
+    def test_coverage_space_and_lock_rejection_before_copy(self):
+        boundary = self.inputs/'thetao_199912.nc'
+        data = boundary.read_bytes(); boundary.unlink()
+        with self.assertRaisesRegex(SystemExit, 'source coverage failed'):
+            self.run_shared()
+        self.assertFalse(self.copies)
+        boundary.write_bytes(data)
+        with self.assertRaisesRegex(SystemExit, 'Insufficient shared scratch'):
+            self.run_shared(CLIM_SCRATCH_HEADROOM_GB='9999999999')
+        self.assertFalse(self.copies)
+        cache = next((self.root/'scratch').glob('clim_cache_*'))
+        (cache/'.lock').mkdir()
+        with self.assertRaisesRegex(SystemExit, 'locked'):
+            self.run_shared()
+        self.assertTrue((cache/'.lock').is_dir())
+        self.assertFalse(self.copies)
+
+    def test_copy_failure_does_not_replace_accepted_outputs_or_reuse_bad_copy(self):
+        self.run_shared()
+        final = self.root/'monthly'/'fixture_clim_month_01_2000-2000.nc'
+        accepted = final.read_bytes()
+        source = self.inputs/'thetao_200001.nc'
+        source.write_text(source.read_text() + ' ')
+        self.fail_copy = True
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.run_shared()
+        self.assertEqual(final.read_bytes(), accepted)
+        cache = next((self.root/'scratch').glob('clim_cache_*'))
+        manifest = json.loads((cache/'sources.json').read_text())
+        self.assertNotIn(source.name, manifest)
+        self.assertFalse((cache/'.lock').exists())
+        self.fail_copy = False
+        self.copies.clear()
+        self.assertEqual(self.run_shared().count('[CACHE HIT]'), 12)
+        self.assertEqual(len(self.copies), 13)
+        self.fail_copy = True  # this time the failure is during copy-back
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.run_shared()
+        self.assertEqual(final.read_bytes(), accepted)
+        self.assertFalse(list((self.root/'monthly').glob('*.publish.*')))
+
+    def test_foreign_cache_is_not_modified(self):
+        self.run_shared()
+        cache = next((self.root/'scratch').glob('clim_cache_*'))
+        marker = cache/'owner.json'
+        marker.write_text('{}')
+        self.copies.clear()
+        with self.assertRaisesRegex(SystemExit, 'Unrecognized scratch cache'):
+            self.run_shared()
+        self.assertEqual(marker.read_text(), '{}')
+        self.assertFalse(self.copies)
+
+    def test_timeseries_uses_same_cache_across_modes(self):
+        dates = ['1999-12-01'] + [f'2000-{month:02d}-01' for month in range(1, 13)]
+        series = self.root/'series.nc'; self.write_source(series, dates)
+        config = dict(_kind='timeseries', IN_FILE=str(series), IN_DIR='',
+                      WINDOW_START='2000-01-01', WINDOW_END='2000-12-31')
+        self.run_shared(**config)
+        self.copies.clear()
+        result = self.run_shared(**dict(config, CLIMATOLOGY_MODE='seasonal', OUT_DIR=str(self.root/'seasonal')))
+        self.assertEqual(result.count('[CACHE HIT]'), 1)
+        self.assertEqual(len(self.copies), 4)
+
+    def test_spooled_timeseries_script_finds_shared_helper(self):
+        import shutil
+        bindir = self.root/'bin'; bindir.mkdir()
+        python = bindir/'python3'
+        python.write_text('#!/bin/bash\nprintf "shared-entry %s %s\\n" "$2" "$3"\ncat >/dev/null\n')
+        python.chmod(0o755)
+        spool = self.root/'slurm_script'
+        shutil.copyfile(ROOT/'scripts/core/climatology_window_from_timeseries.slurm.sh', spool)
+        result = subprocess.run(['bash', str(spool)], cwd=ROOT, capture_output=True, text=True,
+                                env=dict(os.environ, CLIM_SCRATCH_POLICY='shared',
+                                         PATH=str(bindir)+os.pathsep+os.environ['PATH']))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f'shared-entry {spool} timeseries', result.stdout)
+
+
 if __name__ == '__main__': unittest.main()

@@ -99,6 +99,19 @@ make_sbatch_extra_args() {
   fi
 }
 
+# Shared windows for one source group use the same retained input cache. Queue
+# them together, but let Slurm serialize that group's writers. Other variables
+# and models keep independent chains and can run in parallel.
+chain_shared_window() {
+  [[ "$CLIM_SCRATCH_POLICY" == shared ]] || return 0
+  local job_number="${1%%;*}"
+  if [[ ! "$job_number" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: Cannot chain unrecognized sbatch job ID: $1" >&2
+    return 1
+  fi
+  shared_dependency="afterok:${job_number}"
+}
+
 VARS_2D=(
   zos
   mlotst
@@ -208,6 +221,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
   file_glob="${v}_*_${model}_${scen}_${member}_*.nc"
   out_prefix="${DATASET_LABEL}_${model}_${scen}_${member}_${v}"
   mapfile -t sbatch_extra_args < <(make_sbatch_extra_args)
+  shared_dependency=""
 
   if [[ "$scen" == "historical" ]]; then
     if contains_filter_value "baseline" "${WINDOWS[@]}"; then
@@ -255,10 +269,12 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         sbatch --parsable \
         "${sbatch_extra_args[@]}" \
         --job-name="clim2030_${v}" \
+        ${shared_dependency:+"--dependency=$shared_dependency"} \
         --mem="$JOB_MEMORY" \
         --time="$WALLTIME" \
         "$CORE_SCRIPT")
       record_submission "${jid2030}" "${DATASET_LABEL}_${model}_${scen}_${member}" "$v" "2030-2040"
+      chain_shared_window "$jid2030"
       echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2030-2040 MEMORY=${JOB_MEMORY} as jobid=${jid2030}"
     fi
 
@@ -281,10 +297,12 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         sbatch --parsable \
         "${sbatch_extra_args[@]}" \
         --job-name="clim2050_${v}" \
+        ${shared_dependency:+"--dependency=$shared_dependency"} \
         --mem="$JOB_MEMORY" \
         --time="$WALLTIME" \
         "$CORE_SCRIPT")
       record_submission "${jid2050}" "${DATASET_LABEL}_${model}_${scen}_${member}" "$v" "2050-2060"
+      chain_shared_window "$jid2050"
       echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=2050-2060 MEMORY=${JOB_MEMORY} as jobid=${jid2050}"
     fi
 
@@ -307,6 +325,7 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
         sbatch --parsable \
         "${sbatch_extra_args[@]}" \
         --job-name="clim2090_${v}" \
+        ${shared_dependency:+"--dependency=$shared_dependency"} \
         --mem="$JOB_MEMORY" \
         --time="$WALLTIME" \
         "$CORE_SCRIPT")

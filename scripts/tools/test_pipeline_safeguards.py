@@ -1847,5 +1847,65 @@ class SharedScratchTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f'shared-entry {spool} timeseries', result.stdout)
 
+    def test_future_batch_chains_shared_windows_but_not_variables(self):
+        bindir = self.root/'bin'; bindir.mkdir()
+        mkdir = bindir/'mkdir'
+        mkdir.write_text('#!/bin/bash\nexit 0\n'); mkdir.chmod(0o755)
+        stub = bindir/'sbatch'
+        stub.write_text('''#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+log = Path(os.environ['SUBMIT_CALLS'])
+count = len(log.read_text().splitlines()) if log.exists() else 0
+with log.open('a') as handle:
+    handle.write(json.dumps({'var': os.environ['VAR'], 'args': sys.argv[1:]}) + '\\n')
+print(str(101 + count) + ';fixture')
+''')
+        stub.chmod(0o755)
+        startup = self.root/'bash_env'
+        # macOS Bash 3 lacks mapfile; this is only fixture portability support.
+        startup.write_text('''if ! type mapfile >/dev/null 2>&1; then
+mapfile() {
+    local destination="$2" item index=0
+    unset "$destination"
+    while IFS= read -r item; do
+        eval "$destination[$index]=\\"\\$item\\""
+        index=$((index + 1))
+    done
+    return 0
+}
+fi
+''')
+        base = self.root/'monthly_inputs'
+        for var in ('thetao', 'uo'):
+            folder = base/'A/r1i1p1f1/ssp585'/var/'on_glorys'
+            folder.mkdir(parents=True)
+            (folder/f'{var}_Omon_A_ssp585_r1i1p1f1_gn_201501-210012.nc').touch()
+        for policy, windows, dependencies in (
+                ('shared', '2030-2040 2050-2060 2090-2100', [None, '101', '102', None, '104', '105']),
+                ('shared', '2050-2060 2090-2100', [None, '101', None, '103']),
+                ('per_month', '2030-2040 2050-2060 2090-2100', [None] * 6)):
+            with self.subTest(policy=policy, windows=windows):
+                log = self.root/'calls.jsonl'
+                log.unlink(missing_ok=True)
+                result = subprocess.run(
+                    ['bash', str(ROOT/'scripts/runners/ipcc_esgf/run_climatology_window.sh')],
+                    cwd=ROOT, capture_output=True, text=True,
+                    env=dict(os.environ, PATH=str(bindir)+os.pathsep+os.environ['PATH'],
+                             BASH_ENV=str(startup), SUBMIT_CALLS=str(log),
+                             SUBMISSION_LOG=str(self.root/'receipts.tsv'),
+                             INROOT_BASE=str(base), MODELS='A', MEMBER='r1i1p1f1',
+                             SCENARIOS='ssp585', VARS='thetao uo', WINDOWS=windows,
+                             CLIMATOLOGY_MODE='monthly', CLIM_SCRATCH_POLICY=policy,
+                             CLIM_SCRATCH_ROOT=str(self.root/'scratch'), EXCLUDE_NODES='fixture-node'))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                calls = [json.loads(line) for line in log.read_text().splitlines()]
+                self.assertEqual(len(calls), len(dependencies))
+                for call, dependency in zip(calls, dependencies):
+                    actual = [arg for arg in call['args'] if arg.startswith('--dependency=')]
+                    self.assertEqual(actual, [] if dependency is None else [f'--dependency=afterok:{dependency}'])
+                half = len(calls) // 2
+                self.assertEqual([call['var'] for call in calls], ['thetao'] * half + ['uo'] * half)
+
 
 if __name__ == '__main__': unittest.main()

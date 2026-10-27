@@ -1104,6 +1104,15 @@ stale locks. A lock rejects competing users of the same cache, so run monthly
 and seasonal jobs sharing it sequentially. Confirm the writer stopped before
 removing a stale lock; never remove a live job's files.
 
+For future IPCC/ESGF production, the runner submits every requested window and
+variable in one invocation. With the shared policy, windows for each individual
+model/member/scenario/variable are linked by Slurm `afterok` dependencies.
+Different variables have independent chains and can run in parallel. Selecting
+only later windows starts a fresh chain at the first selected window. A failed
+predecessor leaves its dependent jobs pending rather than starting competing or
+failed-cache calculations; inspect and recover that chain before resubmitting.
+The default policy retains independent window submission without dependencies.
+
 After all products that need the cache have completed and passed validation,
 remove only its exact printed cache directory, after confirming no active job
 uses it. Retention is explicit: completing one family does not automatically

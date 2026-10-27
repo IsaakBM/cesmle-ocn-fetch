@@ -1194,8 +1194,31 @@ fi
                 result = self.run_script(
                     worker, VAR='thetao', IN_FILE=str(series), OUT_DIR=str(out),
                     OUT_PREFIX='fixture', WINDOW_START='2030-01-01', WINDOW_END='2032-12-31',
-                    CLIMATOLOGY_MODE='seasonal', CLIM_WORKERS='4')
+                    CLIMATOLOGY_MODE='seasonal', CLIM_WORKERS='1')
                 self.assertEqual(result.returncode, 0, result.stderr)
+                # Use the installed tools end-to-end as well as the mocked
+                # orchestration tests: monthly stages once, seasonal reuses it.
+                shared = dict(VAR='thetao', IN_FILE=str(series), IN_DIR='', OUT_PREFIX='fixture',
+                              WINDOW_START='2030-01-01', WINDOW_END='2032-12-31',
+                              TMP_DIR=str(folder/'shared_tmp'), CLIM_WORKERS='1',
+                              CLIM_SCRATCH_POLICY='shared', CLIM_REUSE_MONTHS='',
+                              CLIM_SCRATCH_ROOT=str(folder/'scratch'), CLIM_SCRATCH_HEADROOM_GB='0')
+                shared_monthly = folder/'shared_monthly'
+                monthly_result = self.run_script(worker, **shared, CLIMATOLOGY_MODE='monthly',
+                                                 OUT_DIR=str(shared_monthly))
+                self.assertEqual(monthly_result.returncode, 0, monthly_result.stderr)
+                self.assertEqual(monthly_result.stdout.count('[COPY IN]'), 1)
+                for month in range(1, 13):
+                    selected = data.where((data.time.dt.year >= 2030) & (data.time.dt.month == month), drop=True)
+                    with xr.open_dataset(shared_monthly/f'fixture_clim_month_{month:02d}_2030-2032.nc') as actual:
+                        np.testing.assert_allclose(actual.thetao.values[0], selected.mean('time').values,
+                                                   rtol=1e-12, equal_nan=True)
+                shared_seasonal = folder/'shared_seasonal'
+                seasonal_result = self.run_script(worker, **shared, CLIMATOLOGY_MODE='seasonal',
+                                                  OUT_DIR=str(shared_seasonal))
+                self.assertEqual(seasonal_result.returncode, 0, seasonal_result.stderr)
+                self.assertEqual(seasonal_result.stdout.count('[CACHE HIT]'), 1)
+                self.assertNotIn('[COPY IN]', seasonal_result.stdout)
                 for season, months in [('DJF', (12,1,2)), ('MAM', (3,4,5)),
                                        ('JJA', (6,7,8)), ('SON', (9,10,11))]:
                     references = []
@@ -1213,6 +1236,8 @@ fi
                     with xr.open_dataset(out/f'fixture_clim_season_{season}_2030-2032.nc') as actual:
                         np.testing.assert_allclose(actual.thetao.values[0], np.nanmean(references, axis=0),
                                                    rtol=1e-12, equal_nan=True)
+                        with xr.open_dataset(shared_seasonal/f'fixture_clim_season_{season}_2030-2032.nc') as cached:
+                            xr.testing.assert_equal(cached, actual)
                 self.assert_climatology_time(out/'fixture_clim_season_DJF_2030-2032.nc',
                                               1, '2029-12-01', '2032-02-29')
 

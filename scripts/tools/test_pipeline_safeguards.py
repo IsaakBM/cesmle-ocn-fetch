@@ -104,6 +104,95 @@ class SafeguardTests(unittest.TestCase):
         result = self.run_script(DELTA, VAR='thetao', BASELINE_FILE=str(base), FUTURE_FILE=str(future), OUT_DIR=str(out), OUT_PREFIX='fixture')
         self.assertNotEqual(result.returncode, 0); self.assertEqual(old.read_bytes(), b'accepted')
 
+    def monthly_delta_fixture(self, variable='thetao'):
+        import calendar
+        import datetime as dt
+        import netCDF4 as nc
+        for role, year in (('baseline', 2006), ('future', 2050)):
+            for month in range(1, 13):
+                path = self.root/f'{role}_{month:02d}.nc'
+                value = month if role == 'baseline' else 3 * month
+                data = self.field(float(value), f'{year}-{month:02d}-15').rename(variable)
+                data.values[0, 0, 0, 0] = np.nan
+                data.to_netcdf(path)
+                with nc.Dataset(path, 'r+') as ds:
+                    start = dt.datetime(year, month, 1)
+                    end = dt.datetime(year + 8, month, calendar.monthrange(year + 8, month)[1])
+                    midpoint = start + dt.timedelta(days=(end - start).days // 2)
+                    units = f'days since {year}-01-01 00:00:00'
+                    ds.createDimension('bnds', 2)
+                    bounds = ds.createVariable('time_bnds', 'f8', ('time', 'bnds'))
+                    for coord in (ds.variables['time'], bounds):
+                        coord.setncatts(dict(units=units, calendar='proleptic_gregorian'))
+                    ds.variables['time'].setncattr('climatology', 'time_bnds')
+                    ds.variables['time'][:] = nc.date2num([midpoint], units, 'proleptic_gregorian')
+                    bounds[:] = nc.date2num([[start, end]], units, 'proleptic_gregorian')
+                    ds.setncatts(dict(climatology_product_type='monthly', climatology_month=month,
+                                     climatology_selected_timesteps='9',
+                                     climatology_window_start=start.date().isoformat(),
+                                     climatology_window_end=end.date().isoformat()))
+        grid = self.root/'grid.txt'
+        grid.write_text('gridtype = lonlat\nxsize = 2\nysize = 2\nxfirst = 0\nxinc = 2\nyfirst = -1\nyinc = 2\n')
+        return dict(VAR=variable, BASELINE_FILE=str(self.root/'baseline_{month}.nc'),
+                    FUTURE_FILE=str(self.root/'future_{month}.nc'),
+                    BASELINE_TAG='2006-2014', FUTURE_TAG='2050-2058', OUT_PREFIX='fixture',
+                    CLIMATOLOGY_MODE='monthly', DELTA_SCRATCH_ROOT=str(self.root/'scratch'),
+                    OUT_DIR=str(self.root/'native'), REGRID_OUT_DIR=str(self.root/'regrid'),
+                    REGRID_DELTA='yes', GRIDFILE=str(grid), REGRID_SUFFIX='grid_fixture')
+
+    def test_monthly_deltas_scratch_arithmetic_remap_and_time(self):
+        for variable, mode in (('thetao', 'additive'), ('chl', 'log_ratio')):
+            with self.subTest(mode=mode):
+                settings = self.monthly_delta_fixture(variable)
+                result = self.run_script(DELTA, **dict(settings, DELTA_MODE=mode))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(len(list((self.root/'native').glob('*.nc'))), 12)
+                self.assertEqual(len(list((self.root/'regrid').glob('*.nc'))), 12)
+                for month in range(1, 13):
+                    stem = f'fixture_month_{month:02d}_delta_2050-2058_minus_2006-2014'
+                    for directory, suffix in (('native', ''), ('regrid', '_grid_fixture')):
+                        path = self.root/directory/f'{stem}{suffix}.nc'
+                        with xr.open_dataset(path) as ds:
+                            expected = month * 2 if mode == 'additive' else np.log(3.)
+                            np.testing.assert_allclose(ds[variable].values[np.isfinite(ds[variable].values)], expected,
+                                                       rtol=1e-6, atol=1e-6)
+                            self.assertTrue(np.isnan(ds[variable][0, 0, 0, 0]))
+                            self.assertEqual(ds.attrs['delta_mode'], mode)
+                            self.assertEqual(ds.attrs['climatology_month'], month)
+                            self.assertEqual(ds.attrs['delta_baseline_file'], str(self.root/f'baseline_{month:02d}.nc'))
+                            if mode == 'log_ratio':
+                                self.assertIn('chl_log_ratio_qc_valid', ds)
+                        import calendar
+                        self.assert_climatology_time(path, month, f'2050-{month:02d}-01',
+                                                     f'2058-{month:02d}-{calendar.monthrange(2058, month)[1]:02d}')
+                self.assertFalse(list((self.root/'scratch').iterdir()))
+                self.assertFalse(list((self.root/'native').glob('.*.lock')))
+
+    def test_monthly_delta_rejects_wrong_month_before_copy_or_publication(self):
+        import netCDF4 as nc
+        settings = self.monthly_delta_fixture()
+        with nc.Dataset(self.root/'future_12.nc', 'r+') as ds:
+            ds.climatology_month = 11
+        result = self.run_script(DELTA, **settings)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Monthly product/month/count mismatch', result.stderr)
+        self.assertNotIn('[COPY IN]', result.stdout)
+        self.assertFalse(list((self.root/'native').glob('*.nc')))
+
+    def test_monthly_delta_rejects_units_and_preserves_previous_output(self):
+        import netCDF4 as nc
+        settings = self.monthly_delta_fixture()
+        out = self.root/'native'; out.mkdir()
+        accepted = out/'fixture_month_01_delta_2050-2058_minus_2006-2014.nc'
+        accepted.write_bytes(b'accepted')
+        with nc.Dataset(self.root/'future_01.nc', 'r+') as ds:
+            ds.variables['thetao'].units = 'K'
+        result = self.run_script(DELTA, **settings)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('scientific units differ', result.stderr)
+        self.assertEqual(accepted.read_bytes(), b'accepted')
+        self.assertFalse(list((self.root/'scratch').iterdir()))
+
     def test_log_ratio_factor_bounds_mask_extremes(self):
         base = self.root/'base.nc'; future_path = self.root/'future.nc'; out = self.root/'out'
         baseline = self.field(1.).rename('chl')
@@ -1906,6 +1995,258 @@ fi
                     self.assertEqual(actual, [] if dependency is None else [f'--dependency=afterok:{dependency}'])
                 half = len(calls) // 2
                 self.assertEqual([call['var'] for call in calls], ['thetao'] * half + ['uo'] * half)
+
+
+class MonthlyDeltaBatchTests(unittest.TestCase):
+    """Exercise copying, publication and failures without scientific packages."""
+
+    def setUp(self):
+        import calendar
+        import datetime as dt
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.env = dict(VAR='thetao', CLIMATOLOGY_MODE='monthly',
+                        DELTA_SCRATCH_ROOT=str(self.root/'scratch'),
+                        BASELINE_FILE=str(self.root/'baseline_{month}.nc'),
+                        FUTURE_FILE=str(self.root/'future_{month}.nc'),
+                        BASELINE_TAG='2006-2014', FUTURE_TAG='2050-2058',
+                        OUT_PREFIX='fixture', OUT_DIR=str(self.root/'out'),
+                        REGRID_OUT_DIR=str(self.root/'regrid'), REGRID_DELTA='no',
+                        TMP_DIR=str(self.root/'tmp'), GRIDFILE='')
+        for role, year in (('baseline', 2006), ('future', 2050)):
+            for month in range(1, 13):
+                start = dt.datetime(year, month, 1)
+                end = dt.datetime(year + 8, month, calendar.monthrange(year + 8, month)[1])
+                midpoint = start + dt.timedelta(days=(end - start).days // 2)
+                data = dict(climatology_product_type='monthly', climatology_month=month,
+                            climatology_selected_timesteps='9',
+                            climatology_window_start=start.date().isoformat(),
+                            climatology_window_end=end.date().isoformat(),
+                            bounds=[[start.toordinal(), end.toordinal()]],
+                            time=[midpoint.toordinal()])
+                (self.root/f'{role}_{month:02d}.nc').write_text(json.dumps(data))
+        self.calls = []
+        self.fail_copy = False
+        self.fail_worker = False
+
+    def run_batch(self):
+        import shutil
+        import types
+        from unittest import mock
+        owner = self
+
+        class Variable:
+            def __init__(self, data=None):
+                self.data = data
+                self.dimensions = ('time', 'lev', 'lat', 'lon')
+                self.shape = (1, 2, 2, 2)
+                self.size = 8
+                self.units = 'days'
+                self.calendar = 'proleptic_gregorian'
+                self.climatology = 'time_bnds'
+            def __getitem__(self, key):
+                return self.data
+
+        class Dataset:
+            def __init__(self, path):
+                self.__dict__.update(json.loads(Path(path).read_text()))
+                self.variables = dict(thetao=Variable(), time=Variable(self.time),
+                                      time_bnds=Variable(self.bounds))
+                self.variables['time'].shape = (1,)
+                self.variables['time_bnds'].shape = (1, 2)
+                self.dimensions = dict(time=[0], lev=[0, 1], lat=[0, 1], lon=[0, 1])
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+
+        def date2num(values, *args):
+            return [[v.toordinal() for v in row] if isinstance(row, list) else row.toordinal()
+                    for row in values]
+
+        class Process:
+            def __init__(self, command, **kwargs):
+                self.returncode = 0
+                owner.calls.append(command)
+                if command[0] == 'rsync':
+                    if owner.fail_copy and '.delta_publish_' in command[-1]:
+                        Path(command[-1]).write_bytes(b'partial')
+                        self.returncode = 23
+                    else:
+                        shutil.copyfile(command[-2], command[-1])
+                else:
+                    if owner.fail_worker:
+                        self.returncode = 1
+                        return
+                    config = kwargs['env']
+                    folder = Path(config['OUT_DIR']); folder.mkdir()
+                    product = folder/f'{config["OUT_PREFIX"]}_delta_{config["FUTURE_TAG"]}_minus_{config["BASELINE_TAG"]}.nc'
+                    shutil.copyfile(config['FUTURE_FILE'], product)
+            def wait(self):
+                return self.returncode
+
+        fake = types.SimpleNamespace(Dataset=Dataset, date2num=date2num)
+        code = embedded(DELTA, 'PY_DELTA_BATCH')
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+                mock.patch.dict(sys.modules, {'netCDF4': fake}), \
+                mock.patch.object(sys, 'argv', ['python3', str(DELTA)]), \
+                mock.patch('subprocess.Popen', Process), \
+                mock.patch('shutil.disk_usage', return_value=types.SimpleNamespace(free=10**13)), \
+                mock.patch('signal.signal'):
+            exec(compile(code, '<delta batch>', 'exec'), {})
+
+    def test_twelve_pairs_publish_and_clean_scratch(self):
+        self.run_batch()
+        self.assertEqual(len(list((self.root/'out').glob('*.nc'))), 12)
+        self.assertEqual(sum(command[0] == 'bash' for command in self.calls), 12)
+        self.assertFalse(list((self.root/'scratch').iterdir()))
+        self.assertFalse(list((self.root/'out').glob('.*.lock')))
+
+    def test_copy_back_failure_preserves_old_output_and_cleans(self):
+        out = self.root/'out'; out.mkdir()
+        accepted = out/'fixture_month_01_delta_2050-2058_minus_2006-2014.nc'
+        accepted.write_bytes(b'accepted')
+        self.fail_copy = True
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.run_batch()
+        self.assertEqual(accepted.read_bytes(), b'accepted')
+        self.assertFalse(list((self.root/'scratch').iterdir()))
+        self.assertFalse(list(out.glob('.*.lock')))
+        self.assertFalse(list(out.glob('.delta_publish_*')))
+
+    def test_worker_failure_does_not_publish(self):
+        self.fail_worker = True
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.run_batch()
+        self.assertFalse(list((self.root/'out').glob('*.nc')))
+        self.assertFalse(list((self.root/'scratch').iterdir()))
+
+    def test_wrong_month_and_existing_lock_rejected(self):
+        path = self.root/'future_12.nc'
+        data = json.loads(path.read_text()); data['climatology_month'] = 11
+        path.write_text(json.dumps(data))
+        with self.assertRaisesRegex(SystemExit, 'Monthly product/month/count mismatch'):
+            self.run_batch()
+        self.assertFalse(self.calls)
+        data['climatology_month'] = 12; path.write_text(json.dumps(data))
+        lock = self.root/'out/.fixture_delta_2050-2058_minus_2006-2014.lock'
+        lock.mkdir(parents=True)
+        with self.assertRaisesRegex(SystemExit, 'outputs locked'):
+            self.run_batch()
+        self.assertTrue(lock.is_dir())
+        self.assertFalse(self.calls)
+
+
+class MonthlyDeltaRunnerTests(unittest.TestCase):
+    """Submission fixtures use empty input files and never contact Slurm."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        bindir = self.root/'bin'; bindir.mkdir()
+        self.log = self.root/'calls.jsonl'
+        mkdir = bindir/'mkdir'
+        mkdir.write_text('#!/bin/bash\nexit 0\n'); mkdir.chmod(0o755)
+        sbatch = bindir/'sbatch'
+        sbatch.write_text('''#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+with Path(os.environ['SUBMIT_CALLS']).open('a') as handle:
+    handle.write(json.dumps({'env': dict(os.environ), 'args': sys.argv[1:]}) + '\\n')
+print('12345')
+''')
+        sbatch.chmod(0o755)
+        startup = self.root/'bash_env'
+        startup.write_text('''if ! type mapfile >/dev/null 2>&1; then
+mapfile() {
+    local destination="$2" item index=0
+    unset "$destination"
+    while IFS= read -r item; do
+        eval "$destination[$index]=\\"\\$item\\""
+        index=$((index + 1))
+    done
+    return 0
+}
+fi
+''')
+        grid = self.root/'grid.txt'; grid.write_text('gridtype = lonlat\nxsize = 2\nysize = 2\n')
+        self.env = dict(os.environ, PATH=str(bindir)+os.pathsep+os.environ['PATH'],
+                        BASH_ENV=str(startup), SUBMIT_CALLS=str(self.log),
+                        ROOT=str(self.root/'inputs'), MODELS='A B', MEMBER='auto',
+                        SCENARIOS='ssp585', VARS='thetao chl', WINDOWS='',
+                        CLIMATOLOGY_MODE='monthly', DELTA_SCRATCH_ROOT=str(self.root/'scratch'),
+                        GLORYS_GRIDFILE=str(grid), HINDCAST_GRIDFILE=str(grid))
+        self.files = []
+        for model, member in (('A', 'r1i1p1f1'), ('B', 'r1i1p1f2')):
+            for variable in ('thetao', 'chl'):
+                for scenario, tags in (('historical', ('2006-2014',)),
+                                       ('ssp585', ('2030-2040', '2050-2060', '2090-2100'))):
+                    for tag in tags:
+                        folder = Path(self.env['ROOT'])/model/member/scenario/variable/'clim_monthly'
+                        folder.mkdir(parents=True, exist_ok=True)
+                        for month in range(1, 13):
+                            path = folder/f'ipcc_esgf_{model}_{scenario}_{member}_{variable}_clim_month_{month:02d}_{tag}.nc'
+                            path.touch(); self.files.append(path)
+
+    def run_runner(self, **settings):
+        return subprocess.run(['bash', str(ROOT/'scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh')],
+                              cwd=ROOT, env=dict(self.env, **settings), capture_output=True, text=True)
+
+    def test_two_models_monthly_batch_and_formula_defaults(self):
+        result = self.run_runner()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [json.loads(row)['env'] for row in self.log.read_text().splitlines()]
+        self.assertEqual(len(calls), 12)  # two models, two variables, three windows
+        for call in calls:
+            self.assertEqual(call['CLIMATOLOGY_MODE'], 'monthly')
+            self.assertIn('{month}', call['BASELINE_FILE'])
+            self.assertIn('{month}', call['FUTURE_FILE'])
+            self.assertIn('/historical/', call['BASELINE_FILE'])
+            self.assertIn('/delta_monthly', call['OUT_DIR'])
+            self.assertEqual(call['DELTA_SCRATCH_ROOT'], self.env['DELTA_SCRATCH_ROOT'])
+            if call['VAR'] == 'chl':
+                self.assertEqual(call['DELTA_MODE'], 'log_ratio')
+                self.assertEqual(call['LOG_RATIO_MIN_FACTOR'], '0.01')
+                self.assertEqual(call['LOG_RATIO_MAX_FACTOR'], '100')
+                self.assertTrue(call['REGRID_OUT_DIR'].endswith('delta_monthly_0p25'))
+            else:
+                self.assertEqual(call['DELTA_MODE'], 'additive')
+                self.assertTrue(call['REGRID_OUT_DIR'].endswith('delta_monthly_0p05'))
+
+    def test_missing_last_month_aborts_entire_batch_before_submission(self):
+        self.files[-1].unlink()
+        result = self.run_runner()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Missing monthly delta input', result.stderr)
+        self.assertFalse(self.log.exists())
+
+    def test_missing_requested_group_aborts_before_submission(self):
+        result = self.run_runner(MODELS='A Absent')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Missing future monthly group', result.stderr)
+        self.assertFalse(self.log.exists())
+
+    def test_filtered_windows_and_member(self):
+        result = self.run_runner(MODELS='B', MEMBER='r1i1p1f2', WINDOWS='2050-2060 2090-2100')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [json.loads(row)['env'] for row in self.log.read_text().splitlines()]
+        self.assertEqual(len(calls), 4)
+        self.assertTrue(all('/B/r1i1p1f2/' in row['BASELINE_FILE'] for row in calls))
+
+    def test_whole_period_default_uses_legacy_names(self):
+        for experiment, tag in (('historical', '2006-2014'), ('ssp585', '2050-2060')):
+            folder = Path(self.env['ROOT'])/'A/r1i1p1f1'/experiment/'thetao/clim_windows'
+            folder.mkdir(parents=True)
+            (folder/f'ipcc_esgf_A_{experiment}_r1i1p1f1_thetao_clim_{tag}.nc').touch()
+        result = self.run_runner(CLIMATOLOGY_MODE='whole', DELTA_SCRATCH_ROOT='',
+                                 MODELS='A', VARS='thetao', WINDOWS='2050-2060')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [json.loads(row)['env'] for row in self.log.read_text().splitlines()]
+        self.assertEqual(len(calls), 1)
+        self.assertIn('/delta_windows', calls[0]['OUT_DIR'])
+        self.assertNotIn('{month}', calls[0]['BASELINE_FILE'])
 
 
 if __name__ == '__main__': unittest.main()

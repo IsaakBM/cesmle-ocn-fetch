@@ -1568,6 +1568,63 @@ Operational sequence for the current IPCC branch:
    - now targets exact expected climatology filenames instead of picking the
      first wildcard match in the directory
 
+   For month-matched changes, set `CLIMATOLOGY_MODE=monthly` and
+   `DELTA_SCRATCH_ROOT=/home/hpc-scratch/ibrito/cesmle-ocn-fetch`.
+   This mode reads historical and future `clim_monthly/` products, checks all
+   requested monthly filenames before submitting anything, and submits one job
+   per model/member/scenario/variable/future window. Each job checks all twelve
+   input pairs' month, contributing-year count, dates, and canonical time encoding,
+   then processes January through December sequentially. Each pair must have
+   identical spatial coordinates and scientific units. Historical and future
+   time coordinates intentionally differ; arithmetic pairs the same named month
+   positionally rather than aligning their dates.
+
+   Monthly native changes go to `delta_monthly/`; remapped changes go to
+   `delta_monthly_0p05/` for GLORYS variables and `delta_monthly_0p25/` for
+   hindcast variables. Filenames contain `_month_MM_delta_` followed by the
+   future and historical windows. The existing additive and chlorophyll
+   log-ratio/QC policies are unchanged. Whole-period mode remains the default
+   and retains the existing `delta_windows*` paths.
+
+   Monthly delta jobs copy only the two small climatology inputs for the current
+   month into a private scratch workspace, calculate and remap there, and copy
+   completed products to temporary SB5 publication directories before replacing
+   each final file. A per-variable/window output lock rejects concurrent writers.
+   Existing accepted files survive calculation or copy-back failures; publication
+   is per file, not a transaction across all months or resolutions. Private delta
+   workspaces are removed on normal completion, errors, and handled termination;
+   a node failure may require checking and removing a stale lock. Retained
+   climatology input caches are not modified. Delta provenance identifies the
+   canonical source files, and both native and remapped products preserve the
+   future month's exact climatology time/bounds encoding.
+
+   Example batch (two models, ten variables, three future windows = 60 jobs;
+   12 monthly pairs per job):
+
+   ```bash
+   CLIMATOLOGY_MODE=monthly \
+   DELTA_SCRATCH_ROOT=/home/hpc-scratch/ibrito/cesmle-ocn-fetch \
+   MODELS="CNRM-ESM2-1 IPSL-CM6A-LR" SCENARIOS=ssp585 \
+   VARS="thetao so ph o2 chl uo vo zos mlotst siconc" \
+   WINDOWS="2030-2040 2050-2060 2090-2100" \
+   EXCLUDE_NODES="hpc-09.grit.ucsb.edu,hpc-13.grit.ucsb.edu,hpc-17.grit.ucsb.edu" \
+   bash scripts/runners/ipcc_esgf/run_delta_from_climatologies.sh
+   ```
+
+   Before production, run the existing safeguards with the installed cluster
+   environment (no downloads or Slurm submissions):
+
+   ```bash
+   python3 scripts/tools/test_pipeline_safeguards.py \
+     MonthlyDeltaRunnerTests MonthlyDeltaBatchTests \
+     SafeguardTests.test_real_delta_calculations \
+     SafeguardTests.test_invalid_delta_preserves_old_output \
+     SafeguardTests.test_log_ratio_factor_bounds_mask_extremes \
+     SafeguardTests.test_monthly_deltas_scratch_arithmetic_remap_and_time \
+     SafeguardTests.test_monthly_delta_rejects_wrong_month_before_copy_or_publication \
+     SafeguardTests.test_monthly_delta_rejects_units_and_preserves_previous_output
+   ```
+
 Relevant runners:
 
 - [run_temporal_aggregate_regrid.sh](scripts/runners/ipcc_esgf/run_temporal_aggregate_regrid.sh)

@@ -70,6 +70,17 @@ LOG_RATIO_MIN_FACTOR_SPEC="${LOG_RATIO_MIN_FACTOR_SPEC:-chl=0.01}"
 LOG_RATIO_MAX_FACTOR="${LOG_RATIO_MAX_FACTOR:-inf}"
 LOG_RATIO_MAX_FACTOR_SPEC="${LOG_RATIO_MAX_FACTOR_SPEC:-chl=100}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-}"
+CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
+DELTA_SCRATCH_ROOT="${DELTA_SCRATCH_ROOT:-}"
+case "$CLIMATOLOGY_MODE" in
+  whole) CLIM_STAGE=clim_windows; DELTA_STAGE=delta_windows ;;
+  monthly) CLIM_STAGE=clim_monthly; DELTA_STAGE=delta_monthly ;;
+  *) echo "ERROR: Delta CLIMATOLOGY_MODE must be whole or monthly" >&2; exit 1 ;;
+esac
+if [[ "$CLIMATOLOGY_MODE" == monthly && -z "$DELTA_SCRATCH_ROOT" ]]; then
+  echo "ERROR: Monthly deltas require DELTA_SCRATCH_ROOT" >&2
+  exit 1
+fi
 
 contains_filter_value() {
   local value="$1"
@@ -154,7 +165,7 @@ target_family_for_var() {
   local var="$1"
   local candidate
 
-  for candidate in "${NO_REGRID_DELTA_VARS[@]}"; do
+  for candidate in ${NO_REGRID_DELTA_VARS[@]+"${NO_REGRID_DELTA_VARS[@]}"}; do
     if [[ "$var" == "$candidate" ]]; then
       printf '%s\n' "none"
       return 0
@@ -179,11 +190,50 @@ target_family_for_var() {
 }
 
 echo "Submitting IPCC/ESGF delta jobs with generic worker:"
-mapfile -t FUTURE_GROUPS < <(ipcc_esgf_discover_monthly_groups_any_layout "${ROOT}" "clim_windows" | awk -F '\t' '$3 ~ /^ssp[0-9][0-9][0-9]$/' | sort -u)
+mapfile -t FUTURE_GROUPS < <(ipcc_esgf_discover_monthly_groups_any_layout "${ROOT}" "$CLIM_STAGE" "${MODELS[*]}" "${SCENARIOS[*]}" "${VARS[*]}" "$MEMBER" | awk -F '\t' '$3 ~ /^ssp[0-9][0-9][0-9]$/' | sort -u)
 
 if (( ${#FUTURE_GROUPS[@]} == 0 )); then
   echo "ERROR: No future scenario climatology groups discovered under: ${ROOT}"
   exit 1
+fi
+
+if [[ "$CLIMATOLOGY_MODE" == monthly ]]; then
+  # Check the complete requested batch before submitting any jobs. A missing
+  # historical month must not silently become a partial production submission.
+  DELTA_GROUPS="$(printf '%s\n' "${FUTURE_GROUPS[@]}")" \
+  DELTA_ROOT="$ROOT" DELTA_MODELS="${MODELS[*]}" DELTA_VARS="${VARS[*]}" \
+  DELTA_WINDOWS="${WINDOWS[*]:-${FUTURE_TAGS[*]}}" \
+  DELTA_HISTORICAL="$HISTORICAL_SCENARIO" DELTA_BASELINE="$BASELINE_TAG" \
+  python3 - <<'PY_DELTA_PREFLIGHT'
+import os
+from pathlib import Path
+
+root = Path(os.environ['DELTA_ROOT'])
+groups = [row.split('\t') for row in os.environ['DELTA_GROUPS'].splitlines()]
+models = os.environ['DELTA_MODELS'].split()
+variables = os.environ['DELTA_VARS'].split()
+windows = os.environ['DELTA_WINDOWS'].split()
+if not set(windows) <= {'2030-2040', '2050-2060', '2090-2100'}:
+    raise SystemExit('ERROR: Unsupported monthly delta WINDOWS')
+for model in models:
+    for variable in variables:
+        if not any(row[0] == model and row[3] == variable for row in groups):
+            raise SystemExit(f'ERROR: Missing future monthly group: {model} {variable}')
+for model, member, scenario, variable in groups:
+    for experiment, tags in ((os.environ['DELTA_HISTORICAL'], [os.environ['DELTA_BASELINE']]),
+                             (scenario, windows)):
+        candidates = [root/model/member/experiment/variable/'clim_monthly',
+                      root/model/experiment/variable/'clim_monthly']
+        directory = next((p for p in candidates if p.is_dir()), None)
+        if directory is None:
+            raise SystemExit(f'ERROR: Missing monthly directory: {candidates[0]}')
+        for tag in tags:
+            for month in range(1, 13):
+                path = directory/f'ipcc_esgf_{model}_{experiment}_{member}_{variable}_clim_month_{month:02d}_{tag}.nc'
+                if not path.is_file():
+                    raise SystemExit(f'ERROR: Missing monthly delta input: {path}')
+print('MONTHLY DELTA INPUT COVERAGE: PASS', flush=True)
+PY_DELTA_PREFLIGHT
 fi
 
 for group in "${FUTURE_GROUPS[@]}"; do
@@ -193,11 +243,11 @@ for group in "${FUTURE_GROUPS[@]}"; do
     continue
   fi
 
-  if ! contains_filter_value "$model" "${MODELS[@]}"; then
+  if ! contains_filter_value "$model" ${MODELS[@]+"${MODELS[@]}"}; then
     continue
   fi
 
-  if ! contains_filter_value "$scen" "${SCENARIOS[@]}"; then
+  if ! contains_filter_value "$scen" ${SCENARIOS[@]+"${SCENARIOS[@]}"}; then
     continue
   fi
 
@@ -205,18 +255,22 @@ for group in "${FUTURE_GROUPS[@]}"; do
     continue
   fi
 
-  if ! HIST_DIR="$(ipcc_esgf_monthly_stage_dir_for_group "$ROOT" "$model" "$member" "$HISTORICAL_SCENARIO" "$v" "clim_windows")"; then
+  if ! HIST_DIR="$(ipcc_esgf_monthly_stage_dir_for_group "$ROOT" "$model" "$member" "$HISTORICAL_SCENARIO" "$v" "$CLIM_STAGE")"; then
+    if [[ "$CLIMATOLOGY_MODE" == monthly ]]; then
+      echo "ERROR: Missing historical monthly climatologies: $model $member $v" >&2
+      exit 1
+    fi
     echo "WARN: Historical climatology directory not found, skipping MODEL=${model} MEMBER=${member} VAR=${v}"
     continue
   fi
 
-  if ! SSP_DIR="$(ipcc_esgf_monthly_stage_dir_for_group "$ROOT" "$model" "$member" "$scen" "$v" "clim_windows")"; then
+  if ! SSP_DIR="$(ipcc_esgf_monthly_stage_dir_for_group "$ROOT" "$model" "$member" "$scen" "$v" "$CLIM_STAGE")"; then
     echo "WARN: SSP climatology directory not found, skipping MODEL=${model} MEMBER=${member} SCENARIO=${scen} VAR=${v}"
     continue
   fi
 
   VAR_DIR="$(ipcc_esgf_monthly_var_dir_for_group "$ROOT" "$model" "$member" "$scen" "$v")"
-  OUT_DIR="${VAR_DIR}/delta_windows"
+  OUT_DIR="${VAR_DIR}/${DELTA_STAGE}"
   TMP_DIR="${VAR_DIR}/tmp_delta"
   target_family="$(target_family_for_var "$v")"
   regrid_delta="no"
@@ -228,14 +282,14 @@ for group in "${FUTURE_GROUPS[@]}"; do
   case "$target_family" in
     glorys)
       regrid_delta="yes"
-      regrid_out_dir="${VAR_DIR}/delta_windows_0p05"
+      regrid_out_dir="${VAR_DIR}/${DELTA_STAGE}_0p05"
       gridfile="$GLORYS_GRIDFILE"
       method="remapbil"
       regrid_suffix="grid_0p05_global"
       ;;
     hindcast)
       regrid_delta="yes"
-      regrid_out_dir="${VAR_DIR}/delta_windows_0p25"
+      regrid_out_dir="${VAR_DIR}/${DELTA_STAGE}_0p25"
       gridfile="$HINDCAST_GRIDFILE"
       method="remapdis"
       regrid_suffix="grid_0p25_global"
@@ -271,6 +325,9 @@ for group in "${FUTURE_GROUPS[@]}"; do
 
   member="$hist_member"
   BASELINE_FILE="${HIST_DIR}/${DATASET_LABEL}_${model}_${HISTORICAL_SCENARIO}_${member}_${v}_clim_${BASELINE_TAG}.nc"
+  if [[ "$CLIMATOLOGY_MODE" == monthly ]]; then
+    BASELINE_FILE="${HIST_DIR}/${DATASET_LABEL}_${model}_${HISTORICAL_SCENARIO}_${member}_${v}_clim_month_{month}_${BASELINE_TAG}.nc"
+  fi
   DELTA_PREFIX="${DATASET_LABEL}_${model}_${scen}_${member}_${v}"
   delta_mode="$(delta_mode_for_var "$v")"
   log_ratio_floor="$(spec_value_for_var "$v" "$LOG_RATIO_FLOOR" "$LOG_RATIO_FLOOR_SPEC")"
@@ -279,18 +336,21 @@ for group in "${FUTURE_GROUPS[@]}"; do
   log_ratio_max_factor="$(spec_value_for_var "$v" "$LOG_RATIO_MAX_FACTOR" "$LOG_RATIO_MAX_FACTOR_SPEC")"
   mapfile -t sbatch_extra_args < <(make_sbatch_extra_args)
 
-  if [[ ! -f "$BASELINE_FILE" ]]; then
+  if [[ "$CLIMATOLOGY_MODE" == whole && ! -f "$BASELINE_FILE" ]]; then
     echo "WARN: Missing baseline climatology for VAR=${v}: ${BASELINE_FILE}"
     continue
   fi
 
   for future_tag in "${FUTURE_TAGS[@]}"; do
-    if ! contains_filter_value "$future_tag" "${WINDOWS[@]}"; then
+    if ! contains_filter_value "$future_tag" ${WINDOWS[@]+"${WINDOWS[@]}"}; then
       continue
     fi
 
     future_file="${SSP_DIR}/${DATASET_LABEL}_${model}_${scen}_${member}_${v}_clim_${future_tag}.nc"
-    if [[ -f "$future_file" ]]; then
+    if [[ "$CLIMATOLOGY_MODE" == monthly ]]; then
+      future_file="${SSP_DIR}/${DATASET_LABEL}_${model}_${scen}_${member}_${v}_clim_month_{month}_${future_tag}.nc"
+    fi
+    if [[ "$CLIMATOLOGY_MODE" == monthly || -f "$future_file" ]]; then
       jid=$(DATASET_LABEL="${DATASET_LABEL}_${model}_${scen}_${member}" \
         VAR="$v" \
         BASELINE_FILE="$BASELINE_FILE" \
@@ -310,8 +370,10 @@ for group in "${FUTURE_GROUPS[@]}"; do
         METHOD="$method" \
         REGRID_OUT_DIR="$regrid_out_dir" \
         REGRID_SUFFIX="$regrid_suffix" \
+        CLIMATOLOGY_MODE="$CLIMATOLOGY_MODE" \
+        DELTA_SCRATCH_ROOT="$DELTA_SCRATCH_ROOT" \
         sbatch --parsable \
-        "${sbatch_extra_args[@]}" \
+        ${sbatch_extra_args[@]+"${sbatch_extra_args[@]}"} \
         --job-name="delta_${future_tag}_${v}" \
         "$CORE_SCRIPT")
       echo "  submitted MODEL=${model} SCENARIO=${scen} MEMBER=${member} VAR=${v} WINDOW=${future_tag} TARGET=${target_family} DELTA_MODE=${delta_mode} LOG_RATIO_FLOOR=${log_ratio_floor} LOG_RATIO_POLICY=${log_ratio_invalid_policy} LOG_RATIO_FACTOR_BOUNDS=${log_ratio_min_factor}:${log_ratio_max_factor} REGRID_DELTA=${regrid_delta} as jobid=${jid}"

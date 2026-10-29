@@ -62,3 +62,6 @@ data/manifests/ipcc_esgf_nci_cmip6_files.csv
 logs/
 *.out
 *.err
+
+# Local SB5 infographic deliverables
+/output/sb5_climate_infographics/

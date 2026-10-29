@@ -2033,6 +2033,10 @@ class MonthlyDeltaBatchTests(unittest.TestCase):
     def run_batch(self):
         import shutil
         import types
+        # NumPy lazily imports testing helpers; on Linux that import can launch
+        # a CPU-feature probe. Finish it before replacing subprocess.Popen or
+        # snapshotting sys.modules, so the probe never uses our worker mock.
+        import numpy.testing
         from unittest import mock
         owner = self
 

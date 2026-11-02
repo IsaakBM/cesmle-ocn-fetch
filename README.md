@@ -742,6 +742,20 @@ packaging/export/organization steps than as reusable scientific operators.
   - parallelizes at the file level by default
 
 - [remap_hindcast_baseline_to_0p05_glorys_coast.sh](scripts/tools/remap_hindcast_baseline_to_0p05_glorys_coast.sh)
+  - supports explicit `CLIMATOLOGY_MODE=monthly` to prepare twelve
+    `2006-2014` BGC baselines per variable before monthly downscaling
+  - monthly mode requires `BASELINE_SCRATCH_ROOT`; the existing runner submits
+    one job per variable, processes one month at a time, and checks all requested
+    input/matching GLORYS `thetao` monthly mask filenames before submission
+  - uses the existing remapping and coastal-fill policies, restores/verifies the
+    exact source climatology time/bounds after remapping and filling, and writes
+    `monthly_0p05_glorys_coast/<var>/clim_monthly/` products with the existing
+    `_grid_0p05_global.nc` suffix
+  - computes in private scratch workspaces and publishes completed files through
+    temporary SB5 files; output locks prevent competing writers, failed copies
+    preserve accepted outputs, and handled failures clean private workspaces
+  - `OVERWRITE=no` retains existing outputs; retained outputs still require the
+    same independent validation as newly generated files
   - current preferred biogeochemistry baseline derivation for downscaling
   - reads hindcast baseline climatologies from:
     `/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25`

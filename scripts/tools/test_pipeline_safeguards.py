@@ -193,6 +193,50 @@ class SafeguardTests(unittest.TestCase):
         self.assertEqual(accepted.read_bytes(), b'accepted')
         self.assertFalse(list((self.root/'scratch').iterdir()))
 
+    def test_monthly_coastal_baseline_fill_time_and_scratch(self):
+        import calendar
+        import shutil
+        import netCDF4 as nc
+        self.monthly_delta_fixture()
+        inputs = self.root/'baseline_input/chl/clim_monthly'
+        masks = self.root/'masks'; masks.mkdir()
+        inputs.mkdir(parents=True)
+        for month in range(1, 13):
+            source = self.root/f'baseline_{month:02d}.nc'
+            with xr.open_dataset(source) as ds:
+                prepared = ds.rename({'thetao': 'chl'})
+                prepared.chl.attrs['units'] = 'mg m-3'
+                prepared.to_netcdf(inputs/f'global_ocean_biogeochemistry_hindcast_chl_clim_month_{month:02d}_2006-2014.nc')
+            mask = masks/f'thetao_{month:02d}.nc'
+            shutil.copyfile(source, mask)
+            with nc.Dataset(mask, 'r+') as ds:
+                ds.variables['thetao'][:] = 1.
+        outputs = self.root/'baseline_output'
+        scratch = self.root/'baseline_scratch'
+        result = self.run_script(
+            ROOT/'scripts/tools/remap_hindcast_baseline_to_0p05_glorys_coast.sh',
+            IN_ROOT=str(self.root/'baseline_input'), OUT_ROOT=str(outputs),
+            GRIDFILE=str(self.root/'grid.txt'), CDO=shutil.which('cdo'), VARS='chl',
+            CLIMATOLOGY_MODE='monthly', BASELINE_TAG='2006-2014',
+            BASELINE_SCRATCH_ROOT=str(scratch), NPROC='1', OVERWRITE='yes',
+            COASTAL_MASK_FILE_TEMPLATE=str(masks/'thetao_{month}.nc'),
+            COASTAL_MASK_VAR='thetao', COASTAL_FILL_MAX_STEPS='1', COASTAL_FILL_MIN_DONORS='1',
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        products = sorted((outputs/'chl/clim_monthly').glob('*.nc'))
+        self.assertEqual(len(products), 12)
+        for month, path in enumerate(products, 1):
+            with xr.open_dataset(path) as ds:
+                self.assertTrue(np.isfinite(ds.chl).all())
+                np.testing.assert_allclose(ds.chl, month)
+                self.assertEqual(ds.chl.attrs['units'], 'mg m-3')
+                self.assertEqual(ds.attrs['climatology_month'], month)
+            self.assert_climatology_time(path, month, f'2006-{month:02d}-01',
+                                         f'2014-{month:02d}-{calendar.monthrange(2014, month)[1]:02d}')
+        self.assertFalse(list(scratch.iterdir()))
+        self.assertFalse(list(outputs.rglob('*.lock')))
+        self.assertFalse(list(outputs.rglob('*.publish.*')))
+
     def test_log_ratio_factor_bounds_mask_extremes(self):
         base = self.root/'base.nc'; future_path = self.root/'future.nc'; out = self.root/'out'
         baseline = self.field(1.).rename('chl')
@@ -2251,6 +2295,67 @@ fi
         self.assertEqual(len(calls), 1)
         self.assertIn('/delta_windows', calls[0]['OUT_DIR'])
         self.assertNotIn('{month}', calls[0]['BASELINE_FILE'])
+
+
+class MonthlyCoastalBaselineRunnerTests(unittest.TestCase):
+    def setUp(self):
+        MonthlyDeltaRunnerTests.setUp(self)
+        self.env.update(IN_ROOT=str(self.root/'bgc'), OUT_ROOT=str(self.root/'coastal'),
+                        GRIDFILE=str(self.root/'grid.txt'), VARS='chl o2 ph', NPROC='4',
+                        BASELINE_TAG='2006-2014', BASELINE_SCRATCH_ROOT=str(self.root/'scratch'),
+                        COASTAL_MASK_FILE_TEMPLATE=str(self.root/'masks/thetao_{month}.nc'))
+        masks = self.root/'masks'; masks.mkdir()
+        self.files = []
+        for var in ('chl', 'o2', 'ph'):
+            directory = self.root/'bgc'/var/'clim_monthly'; directory.mkdir(parents=True)
+            for month in range(1, 13):
+                path = directory/f'global_ocean_biogeochemistry_hindcast_{var}_clim_month_{month:02d}_2006-2014.nc'
+                path.touch(); self.files.append(path)
+                (masks/f'thetao_{month:02d}.nc').touch()
+
+    def run_runner(self):
+        return subprocess.run(['bash', str(ROOT/'scripts/runners/products/run_remap_hindcast_baseline_to_0p05_glorys_coast.sh')],
+                              cwd=ROOT, env=self.env, capture_output=True, text=True)
+
+    def test_all_three_variables_forward_monthly_scratch_and_one_worker(self):
+        result = self.run_runner()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [json.loads(row) for row in self.log.read_text().splitlines()]
+        self.assertEqual(len(calls), 3)
+        for call in calls:
+            exports = [arg for arg in call['args'] if arg.startswith('--export=')]
+            self.assertEqual(len(exports), 1)
+            config = dict(item.split('=', 1) for item in exports[0].split(',')[1:])
+            self.assertEqual(config['NPROC'], '1')
+            self.assertEqual(config['CLIMATOLOGY_MODE'], 'monthly')
+            self.assertEqual(config['BASELINE_SCRATCH_ROOT'], self.env['BASELINE_SCRATCH_ROOT'])
+            self.assertIn('{month}', config['COASTAL_MASK_FILE_TEMPLATE'])
+
+    def test_missing_last_baseline_or_mask_prevents_all_submissions(self):
+        for path in (self.files[-1], self.root/'masks/thetao_12.nc'):
+            path.unlink()
+            result = self.run_runner()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Missing monthly', result.stderr)
+            self.assertFalse(self.log.exists())
+            path.touch()
+
+    def test_default_monthly_mask_template_and_whole_mode_compatibility(self):
+        masks = self.root/'glorys/thetao/clim_monthly'
+        masks.mkdir(parents=True)
+        for month in range(1, 13):
+            (masks/f'glorys12v1_thetao_clim_month_{month:02d}_2006-2014.nc').touch()
+        self.env.pop('COASTAL_MASK_FILE_TEMPLATE')
+        self.env['GLORYS_ROOT'] = str(self.root/'glorys')
+        result = self.run_runner()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.log.unlink()
+        self.env['CLIMATOLOGY_MODE'] = 'whole'
+        result = self.run_runner()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [json.loads(row) for row in self.log.read_text().splitlines()]
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(all('CLIMATOLOGY_MODE=whole' in ' '.join(call['args']) for call in calls))
 
 
 if __name__ == '__main__': unittest.main()

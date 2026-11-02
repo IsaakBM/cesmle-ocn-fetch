@@ -196,21 +196,28 @@ class SafeguardTests(unittest.TestCase):
     def test_monthly_coastal_baseline_fill_time_and_scratch(self):
         import calendar
         import shutil
-        import netCDF4 as nc
         self.monthly_delta_fixture()
+        # A missing corner on a 2x2 source removes every four-corner bilinear
+        # stencil in that layer. Use a larger field so the real remapper leaves
+        # finite donors as well as the coastal gap this test is meant to fill.
+        latitudes = [-3., -1., 1., 3.]
+        longitudes = [0., 2., 4., 6.]
+        (self.root/'grid.txt').write_text(
+            'gridtype = lonlat\nxsize = 4\nysize = 4\nxfirst = 0\nxinc = 2\nyfirst = -3\nyinc = 2\n')
         inputs = self.root/'baseline_input/chl/clim_monthly'
         masks = self.root/'masks'; masks.mkdir()
         inputs.mkdir(parents=True)
         for month in range(1, 13):
             source = self.root/f'baseline_{month:02d}.nc'
             with xr.open_dataset(source) as ds:
-                prepared = ds.rename({'thetao': 'chl'})
+                expanded = ds.reindex(lat=latitudes, lon=longitudes,
+                                      fill_value={'thetao': float(month)})
+                prepared = expanded.rename({'thetao': 'chl'})
                 prepared.chl.attrs['units'] = 'mg m-3'
                 prepared.to_netcdf(inputs/f'global_ocean_biogeochemistry_hindcast_chl_clim_month_{month:02d}_2006-2014.nc')
-            mask = masks/f'thetao_{month:02d}.nc'
-            shutil.copyfile(source, mask)
-            with nc.Dataset(mask, 'r+') as ds:
-                ds.variables['thetao'][:] = 1.
+                mask = expanded.copy()
+                mask['thetao'] = xr.ones_like(expanded.thetao)
+                mask.to_netcdf(masks/f'thetao_{month:02d}.nc')
         outputs = self.root/'baseline_output'
         scratch = self.root/'baseline_scratch'
         result = self.run_script(

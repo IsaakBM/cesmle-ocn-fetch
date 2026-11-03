@@ -1738,6 +1738,54 @@ Example:
 Operational sequence for this final stage:
 
 1. run [run_add_anomaly_to_baseline_with_coastal_fill.sh](scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh)
+   - explicit `CLIMATOLOGY_MODE=monthly` reads `clim_monthly/` baselines and
+     matching `delta_monthly_0p05/` or `delta_monthly_0p25/` changes; whole-period
+     inputs and output paths remain the default
+   - monthly mode requires `ADD_SCRATCH_ROOT`, checks all requested source groups
+     and monthly filenames before submitting any jobs, and submits one job per
+     variable and future window; two models with ten variables and three windows
+     therefore produce 60 jobs, each processing twelve monthly pairs sequentially
+   - copies each month's baseline, anomaly and optional GLORYS mask to a private
+     scratch workspace, runs the existing addition/fill worker there, and publishes
+     finished products to SB5 with output locks and temporary publication files
+   - shares the pair-orchestration helper already used by monthly deltas, without
+     changing the additive/log-ratio formulas, chlorophyll QC, coastal-fill policy,
+     sea-ice anomaly scale or output bounds
+   - uses matching monthly GLORYS masks for BGC variables; prepared coastal
+     baselines are reused with `FILL_BASELINE_COASTAL_GAPS=no`
+   - writes `.../<var>/0p05/<window>/monthly/` and, for BGC variables, the matching
+     `0p25/<window>/monthly/` product; filenames include `_month_MM_`
+   - retains the future month's canonical time/bounds and contributing-year count,
+     and records canonical baseline/anomaly/mask paths in global provenance attrs
+   - retained climatology caches and source SB5 baselines/deltas are not modified;
+     these newly downscaled products still require independent validation
+   - monthly/scratch mode requires native output and currently rejects optional
+     debug filled-anomaly output (`WRITE_NATIVE_OUTPUT=yes`, `WRITE_FILLED_ANOM=no`)
+
+   After the paired monthly regression checks, submit a two-model production
+   batch with the existing wrapper:
+
+   ```bash
+   CLIMATOLOGY_MODE=monthly \
+   ADD_SCRATCH_ROOT=/home/hpc-scratch/ibrito/cesmle-ocn-fetch \
+   MODELS="CNRM-ESM2-1 IPSL-CM6A-LR" MEMBER=auto SCENARIOS=ssp585 \
+   VARS="thetao so ph o2 chl uo vo zos mlotst siconc" \
+   WINDOWS="2030-2040 2050-2060 2090-2100" \
+   EXCLUDE_NODES="hpc-09.grit.ucsb.edu,hpc-13.grit.ucsb.edu,hpc-17.grit.ucsb.edu" \
+   bash scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh
+   ```
+
+   Run the installed-cluster fixture checks before this first monthly addition
+   batch: `MonthlyDownscalingRunnerTests`, `MonthlyAdditionBatchTests`, the
+   existing `MonthlyDeltaRunnerTests`/`MonthlyDeltaBatchTests`, and
+   `SafeguardTests.test_monthly_downscaling_arithmetic_qc_time_and_scratch`,
+   `SafeguardTests.test_monthly_deltas_scratch_arithmetic_remap_and_time`,
+   `SafeguardTests.test_log_ratio_qc_mask_survives_operational_fill`, and
+   `SafeguardTests.test_remap_restores_climatology_time_encoding` in
+   `scripts/tools/test_pipeline_safeguards.py`. These create only temporary
+   fixtures and mocked submissions, not production jobs. Baseline validation
+   may overlap production, but both baseline and final product checks must pass
+   before treating the downscaled output as validated.
    - reads GLORYS baseline climatology files from
      `/home/SB5/reanalysis/glorys12v1/monthly_0p05` for
      `thetao`, `so`, `uo`, `vo`, `zos`, `mlotst`, and `siconc`

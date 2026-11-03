@@ -143,6 +143,14 @@ REGRID_OUT_DIR="${REGRID_OUT_DIR:-}"
 REGRID_SUFFIX="${REGRID_SUFFIX:-}"
 OUTPUT_TIME_START="${OUTPUT_TIME_START:-}"
 OUTPUT_TIME_END="${OUTPUT_TIME_END:-}"
+CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
+ADD_SCRATCH_ROOT="${ADD_SCRATCH_ROOT:-}"
+ADD_MONTH="${ADD_MONTH:-}"
+BASELINE_TAG="${BASELINE_TAG:-2006-2014}"
+if [[ "$CLIMATOLOGY_MODE" != whole && "$CLIMATOLOGY_MODE" != monthly ]]; then
+  echo "ERROR: CLIMATOLOGY_MODE must be whole or monthly" >&2
+  exit 1
+fi
 
 REMAP_ANOMALY_TO_BASELINE="${REMAP_ANOMALY_TO_BASELINE:-no}"
 ANOMALY_GRIDFILE="${ANOMALY_GRIDFILE:-}"
@@ -168,12 +176,12 @@ if [[ -z "$VAR" || -z "$BASELINE_FILE" || -z "$ANOMALY_FILE" || -z "$OUT_DIR" ]]
   exit 1
 fi
 
-if [[ ! -f "$BASELINE_FILE" ]]; then
+if [[ "$CLIMATOLOGY_MODE" != monthly && ! -f "$BASELINE_FILE" ]]; then
   echo "ERROR: Baseline file not found: ${BASELINE_FILE}"
   exit 1
 fi
 
-if [[ ! -f "$ANOMALY_FILE" ]]; then
+if [[ "$CLIMATOLOGY_MODE" != monthly && ! -f "$ANOMALY_FILE" ]]; then
   echo "ERROR: Anomaly file not found: ${ANOMALY_FILE}"
   exit 1
 fi
@@ -201,7 +209,7 @@ if [[ "$REMAP_ANOMALY_TO_BASELINE" == "yes" && ! -f "$ANOMALY_GRIDFILE" ]]; then
   exit 1
 fi
 
-if [[ -n "$COASTAL_MASK_FILE" && ! -f "$COASTAL_MASK_FILE" ]]; then
+if [[ "$CLIMATOLOGY_MODE" != monthly && -n "$COASTAL_MASK_FILE" && ! -f "$COASTAL_MASK_FILE" ]]; then
   echo "ERROR: COASTAL_MASK_FILE does not exist: ${COASTAL_MASK_FILE}"
   exit 1
 fi
@@ -230,6 +238,29 @@ if [[ "$REGRID_OUTPUT" == "yes" ]]; then
   if [[ -z "$REGRID_SUFFIX" ]]; then
     REGRID_SUFFIX="$(basename "$REGRID_GRIDFILE" .txt)"
   fi
+fi
+
+if [[ "$CLIMATOLOGY_MODE" == monthly || -n "$ADD_SCRATCH_ROOT" ]]; then
+  if [[ -z "$ADD_SCRATCH_ROOT" || "$WRITE_NATIVE_OUTPUT" != yes || "$WRITE_FILLED_ANOM" != no ]]; then
+    echo "ERROR: Scratch/monthly downscaling requires ADD_SCRATCH_ROOT, WRITE_NATIVE_OUTPUT=yes and WRITE_FILLED_ANOM=no" >&2
+    exit 1
+  fi
+  pair_helper="$(dirname "${BASH_SOURCE[0]}")/delta_from_climatologies.slurm.sh"
+  if [[ ! -f "$pair_helper" ]]; then
+    pair_helper="${PWD}/scripts/core/delta_from_climatologies.slurm.sh"
+  fi
+  source "$pair_helper"
+  export VAR BASELINE_FILE ANOMALY_FILE OUT_DIR TMP_DIR OUT_PREFIX FUTURE_TAG BASELINE_TAG
+  export CLIMATOLOGY_MODE ADD_SCRATCH_ROOT ANOMALY_MODE WRITE_NATIVE_OUTPUT WRITE_FILLED_ANOM
+  export FILL_TOP_MISSING FILL_TOP_MISSING_ANOMALY OUT_SUFFIX NATIVE_SUFFIX DATASET_LABEL
+  export REGRID_OUTPUT REGRID_METHOD REGRID_GRIDFILE REGRID_OUT_DIR REGRID_SUFFIX
+  export REMAP_ANOMALY_TO_BASELINE ANOMALY_GRIDFILE ANOMALY_REGRID_METHOD
+  export ANOMALY_AUTO_METHOD_DEFAULT ANOMALY_AUTO_METHOD_CURVILINEAR
+  export COASTAL_FILL COASTAL_FILL_METHOD COASTAL_MASK_FILE COASTAL_MASK_VAR FILL_BASELINE_COASTAL_GAPS
+  export COASTAL_FILL_MAX_STEPS COASTAL_FILL_WEIGHT_POWER COASTAL_FILL_MIN_DONORS
+  export COASTAL_FILL_REQUIRE_COMPLETE COASTAL_FILL_COMPLETE_FALLBACK_VALUE OUTPUT_BOUNDS_SPEC ANOMALY_SCALE_SPEC
+  climatology_pair_batch "$0" addition
+  exit "$?"
 fi
 
 mkdir -p "${OUT_DIR}" "${TMP_DIR}"
@@ -301,16 +332,20 @@ remap_preserving_qc_mask() {
   local data_tmp="${prefix}.data.nc"
   local mask_tmp="${prefix}.mask.nc"
   local masked_tmp="${prefix}.masked.nc"
+  local output_args=()
+  if [[ -n "$ADD_MONTH" ]]; then
+    output_args=(-f nc4c -z zip_1)
+  fi
 
   rm -f "${data_tmp}" "${mask_tmp}" "${masked_tmp}"
   if cdo -s showname "${src}" | tr ' ' '\n' | grep -Fxq "${QC_MASK_NAME}"; then
-    cdo -L -O "${method},${gridfile}" -delname,"${QC_MASK_NAME}" "${src}" "${data_tmp}"
-    cdo -L -O "remapnn,${gridfile}" -selname,"${QC_MASK_NAME}" "${src}" "${mask_tmp}"
-    cdo -L -O ifthen "${mask_tmp}" "${data_tmp}" "${masked_tmp}"
-    cdo -L -O merge "${masked_tmp}" "${mask_tmp}" "${dst}"
+    cdo -L -O ${output_args[@]+"${output_args[@]}"} "${method},${gridfile}" -delname,"${QC_MASK_NAME}" "${src}" "${data_tmp}"
+    cdo -L -O ${output_args[@]+"${output_args[@]}"} "remapnn,${gridfile}" -selname,"${QC_MASK_NAME}" "${src}" "${mask_tmp}"
+    cdo -L -O ${output_args[@]+"${output_args[@]}"} ifthen "${mask_tmp}" "${data_tmp}" "${masked_tmp}"
+    cdo -L -O ${output_args[@]+"${output_args[@]}"} merge "${masked_tmp}" "${mask_tmp}" "${dst}"
     rm -f "${data_tmp}" "${mask_tmp}" "${masked_tmp}"
   else
-    cdo -L -O "${method},${gridfile}" "${src}" "${dst}"
+    cdo -L -O ${output_args[@]+"${output_args[@]}"} "${method},${gridfile}" "${src}" "${dst}"
   fi
 
   # CDO may preserve the raw climatology-bounds values while changing the
@@ -1161,6 +1196,16 @@ if output_lower_bound is not None or output_upper_bound is not None:
 ds_out = ds_base.copy()
 ds_out[base_var] = da_out
 ds_out = set_climatology_time(ds_out, output_time_start, output_time_end)
+if "${ADD_MONTH}":
+    # The baseline spans historical years; the final product represents the
+    # future named month. Carry its product/count metadata from the anomaly.
+    ds_out.attrs.update({key: value for key, value in ds_anom.attrs.items()
+                         if key.startswith("climatology_")})
+    ds_out.attrs.update({
+        "downscaling_baseline_file": "${ADD_BASELINE_SOURCE:-$BASELINE_FILE}",
+        "downscaling_anomaly_file": "${ADD_ANOMALY_SOURCE:-$ANOMALY_FILE}",
+        "downscaling_coastal_mask_file": "${ADD_COASTAL_MASK_SOURCE:-$COASTAL_MASK_FILE}",
+    })
 if da_qc_mask is not None:
     qc_values = (np.asarray(da_qc_mask.values) >= 0.5).astype(np.int8)
     qc_coords = {
@@ -1236,6 +1281,33 @@ ds_anom.close()
 if ds_mask is not None:
     ds_mask.close()
 PY
+
+if [[ -n "$ADD_MONTH" ]]; then
+  python3 - "$TMP_NATIVE" "$ANOMALY_FILE" "$ADD_MONTH" <<'PY_ADD_MONTHLY_TIME'
+import sys
+import netCDF4 as nc
+import numpy as np
+destination, source, month = sys.argv[1:]
+with nc.Dataset(source) as src, nc.Dataset(destination, 'r+') as dst:
+    for name in ('time', 'time_bnds'):
+        reference = src.variables[name]
+        for dim in reference.dimensions:
+            if dim not in dst.dimensions:
+                dst.createDimension(dim, len(src.dimensions[dim]))
+        if name not in dst.variables:
+            dst.createVariable(name, reference.dtype, reference.dimensions)
+        target = dst.variables[name]
+        assert target.dimensions == reference.dimensions and target.shape == reference.shape
+        if name == 'time' and 'bounds' in target.ncattrs():
+            target.delncattr('bounds')
+        target.setncatts({key: reference.getncattr(key) for key in reference.ncattrs() if key != '_FillValue'})
+        target[:] = reference[:]
+        np.testing.assert_array_equal(target[:], reference[:])
+    time = dst.variables['time']
+    assert nc.num2date(time[:], time.units, time.calendar)[0].month == int(month)
+    dst.setncatts({key: src.getncattr(key) for key in src.ncattrs() if key.startswith('climatology_')})
+PY_ADD_MONTHLY_TIME
+fi
 
 if [[ "$WRITE_NATIVE_OUTPUT" == "yes" ]]; then
   echo "[STEP4] Writing native downscaled output"

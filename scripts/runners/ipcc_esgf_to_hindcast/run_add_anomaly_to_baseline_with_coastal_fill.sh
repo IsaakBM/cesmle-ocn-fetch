@@ -26,7 +26,24 @@ MEMBER="${MEMBER:-auto}"
 BASELINE_TAG="${BASELINE_TAG:-2006-2014}"
 GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/reanalysis/glorys12v1/monthly_0p05}"
 HINDCAST_ROOT="${HINDCAST_ROOT:-/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p05_glorys_coast}"
-COASTAL_MASK_FILE="${COASTAL_MASK_FILE:-${GLORYS_ROOT}/thetao/clim_windows/glorys12v1_thetao_clim_${BASELINE_TAG}.nc}"
+CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
+ADD_SCRATCH_ROOT="${ADD_SCRATCH_ROOT:-}"
+case "$CLIMATOLOGY_MODE" in
+  whole) CLIM_STAGE=clim_windows; DELTA_STAGE=delta_windows ;;
+  monthly)
+    CLIM_STAGE=clim_monthly; DELTA_STAGE=delta_monthly
+    if [[ -z "$ADD_SCRATCH_ROOT" ]]; then
+      echo "ERROR: Monthly downscaling requires ADD_SCRATCH_ROOT" >&2
+      exit 1
+    fi
+    ;;
+  *) echo "ERROR: CLIMATOLOGY_MODE must be whole or monthly" >&2; exit 1 ;;
+esac
+default_mask="${GLORYS_ROOT}/thetao/clim_windows/glorys12v1_thetao_clim_${BASELINE_TAG}.nc"
+if [[ "$CLIMATOLOGY_MODE" == monthly ]]; then
+  default_mask="${GLORYS_ROOT}/thetao/clim_monthly/glorys12v1_thetao_clim_month_{month}_${BASELINE_TAG}.nc"
+fi
+COASTAL_MASK_FILE="${COASTAL_MASK_FILE:-$default_mask}"
 COASTAL_MASK_VAR="${COASTAL_MASK_VAR:-thetao}"
 FILL_BASELINE_COASTAL_GAPS="${FILL_BASELINE_COASTAL_GAPS:-no}"
 FILL_TOP_MISSING_ANOMALY="${FILL_TOP_MISSING_ANOMALY:-yes}"
@@ -87,8 +104,8 @@ fi
 
 mapfile -t DISCOVERED_GROUPS < <(
   {
-    ipcc_esgf_discover_monthly_groups_any_layout "${IPCC_ROOT}" "delta_windows_0p25" | awk -F '\t' '$3 ~ /^ssp[0-9][0-9][0-9]$/ {print $0 "\tdelta_windows_0p25"}'
-    ipcc_esgf_discover_monthly_groups_any_layout "${IPCC_ROOT}" "delta_windows_0p05" | awk -F '\t' '$3 ~ /^ssp[0-9][0-9][0-9]$/ {print $0 "\tdelta_windows_0p05"}'
+    ipcc_esgf_discover_monthly_groups_any_layout "${IPCC_ROOT}" "${DELTA_STAGE}_0p25" "${MODELS[*]}" "${SCENARIOS[*]}" "${VARS[*]}" "$MEMBER" | awk -F '\t' -v stage="${DELTA_STAGE}_0p25" '$3 ~ /^ssp[0-9][0-9][0-9]$/ {print $0 "\t" stage}'
+    ipcc_esgf_discover_monthly_groups_any_layout "${IPCC_ROOT}" "${DELTA_STAGE}_0p05" "${MODELS[*]}" "${SCENARIOS[*]}" "${VARS[*]}" "$MEMBER" | awk -F '\t' -v stage="${DELTA_STAGE}_0p05" '$3 ~ /^ssp[0-9][0-9][0-9]$/ {print $0 "\t" stage}'
   } | sort -u
 )
 
@@ -97,23 +114,41 @@ if (( ${#DISCOVERED_GROUPS[@]} == 0 )); then
   exit 1
 fi
 
+if [[ "$CLIMATOLOGY_MODE" == monthly ]]; then
+  ADD_GROUPS="$(printf '%s\n' "${DISCOVERED_GROUPS[@]}")" \
+  ADD_MODELS="${MODELS[*]}" ADD_SCENARIOS="${SCENARIOS[*]}" ADD_VARS="${VARS[*]}" \
+  python3 - <<'PY_ADD_GROUPS'
+import os
+rows = [line.split('\t') for line in os.environ['ADD_GROUPS'].splitlines()]
+models = os.environ['ADD_MODELS'].split() or sorted({row[0] for row in rows})
+scenarios = os.environ['ADD_SCENARIOS'].split() or sorted({row[2] for row in rows})
+variables = os.environ['ADD_VARS'].split() or sorted({row[3] for row in rows})
+for model in models:
+    for scenario in scenarios:
+        for variable in variables:
+            assert any(row[0] == model and row[2] == scenario and row[3] == variable for row in rows), (
+                f'Missing monthly delta group: {model} {scenario} {variable}')
+PY_ADD_GROUPS
+fi
+
 echo "Submitting IPCC/ESGF-to-hindcast coastal-fill downscaling jobs:"
+process_groups() {
 for group in "${DISCOVERED_GROUPS[@]}"; do
   IFS=$'\t' read -r model member scenario var delta_stage <<< "$group"
 
-  contains_word "$model" "${MODELS[@]}" || continue
-  contains_word "$scenario" "${SCENARIOS[@]}" || continue
-  contains_word "$var" "${VARS[@]}" || continue
+  contains_word "$model" ${MODELS[@]+"${MODELS[@]}"} || continue
+  contains_word "$scenario" ${SCENARIOS[@]+"${SCENARIOS[@]}"} || continue
+  contains_word "$var" ${VARS[@]+"${VARS[@]}"} || continue
 
   dataset_label="${DATASET_LABEL_PREFIX:-ipcc_esgf_${model}_${scenario}_${member}_to_hindcast}"
   baseline_root="$HINDCAST_ROOT"
   baseline_file_template="__BASELINE_ROOT__/__TGT_VAR__/clim_windows/global_ocean_biogeochemistry_hindcast___TGT_VAR___clim___BASELINE_TAG___grid_0p05_global.nc"
-  anomaly_file_template="__ANOMALY_ROOT__/__SRC_VAR__/delta_windows_0p25/ipcc_esgf_${model}_${scenario}_${member}___SRC_VAR___delta___WINDOW___minus___BASELINE_TAG___grid_0p25_global.nc"
+  anomaly_file_template="__ANOMALY_ROOT__/__SRC_VAR__/${DELTA_STAGE}_0p25/ipcc_esgf_${model}_${scenario}_${member}___SRC_VAR___delta___WINDOW___minus___BASELINE_TAG___grid_0p25_global.nc"
   anomaly_gridfile="${GLORYS_ROOT}/grid_0p05_global.txt"
   regrid_gridfile="/home/SB5/reanalysis/global_ocean_biogeochemistry_hindcast/monthly_0p25/grid_0p25_global.txt"
   regrid_suffix="grid_0p25_global"
   target_label="hindcast"
-  expected_delta_stage="delta_windows_0p25"
+  expected_delta_stage="${DELTA_STAGE}_0p25"
   coastal_mask_file_for_var=""
   coastal_mask_var_for_var=""
   fill_baseline_gaps_for_var="no"
@@ -124,9 +159,9 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
     dataset_label="${DATASET_LABEL_PREFIX:-ipcc_esgf_${model}_${scenario}_${member}_to_glorys}"
     baseline_root="$GLORYS_ROOT"
     baseline_file_template="__BASELINE_ROOT__/__TGT_VAR__/clim_windows/glorys12v1___TGT_VAR___clim___BASELINE_TAG__.nc"
-    anomaly_file_template="__ANOMALY_ROOT__/__SRC_VAR__/delta_windows_0p05/ipcc_esgf_${model}_${scenario}_${member}___SRC_VAR___delta___WINDOW___minus___BASELINE_TAG___grid_0p05_global.nc"
+    anomaly_file_template="__ANOMALY_ROOT__/__SRC_VAR__/${DELTA_STAGE}_0p05/ipcc_esgf_${model}_${scenario}_${member}___SRC_VAR___delta___WINDOW___minus___BASELINE_TAG___grid_0p05_global.nc"
     target_label="glorys"
-    expected_delta_stage="delta_windows_0p05"
+    expected_delta_stage="${DELTA_STAGE}_0p05"
     remap_anomaly_for_var="no"
   elif ! contains_word "$var" "${HINDCAST_BASELINE_VAR_LIST[@]}"; then
     echo "WARN: No trusted target baseline configured for VAR=${var}; leaving at delta stage."
@@ -135,6 +170,15 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
 
   if [[ "$delta_stage" != "$expected_delta_stage" ]]; then
     continue
+  fi
+
+  if [[ "$CLIMATOLOGY_MODE" == monthly ]]; then
+    if [[ "$target_label" == glorys ]]; then
+      baseline_file_template="__BASELINE_ROOT__/__TGT_VAR__/clim_monthly/glorys12v1___TGT_VAR___clim_month___MONTH_____BASELINE_TAG__.nc"
+    else
+      baseline_file_template="__BASELINE_ROOT__/__TGT_VAR__/clim_monthly/global_ocean_biogeochemistry_hindcast___TGT_VAR___clim_month___MONTH_____BASELINE_TAG___grid_0p05_global.nc"
+    fi
+    anomaly_file_template="__ANOMALY_ROOT__/__SRC_VAR__/${expected_delta_stage}/ipcc_esgf_${model}_${scenario}_${member}___SRC_VAR___month___MONTH___delta___WINDOW___minus___BASELINE_TAG___grid_${expected_delta_stage##*_}_global.nc"
   fi
 
   if ! delta_dir="$(ipcc_esgf_monthly_stage_dir_for_group "$IPCC_ROOT" "$model" "$member" "$scenario" "$var" "$expected_delta_stage")"; then
@@ -167,6 +211,8 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
   fi
 
   DATASET_LABEL="${dataset_label}" \
+  CLIMATOLOGY_MODE="$CLIMATOLOGY_MODE" \
+  ADD_SCRATCH_ROOT="$ADD_SCRATCH_ROOT" \
   MODEL_LABEL="${model}" \
   REALIZATION_LABEL="${member}" \
   FORCING_LABEL="${scenario}" \
@@ -195,5 +241,13 @@ for group in "${DISCOVERED_GROUPS[@]}"; do
   REGRID_SUFFIX="${REGRID_SUFFIX:-${regrid_suffix}}" \
   "${GENERIC_RUNNER}" "$@"
 done
+}
+
+if [[ "$CLIMATOLOGY_MODE" == monthly && "${RUN:-yes}" == yes ]]; then
+  # Dry-run all source groups first so a missing late variable cannot cause a
+  # partly submitted model batch. The generic runner checks every month/window.
+  RUN=no process_groups
+fi
+process_groups
 
 echo "Done."

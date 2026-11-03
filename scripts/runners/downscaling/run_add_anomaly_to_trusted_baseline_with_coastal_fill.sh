@@ -34,6 +34,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CORE_SCRIPT="${SCRIPT_DIR}/../../core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh"
 
 RUN="${RUN:-yes}"
+CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
+ADD_SCRATCH_ROOT="${ADD_SCRATCH_ROOT:-}"
+EXCLUDE_NODES="${EXCLUDE_NODES:-${SBATCH_EXCLUDE:-}}"
+if [[ "$CLIMATOLOGY_MODE" != whole && "$CLIMATOLOGY_MODE" != monthly ]]; then
+  echo "ERROR: CLIMATOLOGY_MODE must be whole or monthly" >&2
+  exit 1
+fi
+if [[ "$CLIMATOLOGY_MODE" == monthly && -z "$ADD_SCRATCH_ROOT" ]]; then
+  echo "ERROR: Monthly downscaling requires ADD_SCRATCH_ROOT" >&2
+  exit 1
+fi
 VAR_MAP_SPEC="${VAR_MAP_SPEC:-chl:chl o2:o2}"
 read -r -a VAR_MAP <<< "${VAR_MAP_SPEC}"
 
@@ -117,6 +128,8 @@ render_template() {
   template="${template//__MODEL_LABEL__/${MODEL_LABEL}}"
   template="${template//__REALIZATION_LABEL__/${REALIZATION_LABEL}}"
   template="${template//__FORCING_LABEL__/${FORCING_LABEL}}"
+  local month_token='{month}'
+  template="${template//__MONTH__/$month_token}"
   printf '%s\n' "$template"
 }
 
@@ -154,7 +167,7 @@ if [[ "$RUN" != "yes" && "$RUN" != "no" ]]; then
   exit 1
 fi
 
-if [[ -n "$COASTAL_MASK_FILE" && ! -f "$COASTAL_MASK_FILE" ]]; then
+if [[ "$CLIMATOLOGY_MODE" == whole && -n "$COASTAL_MASK_FILE" && ! -f "$COASTAL_MASK_FILE" ]]; then
   echo "ERROR: coastal mask file not found: $COASTAL_MASK_FILE"
   exit 1
 fi
@@ -182,6 +195,32 @@ echo "ANOMALY MODE SPEC    : ${ANOMALY_MODE_SPEC:-<none>}"
 echo "REGRID OUTPUT        : ${REGRID_OUTPUT}"
 echo "RUN                  : ${RUN}"
 
+if [[ "$CLIMATOLOGY_MODE" == monthly ]]; then
+  # Resolve every requested calendar month/window before any submission.
+  for spec in "${VAR_MAP[@]}"; do
+    src_var="${spec%%:*}"; tgt_var="${spec##*:}"
+    monthly_baseline="$(render_template "$BASELINE_FILE_TEMPLATE" "$src_var" "$tgt_var")"
+    monthly_mask="$COASTAL_MASK_FILE"
+    if [[ -n "$COASTAL_MASK_FILE_TEMPLATE" ]]; then
+      monthly_mask="$(render_template "$COASTAL_MASK_FILE_TEMPLATE" "$src_var" "$tgt_var")"
+    fi
+    for window in "${WINDOWS[@]}"; do
+      monthly_anomaly="$(render_template "$ANOMALY_FILE_TEMPLATE" "$src_var" "$tgt_var" "$window")"
+      python3 - "$monthly_baseline" "$monthly_anomaly" "$monthly_mask" <<'PY_ADD_PREFLIGHT'
+import sys
+from pathlib import Path
+for template in sys.argv[1:3]:
+    assert '{month}' in template, f'Monthly input template lacks month token: {template}'
+for month in range(1, 13):
+    for template in sys.argv[1:]:
+        if template:
+            path = Path(template.replace('{month}', f'{month:02d}'))
+            assert path.is_file(), f'Missing monthly downscaling input: {path}'
+PY_ADD_PREFLIGHT
+    done
+  done
+fi
+
 for spec in "${VAR_MAP[@]}"; do
   src_var="${spec%%:*}"
   tgt_var="${spec##*:}"
@@ -199,7 +238,7 @@ for spec in "${VAR_MAP[@]}"; do
     TMP_DIR="${OUTROOT}/${tgt_var}/tmp_add_coastal_fill"
   fi
 
-  if [[ ! -f "$BASELINE_FILE" ]]; then
+  if [[ "$CLIMATOLOGY_MODE" == whole && ! -f "$BASELINE_FILE" ]]; then
     echo "WARN: Missing trusted baseline climatology for SRC=${src_var} TGT=${tgt_var}: ${BASELINE_FILE}"
     continue
   fi
@@ -209,7 +248,7 @@ for spec in "${VAR_MAP[@]}"; do
     continue
   fi
 
-  if [[ -n "$COASTAL_MASK_FILE_FOR_VAR" && ! -f "$COASTAL_MASK_FILE_FOR_VAR" ]]; then
+  if [[ "$CLIMATOLOGY_MODE" == whole && -n "$COASTAL_MASK_FILE_FOR_VAR" && ! -f "$COASTAL_MASK_FILE_FOR_VAR" ]]; then
     echo "WARN: Coastal mask file not found, skipping SRC=${src_var} TGT=${tgt_var}: ${COASTAL_MASK_FILE_FOR_VAR}"
     continue
   fi
@@ -218,7 +257,7 @@ for spec in "${VAR_MAP[@]}"; do
     output_time_start="${window%%-*}-01-01"
     output_time_end="${window##*-}-12-31"
     ANOMALY_FILE="$(render_template "${ANOMALY_FILE_TEMPLATE}" "${src_var}" "${tgt_var}" "${window}")"
-    if [[ ! -f "$ANOMALY_FILE" ]]; then
+    if [[ "$CLIMATOLOGY_MODE" == whole && ! -f "$ANOMALY_FILE" ]]; then
       echo "WARN: Missing anomaly for SRC=${src_var} TGT=${tgt_var} WINDOW=${window}: ${ANOMALY_FILE}"
       continue
     fi
@@ -231,7 +270,16 @@ for spec in "${VAR_MAP[@]}"; do
       OUT_REGRID_DIR="${OUTROOT}/${tgt_var}/0p25/${window}"
     fi
 
+    if [[ "$CLIMATOLOGY_MODE" == monthly ]]; then
+      OUT_NATIVE_DIR="${OUT_NATIVE_DIR}/monthly"
+      OUT_REGRID_DIR="${OUT_REGRID_DIR}/monthly"
+    fi
+
     if [[ "$RUN" == "yes" ]]; then
+      sbatch_extra_args=()
+      if [[ -n "$EXCLUDE_NODES" ]]; then
+        sbatch_extra_args+=("--exclude=$EXCLUDE_NODES")
+      fi
       jid=$(DATASET_LABEL="${DATASET_LABEL}" \
         VAR="$tgt_var" \
         BASELINE_FILE="$BASELINE_FILE" \
@@ -271,7 +319,11 @@ for spec in "${VAR_MAP[@]}"; do
         REGRID_GRIDFILE="$REGRID_GRIDFILE" \
         REGRID_OUT_DIR="$OUT_REGRID_DIR" \
         REGRID_SUFFIX="$REGRID_SUFFIX" \
+        CLIMATOLOGY_MODE="$CLIMATOLOGY_MODE" \
+        ADD_SCRATCH_ROOT="$ADD_SCRATCH_ROOT" \
+        BASELINE_TAG="$BASELINE_TAG" \
         sbatch --parsable \
+        ${sbatch_extra_args[@]+"${sbatch_extra_args[@]}"} \
         --job-name="addcf_${window}_${tgt_var}" \
         "$CORE_SCRIPT")
       echo "  submitted SRC=${src_var} TGT=${tgt_var} WINDOW=${window} ANOMALY_MODE=${anomaly_mode_for_this_var} as jobid=${jid}"

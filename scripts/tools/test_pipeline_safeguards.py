@@ -159,7 +159,7 @@ class SafeguardTests(unittest.TestCase):
                             self.assertTrue(np.isnan(ds[variable][0, 0, 0, 0]))
                             self.assertEqual(ds.attrs['delta_mode'], mode)
                             self.assertEqual(ds.attrs['climatology_month'], month)
-                            self.assertEqual(ds.attrs['delta_baseline_file'], str(self.root/f'baseline_{month:02d}.nc'))
+                            self.assertEqual(ds.attrs['delta_baseline_file'], str((self.root/f'baseline_{month:02d}.nc').resolve()))
                             if mode == 'log_ratio':
                                 self.assertIn('chl_log_ratio_qc_valid', ds)
                         import calendar
@@ -243,6 +243,84 @@ class SafeguardTests(unittest.TestCase):
         self.assertFalse(list(scratch.iterdir()))
         self.assertFalse(list(outputs.rglob('*.lock')))
         self.assertFalse(list(outputs.rglob('*.publish.*')))
+
+    def test_monthly_downscaling_arithmetic_qc_time_and_scratch(self):
+        import calendar
+        import netCDF4 as nc
+        self.monthly_delta_fixture()
+        grid = self.root/'add_grid.txt'
+        grid.write_text('gridtype = lonlat\nxsize = 4\nysize = 4\nxfirst = 0\nxinc = 2\nyfirst = -3\nyinc = 2\n')
+        for variable, mode in (('thetao', 'additive'), ('chl', 'log_ratio'), ('siconc', 'additive')):
+            with self.subTest(mode=mode):
+                for month in range(1, 13):
+                    for role in ('baseline', 'future'):
+                        with xr.open_dataset(self.root/f'{role}_{month:02d}.nc') as ds:
+                            product = ds.reindex(lat=[-3., -1., 1., 3.], lon=[0., 2., 4., 6.])
+                            amount = 2. if role == 'baseline' else (3. if mode == 'additive' else np.log(3.))
+                            if variable == 'siconc':
+                                amount = 0.4 if role == 'baseline' else 10.
+                            product['thetao'] = xr.full_like(product.thetao, amount)
+                            product = product.rename({'thetao': variable})
+                            if variable == 'chl':
+                                product[variable].attrs['units'] = 'mg m-3' if role == 'baseline' else '1'
+                            if variable == 'siconc':
+                                product[variable].attrs['units'] = '1' if role == 'baseline' else '%'
+                                if role == 'future':
+                                    product[variable].values[0, 0, 1, 1] = 100.
+                                    product[variable].values[0, 0, 0, 0] = -100.
+                            if role == 'future' and variable == 'chl':
+                                qc = xr.ones_like(product.chl, dtype=np.int8)
+                                qc.values[0, 0, 1, 1] = 0
+                                product['chl_log_ratio_qc_valid'] = qc
+                                product.chl.values[0, 0, 1, 1] = np.nan
+                            product.to_netcdf(self.root/f'add_{role}_{month:02d}.nc')
+                            if role == 'baseline':
+                                mask = product.rename({variable: 'thetao'}) if variable != 'thetao' else product.copy()
+                                mask['thetao'] = xr.ones_like(mask.thetao)
+                                mask.to_netcdf(self.root/f'add_mask_{month:02d}.nc')
+                settings = dict(VAR=variable, CLIMATOLOGY_MODE='monthly',
+                                ADD_SCRATCH_ROOT=str(self.root/'add_scratch'),
+                                BASELINE_FILE=str(self.root/'add_baseline_{month}.nc'),
+                                ANOMALY_FILE=str(self.root/'add_future_{month}.nc'),
+                                COASTAL_MASK_FILE=str(self.root/'add_mask_{month}.nc'), COASTAL_MASK_VAR='thetao',
+                                BASELINE_TAG='2006-2014', FUTURE_TAG='2050-2058', OUT_PREFIX='fixture',
+                                OUT_DIR=str(self.root/'add_native'), REGRID_OUT_DIR=str(self.root/'add_regrid'),
+                                NATIVE_SUFFIX='grid_fixture', REGRID_SUFFIX='grid_fixture',
+                                ANOMALY_MODE=mode, FILL_TOP_MISSING_ANOMALY='yes',
+                                ANOMALY_SCALE_SPEC='siconc:0.01', OUTPUT_BOUNDS_SPEC='siconc:0:1',
+                                COASTAL_FILL_METHOD='distance_weighted', COASTAL_FILL_MIN_DONORS='1',
+                                COASTAL_FILL_MAX_STEPS='1', COASTAL_FILL_REQUIRE_COMPLETE='yes',
+                                REMAP_ANOMALY_TO_BASELINE='yes' if variable == 'chl' else 'no',
+                                REGRID_OUTPUT='yes' if variable == 'chl' else 'no',
+                                ANOMALY_GRIDFILE=str(grid), REGRID_GRIDFILE=str(grid))
+                result = self.run_script(ADD, **settings)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                directories = ('add_native', 'add_regrid') if variable == 'chl' else ('add_native',)
+                for directory in directories:
+                    products = sorted((self.root/directory).glob('*.nc'))
+                    self.assertEqual(len(products), 12)
+                    for month, path in enumerate(products, 1):
+                        with xr.open_dataset(path) as ds:
+                            data = ds[variable].values
+                            if variable == 'siconc':
+                                expected = np.full(data.shape, .5)
+                                expected[0, 0, 1, 1] = 1.
+                                expected[0, 0, 0, 0] = 0.
+                                np.testing.assert_allclose(data, expected, rtol=1e-5)
+                            else:
+                                np.testing.assert_allclose(data[np.isfinite(data)], 6. if variable == 'chl' else 5., rtol=1e-5)
+                            self.assertEqual(ds.attrs['climatology_month'], month)
+                            self.assertEqual(int(ds.attrs['climatology_selected_timesteps']), 9)
+                            self.assertEqual(ds.attrs['downscaling_baseline_file'], str((self.root/f'add_baseline_{month:02d}.nc').resolve()))
+                            if variable == 'chl':
+                                self.assertTrue(np.isnan(data[0, 0, 1, 1]))
+                                self.assertEqual(ds.chl_log_ratio_qc_valid[0, 0, 1, 1], 0)
+                            else:
+                                self.assertTrue(np.isfinite(data).all())
+                        self.assert_climatology_time(path, month, f'2050-{month:02d}-01',
+                                                     f'2058-{month:02d}-{calendar.monthrange(2058, month)[1]:02d}')
+                self.assertFalse(list((self.root/'add_scratch').iterdir()))
+                self.assertFalse(list((self.root/'add_native').glob('.*.lock')))
 
     def test_log_ratio_factor_bounds_mask_extremes(self):
         base = self.root/'base.nc'; future_path = self.root/'future.nc'; out = self.root/'out'
@@ -2078,10 +2156,11 @@ class MonthlyDeltaBatchTests(unittest.TestCase):
                             time=[midpoint.toordinal()])
                 (self.root/f'{role}_{month:02d}.nc').write_text(json.dumps(data))
         self.calls = []
+        self.jobs = []
         self.fail_copy = False
         self.fail_worker = False
 
-    def run_batch(self):
+    def run_batch(self, kind='delta'):
         import shutil
         import types
         # NumPy lazily imports testing helpers; on Linux that import can launch
@@ -2131,6 +2210,7 @@ class MonthlyDeltaBatchTests(unittest.TestCase):
                     else:
                         shutil.copyfile(command[-2], command[-1])
                 else:
+                    owner.jobs.append(kwargs['env'])
                     if owner.fail_worker:
                         self.returncode = 1
                         return
@@ -2145,7 +2225,7 @@ class MonthlyDeltaBatchTests(unittest.TestCase):
         code = embedded(DELTA, 'PY_DELTA_BATCH')
         with mock.patch.dict(os.environ, self.env, clear=True), \
                 mock.patch.dict(sys.modules, {'netCDF4': fake}), \
-                mock.patch.object(sys, 'argv', ['python3', str(DELTA)]), \
+                mock.patch.object(sys, 'argv', ['python3', str(DELTA), kind]), \
                 mock.patch('subprocess.Popen', Process), \
                 mock.patch('shutil.disk_usage', return_value=types.SimpleNamespace(free=10**13)), \
                 mock.patch('signal.signal'):
@@ -2363,6 +2443,152 @@ class MonthlyCoastalBaselineRunnerTests(unittest.TestCase):
         calls = [json.loads(row) for row in self.log.read_text().splitlines()]
         self.assertEqual(len(calls), 3)
         self.assertTrue(all('CLIMATOLOGY_MODE=whole' in ' '.join(call['args']) for call in calls))
+
+
+class MonthlyAdditionBatchTests(unittest.TestCase):
+    def setUp(self):
+        MonthlyDeltaBatchTests.setUp(self)
+        grid = self.root/'grid.txt'
+        grid.write_text('gridtype = lonlat\nxsize = 2\nysize = 2\n')
+        self.env.update(ANOMALY_FILE=self.env['FUTURE_FILE'],
+                        ADD_SCRATCH_ROOT=self.env['DELTA_SCRATCH_ROOT'], REGRID_OUTPUT='no',
+                        REMAP_ANOMALY_TO_BASELINE='yes', ANOMALY_GRIDFILE=str(grid),
+                        COASTAL_MASK_FILE=self.env['BASELINE_FILE'], COASTAL_MASK_VAR='thetao')
+
+    def run_batch(self):
+        MonthlyDeltaBatchTests.run_batch(self, 'addition')
+
+    def test_monthly_pairs_mask_grids_and_future_dates(self):
+        self.run_batch()
+        self.assertEqual(len(self.jobs), 12)
+        for month, config in enumerate(self.jobs, 1):
+            self.assertEqual(config['ADD_MONTH'], f'{month:02d}')
+            self.assertEqual(config['OUTPUT_TIME_START'], f'2050-{month:02d}-01')
+            self.assertTrue(config['OUTPUT_TIME_END'].startswith(f'2058-{month:02d}-'))
+            self.assertEqual(config['ADD_BASELINE_SOURCE'], str((self.root/f'baseline_{month:02d}.nc').resolve()))
+            self.assertEqual(config['ADD_ANOMALY_SOURCE'], str((self.root/f'future_{month:02d}.nc').resolve()))
+            self.assertTrue(config['COASTAL_MASK_FILE'].endswith('/mask.nc'))
+            self.assertNotEqual(config['ANOMALY_GRIDFILE'], self.env['ANOMALY_GRIDFILE'])
+            self.assertEqual(config['ADD_SCRATCH_ROOT'], '')
+        self.assertEqual(len(list((self.root/'out').glob('*.nc'))), 12)
+        self.assertFalse(list((self.root/'scratch').iterdir()))
+
+    def test_copy_back_failure_preserves_output(self):
+        MonthlyDeltaBatchTests.test_copy_back_failure_preserves_old_output_and_cleans(self)
+
+    def test_worker_failure_does_not_publish(self):
+        MonthlyDeltaBatchTests.test_worker_failure_does_not_publish(self)
+
+
+class MonthlyDownscalingRunnerTests(unittest.TestCase):
+    def setUp(self):
+        MonthlyDeltaRunnerTests.setUp(self)
+        self.variables = 'thetao so ph o2 chl uo vo zos mlotst siconc'.split()
+        self.env.update(IPCC_ROOT=str(self.root/'ipcc'), GLORYS_ROOT=str(self.root/'glorys'),
+                        HINDCAST_ROOT=str(self.root/'hindcast'), OUTROOT=str(self.root/'downscaled'),
+                        ADD_SCRATCH_ROOT=str(self.root/'scratch'), VARS=' '.join(self.variables),
+                        REGRID_GRIDFILE=str(self.root/'grid.txt'), RUN='yes',
+                        EXCLUDE_NODES='fixture-node')
+        (self.root/'glorys').mkdir()
+        (self.root/'glorys/grid_0p05_global.txt').write_text((self.root/'grid.txt').read_text())
+        for var in self.variables:
+            bgc = var in ('chl', 'o2', 'ph')
+            folder = self.root/('hindcast' if bgc else 'glorys')/var/'clim_monthly'
+            folder.mkdir(parents=True, exist_ok=True)
+            prefix = f'global_ocean_biogeochemistry_hindcast_{var}' if bgc else f'glorys12v1_{var}'
+            suffix = '_grid_0p05_global' if bgc else ''
+            for month in range(1, 13):
+                (folder/f'{prefix}_clim_month_{month:02d}_2006-2014{suffix}.nc').touch()
+        self.products = []
+        for model, member in (('A', 'r1i1p1f1'), ('B', 'r1i1p1f2')):
+            for var in self.variables:
+                resolution = '0p25' if var in ('chl', 'o2', 'ph') else '0p05'
+                folder = self.root/'ipcc'/model/member/'ssp585'/var/f'delta_monthly_{resolution}'
+                folder.mkdir(parents=True)
+                for window in ('2030-2040', '2050-2060', '2090-2100'):
+                    for month in range(1, 13):
+                        path = folder/f'ipcc_esgf_{model}_ssp585_{member}_{var}_month_{month:02d}_delta_{window}_minus_2006-2014_grid_{resolution}_global.nc'
+                        path.touch(); self.products.append(path)
+
+    def run_wrapper(self, **settings):
+        return subprocess.run(['bash', str(ROOT/'scripts/runners/ipcc_esgf_to_hindcast/run_add_anomaly_to_baseline_with_coastal_fill.sh')],
+                              cwd=ROOT, env=dict(self.env, **settings), capture_output=True, text=True)
+
+    def test_two_models_all_variables_windows_and_existing_science_policies(self):
+        result = self.run_wrapper()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [json.loads(row) for row in self.log.read_text().splitlines()]
+        self.assertEqual(len(calls), 60)
+        for call in calls:
+            config = call['env']; var = config['VAR']
+            self.assertIn('{month}', config['BASELINE_FILE'])
+            self.assertIn('{month}', config['ANOMALY_FILE'])
+            self.assertTrue(config['OUT_DIR'].endswith('/monthly'))
+            self.assertIn('delta_monthly_', config['ANOMALY_FILE'])
+            self.assertEqual(config['ADD_SCRATCH_ROOT'], self.env['ADD_SCRATCH_ROOT'])
+            self.assertIn('--exclude=fixture-node', call['args'])
+            self.assertEqual(config['FILL_BASELINE_COASTAL_GAPS'], 'no')
+            self.assertEqual(config['ANOMALY_SCALE_SPEC'], 'siconc:0.01')
+            self.assertEqual(config['OUTPUT_BOUNDS_SPEC'], 'mlotst:0: siconc:0:1 so:0:')
+            self.assertEqual(config['COASTAL_FILL_METHOD'], 'distance_weighted')
+            self.assertEqual(config['COASTAL_FILL_REQUIRE_COMPLETE'], 'yes')
+            bgc = var in ('chl', 'o2', 'ph')
+            self.assertEqual(config['REMAP_ANOMALY_TO_BASELINE'], 'yes' if bgc else 'no')
+            self.assertEqual(config['REGRID_OUTPUT'], 'yes' if bgc else 'no')
+            self.assertEqual(config['ANOMALY_MODE'], 'log_ratio' if var == 'chl' else 'additive')
+            if bgc:
+                self.assertIn('{month}', config['COASTAL_MASK_FILE'])
+                self.assertIn('/hindcast/', config['BASELINE_FILE'])
+            else:
+                self.assertEqual(config['COASTAL_MASK_FILE'], '')
+                self.assertIn('/glorys/', config['BASELINE_FILE'])
+
+    def test_missing_late_month_aborts_entire_batch(self):
+        self.products[-1].unlink()
+        result = self.run_wrapper()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Missing monthly downscaling input', result.stderr)
+        self.assertFalse(self.log.exists())
+
+    def test_missing_model_and_member_filter(self):
+        result = self.run_wrapper(MODELS='A Missing')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Missing monthly delta group', result.stderr)
+        self.assertFalse(self.log.exists())
+        result = self.run_wrapper(MODELS='B', MEMBER='r1i1p1f2', VARS='chl thetao', WINDOWS='2050-2060')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [json.loads(row)['env'] for row in self.log.read_text().splitlines()]
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(all(config['REALIZATION_LABEL'] == 'r1i1p1f2' for config in calls))
+
+    def test_whole_period_paths_remain_compatible(self):
+        folder = self.root/'ipcc/A/r1i1p1f1/ssp585/thetao/delta_windows_0p05'
+        folder.mkdir(parents=True)
+        (folder/'ipcc_esgf_A_ssp585_r1i1p1f1_thetao_delta_2050-2060_minus_2006-2014_grid_0p05_global.nc').touch()
+        baseline = self.root/'glorys/thetao/clim_windows'
+        baseline.mkdir()
+        (baseline/'glorys12v1_thetao_clim_2006-2014.nc').touch()
+        result = self.run_wrapper(CLIMATOLOGY_MODE='whole', MODELS='A', VARS='thetao', WINDOWS='2050-2060')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [json.loads(row)['env'] for row in self.log.read_text().splitlines()]
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0]['OUT_DIR'].endswith('/0p05/2050-2060'))
+        self.assertNotIn('{month}', calls[0]['ANOMALY_FILE'])
+
+    def test_spooled_worker_sources_pair_helper_from_workspace(self):
+        import shutil
+        python = self.root/'bin/python3'
+        python.write_text('#!/bin/bash\nprintf "pair-entry %s %s\\n" "$2" "$3"\ncat >/dev/null\n')
+        python.chmod(0o755)
+        spool = self.root/'slurm_script'
+        shutil.copyfile(ROOT/'scripts/core/add_anomaly_to_baseline_with_coastal_fill.slurm.sh', spool)
+        result = subprocess.run(['bash', str(spool)], cwd=ROOT, capture_output=True, text=True,
+                                env=dict(self.env, VAR='thetao', BASELINE_FILE='baseline_{month}.nc',
+                                         ANOMALY_FILE='anomaly_{month}.nc', OUT_DIR=str(self.root/'out'),
+                                         REGRID_OUTPUT='no', REMAP_ANOMALY_TO_BASELINE='no',
+                                         COASTAL_MASK_FILE='', WRITE_FILLED_ANOM='no'))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f'pair-entry {spool} addition', result.stdout)
 
 
 if __name__ == '__main__': unittest.main()

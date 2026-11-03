@@ -33,6 +33,201 @@
 
 set -euo pipefail
 
+# Shared monthly pair orchestration. Sourcing this existing worker defines only
+# the helper; scientific delta execution below is reserved for direct runs.
+climatology_pair_batch() {
+  python3 - "$@" <<'PY_DELTA_BATCH'
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+
+import netCDF4 as nc
+
+env = os.environ.copy()
+addition = len(sys.argv) > 2 and sys.argv[2] == 'addition'
+if addition:
+    env.update(FUTURE_FILE=env['ANOMALY_FILE'],
+               DELTA_SCRATCH_ROOT=env['ADD_SCRATCH_ROOT'],
+               REGRID_DELTA=env['REGRID_OUTPUT'], GRIDFILE=env.get('REGRID_GRIDFILE', ''))
+monthly = env['CLIMATOLOGY_MODE'] == 'monthly'
+scratch = env['DELTA_SCRATCH_ROOT']
+if monthly and not scratch:
+    raise SystemExit('ERROR: Monthly deltas require DELTA_SCRATCH_ROOT')
+root = Path(scratch).resolve()
+root.mkdir(parents=True, exist_ok=True)
+pairs = []
+for month in range(1, 13) if monthly else (0,):
+    token = f'{month:02d}'
+    if monthly and any('{month}' not in env[key] for key in ('BASELINE_FILE', 'FUTURE_FILE')):
+        raise SystemExit('ERROR: Monthly input templates must contain {month}')
+    paths = [Path(env[key].replace('{month}', token)).resolve()
+             for key in ('BASELINE_FILE', 'FUTURE_FILE')]
+    if addition and env.get('COASTAL_MASK_FILE'):
+        paths.append(Path(env['COASTAL_MASK_FILE'].replace('{month}', token)).resolve())
+    for index, (path, tag) in enumerate(zip(paths, (env['BASELINE_TAG'], env['FUTURE_TAG'], env['BASELINE_TAG']))):
+        if not path.is_file():
+            raise SystemExit(f'ERROR: Missing delta input: {path}')
+        with nc.Dataset(path) as ds:
+            variable = env.get('COASTAL_MASK_VAR') or env['VAR'] if index == 2 else env['VAR']
+            if variable not in ds.variables:
+                raise SystemExit(f'ERROR: Missing variable in {path}')
+            if monthly:
+                import calendar
+                import datetime as dt
+                import numpy as np
+                a, b = map(int, tag.split('-'))
+                if (getattr(ds, 'climatology_product_type', '') != 'monthly'
+                        or int(getattr(ds, 'climatology_month', 0)) != month
+                        or int(getattr(ds, 'climatology_selected_timesteps', 0)) != b - a + 1):
+                    raise SystemExit(f'ERROR: Monthly product/month/count mismatch: {path}')
+                start = dt.datetime(a, month, 1)
+                end = dt.datetime(b, month, calendar.monthrange(b, month)[1])
+                if (ds.climatology_window_start != start.date().isoformat()
+                        or ds.climatology_window_end != end.date().isoformat()):
+                    raise SystemExit(f'ERROR: Monthly window mismatch: {path}')
+                time, bounds = ds.variables['time'], ds.variables['time_bnds']
+                if (time.shape != (1,) or bounds.shape != (1, 2)
+                        or time.climatology != 'time_bnds' or time.units != bounds.units
+                        or time.calendar != bounds.calendar or time.calendar != 'proleptic_gregorian'):
+                    raise SystemExit(f'ERROR: Invalid monthly time encoding: {path}')
+                np.testing.assert_allclose(bounds[:], nc.date2num([[start, end]], time.units, time.calendar),
+                                           rtol=0, atol=1e-8)
+                midpoint = start + dt.timedelta(days=(end - start).days // 2)
+                np.testing.assert_allclose(time[:], nc.date2num([midpoint], time.units, time.calendar),
+                                           rtol=0, atol=1e-8)
+    signatures = [(p.stat().st_size, p.stat().st_mtime_ns) for p in paths]
+    pairs.append((token if monthly else '', paths, signatures))
+
+out = Path(env['OUT_DIR']).resolve()
+out.mkdir(parents=True, exist_ok=True)
+stem = f"{env['OUT_PREFIX']}_delta_{env['FUTURE_TAG']}_minus_{env['BASELINE_TAG']}"
+if addition:
+    stem = f"{env['OUT_PREFIX']}_downscaled_{env['FUTURE_TAG']}_minus_{env['BASELINE_TAG']}"
+lock = out / f'.{stem}.lock'
+try:
+    lock.mkdir()
+except FileExistsError:
+    raise SystemExit(f'ERROR: Delta outputs locked: {lock}; confirm the previous job stopped before removing a stale lock')
+child = None
+def run(command, **kwargs):
+    global child
+    child = subprocess.Popen(command, start_new_session=True, **kwargs)
+    status = child.wait()
+    child = None
+    if status:
+        raise subprocess.CalledProcessError(status, command)
+
+def stop(signum, frame):
+    if child is not None and child.poll() is None:
+        os.killpg(child.pid, signal.SIGTERM)
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.wait()
+    raise SystemExit(128 + signum)
+
+signal.signal(signal.SIGTERM, stop)
+signal.signal(signal.SIGINT, stop)
+try:
+    for month, paths, signatures in pairs:
+        if signatures != [(p.stat().st_size, p.stat().st_mtime_ns) for p in paths]:
+            raise SystemExit('ERROR: Delta sources changed after preflight')
+        # Include the high-resolution target and QC/remapping intermediates in
+        # a conservative per-pair space estimate. Never hold twelve HD fields.
+        with nc.Dataset(paths[1]) as ds:
+            field = ds.variables[env['VAR']]
+            cells = field.size
+            levels = 1
+            for dimension in field.dimensions:
+                if dimension not in ('time', 'lat', 'lon', 'latitude', 'longitude', 'x', 'y'):
+                    levels *= len(ds.dimensions[dimension])
+        if addition:
+            with nc.Dataset(paths[0]) as ds:
+                cells = max(cells, ds.variables[env['VAR']].size)
+        if env['REGRID_DELTA'] == 'yes':
+            grid = {}
+            for line in Path(env['GRIDFILE']).read_text().splitlines():
+                key, sep, value = line.partition('=')
+                if sep and key.strip() in ('gridsize', 'xsize', 'ysize'):
+                    grid[key.strip()] = int(value.strip())
+            target_cells = grid.get('gridsize', grid.get('xsize', 0) * grid.get('ysize', 0))
+            if not target_cells:
+                raise SystemExit('ERROR: Cannot estimate target grid size for scratch')
+            cells = max(cells, target_cells * levels)
+        required = sum(p.stat().st_size for p in paths) + cells * 8 * 8 + 10 * 1024**3
+        available = shutil.disk_usage(root).free
+        print(f'[SPACE] required={required} available={available}', flush=True)
+        if available < required:
+            raise SystemExit('ERROR: Insufficient delta scratch space')
+        with tempfile.TemporaryDirectory(prefix='delta_', dir=root) as work_text:
+            work = Path(work_text)
+            job_env = dict(env, CLIMATOLOGY_MODE='whole', DELTA_SCRATCH_ROOT='',
+                           DELTA_MONTH=month, OUT_DIR=str(work/'native'),
+                           REGRID_OUT_DIR=str(work/'regrid'), TMP_DIR=str(work/'tmp'),
+                           OUT_PREFIX=env['OUT_PREFIX'] + (f'_month_{month}' if month else ''))
+            for role, path in zip(('BASELINE', 'FUTURE', 'MASK'), paths):
+                destination = work / f'{role.lower()}.nc'
+                print(f'[COPY IN] {path}', flush=True)
+                run(['rsync', '-t', '--', str(path), str(destination)])
+                job_env[f'{role}_FILE'] = str(destination)
+                job_env[f'DELTA_{role}_SOURCE'] = str(path)
+            if addition:
+                job_env.update(ADD_SCRATCH_ROOT='', ADD_MONTH=month,
+                               ANOMALY_FILE=job_env['FUTURE_FILE'],
+                               ADD_BASELINE_SOURCE=str(paths[0]), ADD_ANOMALY_SOURCE=str(paths[1]))
+                if len(paths) == 3:
+                    job_env['COASTAL_MASK_FILE'] = job_env['MASK_FILE']
+                    job_env['ADD_COASTAL_MASK_SOURCE'] = str(paths[2])
+                if month:
+                    import calendar
+                    a, b = map(int, env['FUTURE_TAG'].split('-'))
+                    job_env.update(OUTPUT_TIME_START=f'{a}-{month}-01',
+                                   OUTPUT_TIME_END=f'{b}-{month}-{calendar.monthrange(b, int(month))[1]:02d}')
+                for key, flag in (('ANOMALY_GRIDFILE', 'REMAP_ANOMALY_TO_BASELINE'),
+                                  ('REGRID_GRIDFILE', 'REGRID_OUTPUT')):
+                    if env.get(flag) == 'yes':
+                        shutil.copyfile(env[key], work/f'{key}.txt')
+                        job_env[key] = str(work/f'{key}.txt')
+            if env['REGRID_DELTA'] == 'yes':
+                shutil.copyfile(env['GRIDFILE'], work/'grid.txt')
+                job_env['GRIDFILE'] = str(work/'grid.txt')
+            print(f'[CALCULATE] month={month or "whole"}', flush=True)
+            run(['bash', sys.argv[1]], env=job_env)
+            if signatures != [(p.stat().st_size, p.stat().st_mtime_ns) for p in paths]:
+                raise SystemExit('ERROR: Delta sources changed during calculation')
+            destinations = [(work/'native', out)]
+            if env['REGRID_DELTA'] == 'yes':
+                destinations.append((work/'regrid', Path(env['REGRID_OUT_DIR']).resolve()))
+            for source_dir, destination_dir in destinations:
+                products = list(source_dir.glob('*.nc'))
+                if len(products) != 1:
+                    raise SystemExit(f'ERROR: Expected exactly one delta in {source_dir}')
+                product = products[0]
+                destination_dir.mkdir(parents=True, exist_ok=True)
+                with tempfile.TemporaryDirectory(prefix='.delta_publish_', dir=destination_dir) as publish:
+                    staged = Path(publish)/product.name
+                    run(['rsync', '-t', '--', str(product), str(staged)])
+                    if staged.stat().st_size != product.stat().st_size:
+                        raise SystemExit('ERROR: Delta copy-back size mismatch')
+                    with nc.Dataset(staged) as ds, nc.Dataset(product) as original:
+                        if ds.variables[env['VAR']].shape != original.variables[env['VAR']].shape:
+                            raise SystemExit('ERROR: Delta copy-back shape mismatch')
+                    os.replace(staged, destination_dir/product.name)
+                print(f'[PUBLISHED] {destination_dir/product.name}', flush=True)
+finally:
+    lock.rmdir()
+print(f'All {len(pairs)} delta pairs completed for VAR={env["VAR"]}', flush=True)
+PY_DELTA_BATCH
+}
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
 # ==============================================================================
 # Required env vars (passed at sbatch time)
 #   DATASET_LABEL   : short dataset label for logs/messages
@@ -160,163 +355,7 @@ if [[ "$CLIMATOLOGY_MODE" == monthly || -n "$DELTA_SCRATCH_ROOT" ]]; then
   export CLIMATOLOGY_MODE DELTA_SCRATCH_ROOT REGRID_DELTA REGRID_OUT_DIR GRIDFILE
   export DELTA_MODE LOG_RATIO_FLOOR LOG_RATIO_INVALID_POLICY LOG_RATIO_MIN_FACTOR LOG_RATIO_MAX_FACTOR
   export METHOD REGRID_SUFFIX DATASET_LABEL
-  python3 - "$0" <<'PY_DELTA_BATCH'
-import os
-from pathlib import Path
-import shutil
-import signal
-import subprocess
-import sys
-import tempfile
-
-import netCDF4 as nc
-
-env = os.environ.copy()
-monthly = env['CLIMATOLOGY_MODE'] == 'monthly'
-scratch = env['DELTA_SCRATCH_ROOT']
-if monthly and not scratch:
-    raise SystemExit('ERROR: Monthly deltas require DELTA_SCRATCH_ROOT')
-root = Path(scratch).resolve()
-root.mkdir(parents=True, exist_ok=True)
-pairs = []
-for month in range(1, 13) if monthly else (0,):
-    token = f'{month:02d}'
-    if monthly and any('{month}' not in env[key] for key in ('BASELINE_FILE', 'FUTURE_FILE')):
-        raise SystemExit('ERROR: Monthly input templates must contain {month}')
-    paths = [Path(env[key].replace('{month}', token)).resolve()
-             for key in ('BASELINE_FILE', 'FUTURE_FILE')]
-    for path, tag in zip(paths, (env['BASELINE_TAG'], env['FUTURE_TAG'])):
-        if not path.is_file():
-            raise SystemExit(f'ERROR: Missing delta input: {path}')
-        with nc.Dataset(path) as ds:
-            if env['VAR'] not in ds.variables:
-                raise SystemExit(f'ERROR: Missing variable in {path}')
-            if monthly:
-                import calendar
-                import datetime as dt
-                import numpy as np
-                a, b = map(int, tag.split('-'))
-                if (getattr(ds, 'climatology_product_type', '') != 'monthly'
-                        or int(getattr(ds, 'climatology_month', 0)) != month
-                        or int(getattr(ds, 'climatology_selected_timesteps', 0)) != b - a + 1):
-                    raise SystemExit(f'ERROR: Monthly product/month/count mismatch: {path}')
-                start = dt.datetime(a, month, 1)
-                end = dt.datetime(b, month, calendar.monthrange(b, month)[1])
-                if (ds.climatology_window_start != start.date().isoformat()
-                        or ds.climatology_window_end != end.date().isoformat()):
-                    raise SystemExit(f'ERROR: Monthly window mismatch: {path}')
-                time, bounds = ds.variables['time'], ds.variables['time_bnds']
-                if (time.shape != (1,) or bounds.shape != (1, 2)
-                        or time.climatology != 'time_bnds' or time.units != bounds.units
-                        or time.calendar != bounds.calendar or time.calendar != 'proleptic_gregorian'):
-                    raise SystemExit(f'ERROR: Invalid monthly time encoding: {path}')
-                np.testing.assert_allclose(bounds[:], nc.date2num([[start, end]], time.units, time.calendar),
-                                           rtol=0, atol=1e-8)
-                midpoint = start + dt.timedelta(days=(end - start).days // 2)
-                np.testing.assert_allclose(time[:], nc.date2num([midpoint], time.units, time.calendar),
-                                           rtol=0, atol=1e-8)
-    signatures = [(p.stat().st_size, p.stat().st_mtime_ns) for p in paths]
-    pairs.append((token if monthly else '', paths, signatures))
-
-out = Path(env['OUT_DIR']).resolve()
-out.mkdir(parents=True, exist_ok=True)
-stem = f"{env['OUT_PREFIX']}_delta_{env['FUTURE_TAG']}_minus_{env['BASELINE_TAG']}"
-lock = out / f'.{stem}.lock'
-try:
-    lock.mkdir()
-except FileExistsError:
-    raise SystemExit(f'ERROR: Delta outputs locked: {lock}; confirm the previous job stopped before removing a stale lock')
-child = None
-def run(command, **kwargs):
-    global child
-    child = subprocess.Popen(command, start_new_session=True, **kwargs)
-    status = child.wait()
-    child = None
-    if status:
-        raise subprocess.CalledProcessError(status, command)
-
-def stop(signum, frame):
-    if child is not None and child.poll() is None:
-        os.killpg(child.pid, signal.SIGTERM)
-        try:
-            child.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGKILL)
-            child.wait()
-    raise SystemExit(128 + signum)
-
-signal.signal(signal.SIGTERM, stop)
-signal.signal(signal.SIGINT, stop)
-try:
-    for month, paths, signatures in pairs:
-        if signatures != [(p.stat().st_size, p.stat().st_mtime_ns) for p in paths]:
-            raise SystemExit('ERROR: Delta sources changed after preflight')
-        # Include the high-resolution target and QC/remapping intermediates in
-        # a conservative per-pair space estimate. Never hold twelve HD fields.
-        with nc.Dataset(paths[1]) as ds:
-            field = ds.variables[env['VAR']]
-            cells = field.size
-            levels = 1
-            for dimension in field.dimensions:
-                if dimension not in ('time', 'lat', 'lon', 'latitude', 'longitude', 'x', 'y'):
-                    levels *= len(ds.dimensions[dimension])
-        if env['REGRID_DELTA'] == 'yes':
-            grid = {}
-            for line in Path(env['GRIDFILE']).read_text().splitlines():
-                key, sep, value = line.partition('=')
-                if sep and key.strip() in ('gridsize', 'xsize', 'ysize'):
-                    grid[key.strip()] = int(value.strip())
-            target_cells = grid.get('gridsize', grid.get('xsize', 0) * grid.get('ysize', 0))
-            if not target_cells:
-                raise SystemExit('ERROR: Cannot estimate target grid size for scratch')
-            cells = max(cells, target_cells * levels)
-        required = sum(p.stat().st_size for p in paths) + cells * 8 * 8 + 10 * 1024**3
-        available = shutil.disk_usage(root).free
-        print(f'[SPACE] required={required} available={available}', flush=True)
-        if available < required:
-            raise SystemExit('ERROR: Insufficient delta scratch space')
-        with tempfile.TemporaryDirectory(prefix='delta_', dir=root) as work_text:
-            work = Path(work_text)
-            job_env = dict(env, CLIMATOLOGY_MODE='whole', DELTA_SCRATCH_ROOT='',
-                           DELTA_MONTH=month, OUT_DIR=str(work/'native'),
-                           REGRID_OUT_DIR=str(work/'regrid'), TMP_DIR=str(work/'tmp'),
-                           OUT_PREFIX=env['OUT_PREFIX'] + (f'_month_{month}' if month else ''))
-            for role, path in zip(('BASELINE', 'FUTURE'), paths):
-                destination = work / f'{role.lower()}.nc'
-                print(f'[COPY IN] {path}', flush=True)
-                run(['rsync', '-t', '--', str(path), str(destination)])
-                job_env[f'{role}_FILE'] = str(destination)
-                job_env[f'DELTA_{role}_SOURCE'] = str(path)
-            if env['REGRID_DELTA'] == 'yes':
-                shutil.copyfile(env['GRIDFILE'], work/'grid.txt')
-                job_env['GRIDFILE'] = str(work/'grid.txt')
-            print(f'[CALCULATE] month={month or "whole"}', flush=True)
-            run(['bash', sys.argv[1]], env=job_env)
-            if signatures != [(p.stat().st_size, p.stat().st_mtime_ns) for p in paths]:
-                raise SystemExit('ERROR: Delta sources changed during calculation')
-            destinations = [(work/'native', out)]
-            if env['REGRID_DELTA'] == 'yes':
-                destinations.append((work/'regrid', Path(env['REGRID_OUT_DIR']).resolve()))
-            for source_dir, destination_dir in destinations:
-                products = list(source_dir.glob('*.nc'))
-                if len(products) != 1:
-                    raise SystemExit(f'ERROR: Expected exactly one delta in {source_dir}')
-                product = products[0]
-                destination_dir.mkdir(parents=True, exist_ok=True)
-                with tempfile.TemporaryDirectory(prefix='.delta_publish_', dir=destination_dir) as publish:
-                    staged = Path(publish)/product.name
-                    run(['rsync', '-t', '--', str(product), str(staged)])
-                    if staged.stat().st_size != product.stat().st_size:
-                        raise SystemExit('ERROR: Delta copy-back size mismatch')
-                    with nc.Dataset(staged) as ds, nc.Dataset(product) as original:
-                        if ds.variables[env['VAR']].shape != original.variables[env['VAR']].shape:
-                            raise SystemExit('ERROR: Delta copy-back shape mismatch')
-                    os.replace(staged, destination_dir/product.name)
-                print(f'[PUBLISHED] {destination_dir/product.name}', flush=True)
-finally:
-    lock.rmdir()
-print(f'All {len(pairs)} delta pairs completed for VAR={env["VAR"]}', flush=True)
-PY_DELTA_BATCH
+  climatology_pair_batch "$0" delta
   exit "$?"
 fi
 

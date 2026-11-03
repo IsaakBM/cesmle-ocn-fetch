@@ -275,6 +275,10 @@ class SafeguardTests(unittest.TestCase):
                                 qc.values[0, 0, 1, 1] = 0
                                 product['chl_log_ratio_qc_valid'] = qc
                                 product.chl.values[0, 0, 1, 1] = np.nan
+                            # Reproduce legacy CDO products with detached bounds
+                            # arrays. These must never enter scientific CDO math.
+                            for name in ('climatology_bnds', 'climatology_bnds_2'):
+                                product[name] = xr.DataArray([[10000., 20000.]], dims=('time', 'bnds'))
                             product.to_netcdf(self.root/f'add_{role}_{month:02d}.nc')
                             if role == 'baseline':
                                 mask = product.rename({variable: 'thetao'}) if variable != 'thetao' else product.copy()
@@ -318,6 +322,10 @@ class SafeguardTests(unittest.TestCase):
                             self.assertEqual(ds.attrs['downscaling_coastal_mask_file'], str((self.root/f'add_mask_{month:02d}.nc').resolve()))
                             self.assertEqual(ds[variable].attrs['units'], 'mg m-3' if variable == 'chl' else '1' if variable == 'siconc' else 'degC')
                             self.assertEqual(ds[variable].attrs['anomaly_mode'], mode)
+                            if directory == 'add_regrid':
+                                names = subprocess.check_output(
+                                    ['cdo', '-s', 'showname', str(path)], text=True).split()
+                                self.assertEqual(set(names), {variable, f'{variable}_log_ratio_qc_valid'})
                             if variable == 'chl':
                                 self.assertTrue(np.isnan(data[0, 0, 1, 1]))
                                 self.assertEqual(ds.chl_log_ratio_qc_valid[0, 0, 1, 1], 0)
@@ -411,22 +419,25 @@ class SafeguardTests(unittest.TestCase):
             data[:] = [2.]
             data.setncatts(dict(units='mg m-3', anomaly_mode='log_ratio',
                                anomaly_apply_formula='baseline * exp(anomaly)'))
-        with netCDF4.Dataset(destination, 'w', format='NETCDF4_CLASSIC') as ds:
-            ds.createDimension('time', 1)
-            ds.createDimension('bnds', 2)
-            time = ds.createVariable('time', 'f8', ('time',))
-            time.units = 'days since 2035-07-02 00:00:00'
-            time.calendar = 'proleptic_gregorian'
-            time.climatology = 'climatology_bnds'
-            time.bounds = 'climatology_bnds'
-            time[:] = [0]
-            bounds = ds.createVariable('climatology_bnds', 'f8', ('time', 'bnds'))
-            bounds[:] = [[0, 4017]]
-            data = ds.createVariable('chl', 'f4', ('time',))
-            data[:] = [2.]
-            data.units = 'lost'
-            data.anomaly_mode = 'lost'
+        def make_destination(include_bounds=True):
+            with netCDF4.Dataset(destination, 'w', format='NETCDF4_CLASSIC') as ds:
+                ds.createDimension('time', 1)
+                ds.createDimension('bnds', 2)
+                time = ds.createVariable('time', 'f8', ('time',))
+                time.units = 'days since 2035-07-02 00:00:00'
+                time.calendar = 'proleptic_gregorian'
+                time.climatology = 'climatology_bnds'
+                time.bounds = 'climatology_bnds'
+                time[:] = [0]
+                if include_bounds:
+                    bounds = ds.createVariable('climatology_bnds', 'f8', ('time', 'bnds'))
+                    bounds[:] = [[0, 4017]]
+                data = ds.createVariable('chl', 'f4', ('time',))
+                data[:] = [2.]
+                data.units = 'lost'
+                data.anomaly_mode = 'lost'
 
+        make_destination()
         result = subprocess.run(
             [sys.executable, '-', str(source), str(destination)],
             input=embedded(ADD, 'PY_RESTORE_CLIMATOLOGY_TIME'),
@@ -437,6 +448,7 @@ class SafeguardTests(unittest.TestCase):
         with netCDF4.Dataset(destination) as ds:
             self.assertEqual(ds.variables['time'].units, 'days since 2030-01-01 00:00:00')
             self.assertEqual(ds.variables['time'].climatology, 'time_bnds')
+            self.assertNotIn('climatology_bnds', ds.variables)
             self.assertEqual(ds.variables['time_bnds'].dtype, np.dtype('float64'))
             self.assertEqual(ds.data_model, 'NETCDF4_CLASSIC')
             self.assertNotIn('bounds', ds.variables['time'].ncattrs())
@@ -452,12 +464,18 @@ class SafeguardTests(unittest.TestCase):
                 ds.variables['time_bnds'].units,
                 'days since 2030-01-01 00:00:00',
             )
+        make_destination(include_bounds=False)
+        result = subprocess.run([sys.executable, '-', str(source), str(destination)],
+                                input=embedded(ADD, 'PY_RESTORE_CLIMATOLOGY_TIME'),
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with netCDF4.Dataset(destination) as ds:
+            self.assertEqual(ds.variables['time_bnds'].dtype, np.dtype('float64'))
+            np.testing.assert_array_equal(ds.variables['time_bnds'][:], expected_bounds)
         # Legacy whole-period products may keep CDO's renamed bounds variable.
         with netCDF4.Dataset(source, 'r+') as ds:
             ds.climatology_product_type = 'whole'
-        with netCDF4.Dataset(destination, 'r+') as ds:
-            ds.variables['time'].climatology = 'climatology_bnds'
-            ds.variables['time'][:] = [0]
+        make_destination()
         result = subprocess.run([sys.executable, '-', str(source), str(destination)],
                                 input=embedded(ADD, 'PY_RESTORE_CLIMATOLOGY_TIME'),
                                 capture_output=True, text=True)

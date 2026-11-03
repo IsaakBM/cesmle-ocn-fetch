@@ -55,6 +55,16 @@ New time/bounds variables are created as float64, including in strict
 encoding. Integer coordinates outside the exact float64 range are rejected;
 serialized values are compared with the source after writing. The restore
 regression includes an int64-coordinate source and a classic-model destination.
+When canonicalizing a valid renamed bounds variable, rename that variable in
+place rather than creating a detached duplicate. Legacy inputs may nevertheless
+already contain orphan `climatology_bnds`/`climatology_bnds_2` arrays. CDO
+subtraction/remapping selects the requested scientific variable explicitly;
+QC masking and merging explicitly select only that field and its QC mask.
+Deleting just the QC mask from an otherwise unfiltered dataset is insufficient:
+it can leave metadata arrays in a binary CDO data stream and fail with unequal
+variable counts on the cluster. The full monthly regression includes both
+detached bounds names and verifies that the final remapped data-variable list
+contains only the requested field and QC mask.
 
 Regression fixtures deliberately remove metadata, change time/bounds values,
 break QC linkage, and simulate a same-size copy with altered metadata. They

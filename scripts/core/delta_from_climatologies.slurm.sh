@@ -565,7 +565,7 @@ if [[ -n "$DELTA_MONTH" ]]; then
   CDO_OUTPUT_ARGS=(-f nc4c -z zip_1)
 fi
 if [[ "$DELTA_MODE" == "additive" ]]; then
-  cdo -L -O ${CDO_OUTPUT_ARGS[@]+"${CDO_OUTPUT_ARGS[@]}"} sub "${FUTURE_FILE}" "${BASELINE_FILE}" "${TMP_DELTA}"
+  cdo -L -O ${CDO_OUTPUT_ARGS[@]+"${CDO_OUTPUT_ARGS[@]}"} sub -selname,"${VAR}" "${FUTURE_FILE}" -selname,"${VAR}" "${BASELINE_FILE}" "${TMP_DELTA}"
 else
   python3 - <<PY
 import numpy as np
@@ -738,13 +738,13 @@ if [[ "$REGRID_DELTA" == "yes" ]]; then
     # The scientific delta follows the configured interpolation, while the
     # categorical QC mask uses nearest-neighbor remapping. Reapply the mask
     # after interpolation so rejected source cells cannot be reconstructed.
-    cdo -L -O ${CDO_OUTPUT_ARGS[@]+"${CDO_OUTPUT_ARGS[@]}"} ${METHOD},"${GRIDFILE}" -delname,"${QC_MASK_NAME}" "${DELTA_FILE}" "${TMP_REGRID_DATA}"
+    cdo -L -O ${CDO_OUTPUT_ARGS[@]+"${CDO_OUTPUT_ARGS[@]}"} ${METHOD},"${GRIDFILE}" -selname,"${VAR}" "${DELTA_FILE}" "${TMP_REGRID_DATA}"
     cdo -L -O ${CDO_OUTPUT_ARGS[@]+"${CDO_OUTPUT_ARGS[@]}"} remapnn,"${GRIDFILE}" -selname,"${QC_MASK_NAME}" "${DELTA_FILE}" "${TMP_REGRID_MASK}"
-    cdo -L -O ${CDO_OUTPUT_ARGS[@]+"${CDO_OUTPUT_ARGS[@]}"} ifthen "${TMP_REGRID_MASK}" "${TMP_REGRID_DATA}" "${TMP_REGRID_MASKED}"
-    cdo -L -O ${CDO_OUTPUT_ARGS[@]+"${CDO_OUTPUT_ARGS[@]}"} merge "${TMP_REGRID_MASKED}" "${TMP_REGRID_MASK}" "${TMP_REGRID}"
+    cdo -L -O ${CDO_OUTPUT_ARGS[@]+"${CDO_OUTPUT_ARGS[@]}"} ifthen -selname,"${QC_MASK_NAME}" "${TMP_REGRID_MASK}" -selname,"${VAR}" "${TMP_REGRID_DATA}" "${TMP_REGRID_MASKED}"
+    cdo -L -O ${CDO_OUTPUT_ARGS[@]+"${CDO_OUTPUT_ARGS[@]}"} merge -selname,"${VAR}" "${TMP_REGRID_MASKED}" -selname,"${QC_MASK_NAME}" "${TMP_REGRID_MASK}" "${TMP_REGRID}"
     rm -f "${TMP_REGRID_DATA}" "${TMP_REGRID_MASK}" "${TMP_REGRID_MASKED}"
   else
-    cdo -L -O ${CDO_OUTPUT_ARGS[@]+"${CDO_OUTPUT_ARGS[@]}"} ${METHOD},"${GRIDFILE}" "${DELTA_FILE}" "${TMP_REGRID}"
+    cdo -L -O ${CDO_OUTPUT_ARGS[@]+"${CDO_OUTPUT_ARGS[@]}"} ${METHOD},"${GRIDFILE}" -selname,"${VAR}" "${DELTA_FILE}" "${TMP_REGRID}"
   fi
   finalize_delta "$TMP_REGRID"
   mv -f "${TMP_REGRID}" "${REGRID_FILE}"

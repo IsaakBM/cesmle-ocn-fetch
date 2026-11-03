@@ -339,13 +339,15 @@ remap_preserving_qc_mask() {
 
   rm -f "${data_tmp}" "${mask_tmp}" "${masked_tmp}"
   if cdo -s showname "${src}" | tr ' ' '\n' | grep -Fxq "${QC_MASK_NAME}"; then
-    cdo -L -O ${output_args[@]+"${output_args[@]}"} "${method},${gridfile}" -delname,"${QC_MASK_NAME}" "${src}" "${data_tmp}"
+    # Select the named scientific field, not every variable except the mask:
+    # old CDO products can also contain detached climatology-bounds arrays.
+    cdo -L -O ${output_args[@]+"${output_args[@]}"} "${method},${gridfile}" -selname,"${VAR}" "${src}" "${data_tmp}"
     cdo -L -O ${output_args[@]+"${output_args[@]}"} "remapnn,${gridfile}" -selname,"${QC_MASK_NAME}" "${src}" "${mask_tmp}"
-    cdo -L -O ${output_args[@]+"${output_args[@]}"} ifthen "${mask_tmp}" "${data_tmp}" "${masked_tmp}"
-    cdo -L -O ${output_args[@]+"${output_args[@]}"} merge "${masked_tmp}" "${mask_tmp}" "${dst}"
+    cdo -L -O ${output_args[@]+"${output_args[@]}"} ifthen -selname,"${QC_MASK_NAME}" "${mask_tmp}" -selname,"${VAR}" "${data_tmp}" "${masked_tmp}"
+    cdo -L -O ${output_args[@]+"${output_args[@]}"} merge -selname,"${VAR}" "${masked_tmp}" -selname,"${QC_MASK_NAME}" "${mask_tmp}" "${dst}"
     rm -f "${data_tmp}" "${mask_tmp}" "${masked_tmp}"
   else
-    cdo -L -O ${output_args[@]+"${output_args[@]}"} "${method},${gridfile}" "${src}" "${dst}"
+    cdo -L -O ${output_args[@]+"${output_args[@]}"} "${method},${gridfile}" -selname,"${VAR}" "${src}" "${dst}"
   fi
 
   # CDO may preserve the raw climatology-bounds values while changing the
@@ -387,7 +389,13 @@ with Dataset(source_path) as source, Dataset(destination_path, "r+") as destinat
     if monthly:
         if source_bounds_name != 'time_bnds':
             raise ValueError('Monthly source must use canonical time_bnds')
+        previous_bounds_name = destination_bounds_name
         destination_bounds_name = 'time_bnds'
+        if (destination_bounds_name not in destination.variables and previous_bounds_name
+                and previous_bounds_name in destination.variables):
+            # Rename the referenced CDO bounds instead of leaving a detached
+            # copy behind when canonicalizing the linkage.
+            destination.renameVariable(previous_bounds_name, destination_bounds_name)
         if destination_bounds_name not in destination.variables:
             reference = source.variables[source_bounds_name]
             for dim in reference.dimensions:

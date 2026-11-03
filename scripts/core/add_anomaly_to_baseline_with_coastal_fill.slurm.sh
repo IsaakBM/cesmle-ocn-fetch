@@ -354,12 +354,19 @@ remap_preserving_qc_mask() {
   # so the remapped file decodes to the original climatology window.
   python3 - "${src}" "${dst}" <<'PY_RESTORE_CLIMATOLOGY_TIME'
 import sys
+import numpy as np
 
 from netCDF4 import Dataset
 
 source_path, destination_path = sys.argv[1:]
 
 with Dataset(source_path) as source, Dataset(destination_path, "r+") as destination:
+    # CDO merge (used to reattach the categorical QC mask) can discard the
+    # scientific globals as well as changing time encoding. Restore these from
+    # the source whose values were remapped, leaving CDO's history intact.
+    for name in source.ncattrs():
+        if name.startswith(("climatology_", "downscaling_")) or name == "log_ratio_qc_mask_variable":
+            destination.setncattr(name, source.getncattr(name))
     if "time" not in source.variables or "time" not in destination.variables:
         raise ValueError("Cannot preserve climatology metadata without time variables")
 
@@ -376,6 +383,19 @@ with Dataset(source_path) as source, Dataset(destination_path, "r+") as destinat
             f"Source time coordinate references missing bounds variable "
             f"{source_bounds_name!r}: {source_path}"
         )
+    monthly = getattr(source, 'climatology_product_type', '') == 'monthly'
+    if monthly:
+        if source_bounds_name != 'time_bnds':
+            raise ValueError('Monthly source must use canonical time_bnds')
+        destination_bounds_name = 'time_bnds'
+        if destination_bounds_name not in destination.variables:
+            reference = source.variables[source_bounds_name]
+            for dim in reference.dimensions:
+                if dim not in destination.dimensions:
+                    destination.createDimension(dim, len(source.dimensions[dim]))
+            destination.createVariable(destination_bounds_name, reference.dtype, reference.dimensions)
+        if 'bounds' in destination_time.ncattrs():
+            destination_time.delncattr('bounds')
     if not destination_bounds_name or destination_bounds_name not in destination.variables:
         raise ValueError(
             f"Remapped time coordinate lacks its referenced climatology bounds: "
@@ -406,6 +426,24 @@ with Dataset(source_path) as source, Dataset(destination_path, "r+") as destinat
     for name in source_bounds.ncattrs():
         if name != "_FillValue":
             destination_bounds.setncattr(name, source_bounds.getncattr(name))
+
+    # Remapping changes locations, not units or the application formula. Avoid
+    # copying source-grid coordinate references or statistics onto the new grid.
+    scientific_attributes = ('units', 'standard_name', 'long_name', 'positive',
+                             'anomaly_mode', 'anomaly_apply_formula', 'delta_mode', 'delta_formula')
+    for name, variable in source.variables.items():
+        if name in source.dimensions or name in ('time', source_bounds_name) or name not in destination.variables:
+            continue
+        for attribute in scientific_attributes:
+            if attribute in variable.ncattrs():
+                destination.variables[name].setncattr(attribute, variable.getncattr(attribute))
+
+    if monthly and (source_time.units != source_bounds.units or source_time.calendar != source_bounds.calendar):
+        raise ValueError('Source time and climatology bounds have inconsistent encoding')
+    np.testing.assert_array_equal(destination_time[:], source_time[:])
+    np.testing.assert_array_equal(destination_bounds[:], source_bounds[:])
+    if monthly and (destination_time.units != destination_bounds.units or destination_time.calendar != destination_bounds.calendar):
+        raise ValueError('Remapped time and climatology bounds have inconsistent encoding')
 
     destination.sync()
     print(
@@ -1192,6 +1230,9 @@ if output_lower_bound is not None or output_upper_bound is not None:
     da_out.attrs["output_bounds_applied"] = (
         f"lower={output_lower_bound}, upper={output_upper_bound}"
     )
+# xr.where attribute retention depends on library defaults. Clipping changes
+# values, not their units or the anomaly-application formula.
+da_out.attrs.update(output_attrs)
 
 ds_out = ds_base.copy()
 ds_out[base_var] = da_out

@@ -133,6 +133,52 @@ def stop(signum, frame):
 
 signal.signal(signal.SIGTERM, stop)
 signal.signal(signal.SIGINT, stop)
+
+def validate_monthly_product(path, baseline, future, mask_source=None):
+    """Reject metadata loss before any native/remapped file is published."""
+    if not monthly:
+        return
+    import numpy as np
+    with nc.Dataset(path) as result, nc.Dataset(future) as reference, nc.Dataset(baseline) as historical:
+        for key in ('climatology_product_type', 'climatology_month', 'climatology_selected_timesteps',
+                    'climatology_window_start', 'climatology_window_end'):
+            if str(getattr(result, key, '')) != str(getattr(reference, key, '')):
+                raise ValueError(f'Monthly output metadata mismatch: {key}: {path}')
+        time, bounds = result.variables['time'], result.variables['time_bnds']
+        ref_time, ref_bounds = reference.variables['time'], reference.variables['time_bnds']
+        if (time.shape != (1,) or bounds.shape != (1, 2) or time.climatology != 'time_bnds'
+                or time.dimensions != ref_time.dimensions or bounds.dimensions != ref_bounds.dimensions
+                or getattr(time, 'bounds', None) is not None
+                or time.units != bounds.units or time.units != ref_time.units
+                or time.calendar != bounds.calendar or time.calendar != ref_time.calendar):
+            raise ValueError(f'Monthly output time encoding mismatch: {path}')
+        np.testing.assert_array_equal(time[:], ref_time[:])
+        np.testing.assert_array_equal(bounds[:], ref_bounds[:])
+        field = result.variables[env['VAR']]
+        expected_units = (getattr(historical.variables[env['VAR']], 'units', '') if addition else
+                          '1' if env.get('DELTA_MODE') == 'log_ratio' else
+                          getattr(reference.variables[env['VAR']], 'units', ''))
+        if not expected_units or getattr(field, 'units', '') != expected_units:
+            raise ValueError(f'Monthly output scientific units mismatch: {path}')
+        mode_key = 'anomaly_mode' if addition else 'delta_mode'
+        if getattr(field, mode_key, '') != env.get('ANOMALY_MODE' if addition else 'DELTA_MODE', 'additive'):
+            raise ValueError(f'Monthly output calculation-mode annotation mismatch: {path}')
+        provenance = 'downscaling' if addition else 'delta'
+        future_key = 'anomaly' if addition else 'future'
+        for key, expected in ((f'{provenance}_baseline_file', baseline),
+                              (f'{provenance}_{future_key}_file', future)):
+            if getattr(result, key, '') != str(expected):
+                raise ValueError(f'Monthly output provenance mismatch: {key}: {path}')
+        if addition:
+            if getattr(result, 'downscaling_coastal_mask_file', '') != (str(mask_source) if mask_source else ''):
+                raise ValueError(f'Monthly output mask provenance mismatch: {path}')
+        log_ratio = env.get('ANOMALY_MODE' if addition else 'DELTA_MODE') == 'log_ratio'
+        if log_ratio:
+            mask = f'{env["VAR"]}_log_ratio_qc_valid'
+            if (getattr(result, 'log_ratio_qc_mask_variable', '') != mask
+                    or mask not in result.variables or result.variables[mask].shape != field.shape):
+                raise ValueError(f'Monthly output QC linkage mismatch: {path}')
+
 try:
     for month, paths, signatures in pairs:
         if signatures != [(p.stat().st_size, p.stat().st_mtime_ns) for p in paths]:
@@ -179,7 +225,8 @@ try:
             if addition:
                 job_env.update(ADD_SCRATCH_ROOT='', ADD_MONTH=month,
                                ANOMALY_FILE=job_env['FUTURE_FILE'],
-                               ADD_BASELINE_SOURCE=str(paths[0]), ADD_ANOMALY_SOURCE=str(paths[1]))
+                               ADD_BASELINE_SOURCE=str(paths[0]), ADD_ANOMALY_SOURCE=str(paths[1]),
+                               ADD_COASTAL_MASK_SOURCE='')
                 if len(paths) == 3:
                     job_env['COASTAL_MASK_FILE'] = job_env['MASK_FILE']
                     job_env['ADD_COASTAL_MASK_SOURCE'] = str(paths[2])
@@ -203,11 +250,15 @@ try:
             destinations = [(work/'native', out)]
             if env['REGRID_DELTA'] == 'yes':
                 destinations.append((work/'regrid', Path(env['REGRID_OUT_DIR']).resolve()))
+            products_to_publish = []
             for source_dir, destination_dir in destinations:
                 products = list(source_dir.glob('*.nc'))
                 if len(products) != 1:
                     raise SystemExit(f'ERROR: Expected exactly one delta in {source_dir}')
                 product = products[0]
+                validate_monthly_product(product, paths[0], paths[1], paths[2] if len(paths) == 3 else None)
+                products_to_publish.append((product, destination_dir))
+            for product, destination_dir in products_to_publish:
                 destination_dir.mkdir(parents=True, exist_ok=True)
                 with tempfile.TemporaryDirectory(prefix='.delta_publish_', dir=destination_dir) as publish:
                     staged = Path(publish)/product.name
@@ -217,6 +268,7 @@ try:
                     with nc.Dataset(staged) as ds, nc.Dataset(product) as original:
                         if ds.variables[env['VAR']].shape != original.variables[env['VAR']].shape:
                             raise SystemExit('ERROR: Delta copy-back shape mismatch')
+                    validate_monthly_product(staged, paths[0], paths[1], paths[2] if len(paths) == 3 else None)
                     os.replace(staged, destination_dir/product.name)
                 print(f'[PUBLISHED] {destination_dir/product.name}', flush=True)
 finally:
@@ -465,6 +517,11 @@ with nc.Dataset(future) as source, nc.Dataset(path, 'r+') as out:
                       delta_future_file=future_source, delta_baseline_window=base_tag,
                       delta_future_window=future_tag))
     out.variables[variable].setncattr('delta_mode', mode)
+    if mode == 'log_ratio':
+        mask = f'{variable}_log_ratio_qc_valid'
+        if mask not in out.variables:
+            raise ValueError(f'Missing log-ratio QC mask: {path}')
+        out.setncattr('log_ratio_qc_mask_variable', mask)
     if 'time' in source.variables and 'climatology' in source.variables['time'].ncattrs():
         time = source.variables['time']
         bound_name = time.climatology

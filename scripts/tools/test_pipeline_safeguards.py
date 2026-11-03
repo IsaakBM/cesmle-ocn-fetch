@@ -261,6 +261,8 @@ class SafeguardTests(unittest.TestCase):
                                 amount = 0.4 if role == 'baseline' else 10.
                             product['thetao'] = xr.full_like(product.thetao, amount)
                             product = product.rename({'thetao': variable})
+                            if variable == 'thetao':
+                                product[variable].attrs['units'] = 'degC'
                             if variable == 'chl':
                                 product[variable].attrs['units'] = 'mg m-3' if role == 'baseline' else '1'
                             if variable == 'siconc':
@@ -312,9 +314,14 @@ class SafeguardTests(unittest.TestCase):
                             self.assertEqual(ds.attrs['climatology_month'], month)
                             self.assertEqual(int(ds.attrs['climatology_selected_timesteps']), 9)
                             self.assertEqual(ds.attrs['downscaling_baseline_file'], str((self.root/f'add_baseline_{month:02d}.nc').resolve()))
+                            self.assertEqual(ds.attrs['downscaling_anomaly_file'], str((self.root/f'add_future_{month:02d}.nc').resolve()))
+                            self.assertEqual(ds.attrs['downscaling_coastal_mask_file'], str((self.root/f'add_mask_{month:02d}.nc').resolve()))
+                            self.assertEqual(ds[variable].attrs['units'], 'mg m-3' if variable == 'chl' else '1' if variable == 'siconc' else 'degC')
+                            self.assertEqual(ds[variable].attrs['anomaly_mode'], mode)
                             if variable == 'chl':
                                 self.assertTrue(np.isnan(data[0, 0, 1, 1]))
                                 self.assertEqual(ds.chl_log_ratio_qc_valid[0, 0, 1, 1], 0)
+                                self.assertEqual(ds.attrs['log_ratio_qc_mask_variable'], 'chl_log_ratio_qc_valid')
                             else:
                                 self.assertTrue(np.isfinite(data).all())
                         self.assert_climatology_time(path, month, f'2050-{month:02d}-01',
@@ -370,22 +377,40 @@ class SafeguardTests(unittest.TestCase):
             self.assertEqual(int(ds.chl_log_ratio_qc_valid[0, 0, 0, 0]), 0)
 
     def test_remap_restores_climatology_time_encoding(self):
+        import datetime as dt
         import netCDF4
 
         source = self.root/'source.nc'
         destination = self.root/'destination.nc'
+        units = 'days since 2030-01-01 00:00:00'
+        start, end = dt.datetime(2030, 7, 1), dt.datetime(2040, 7, 31)
+        midpoint = start + dt.timedelta(days=(end-start).days//2)
+        expected_time = netCDF4.date2num([midpoint], units, 'proleptic_gregorian')
+        expected_bounds = netCDF4.date2num([[start, end]], units, 'proleptic_gregorian')
+        scientific_attrs = dict(climatology_product_type='monthly', climatology_month=7,
+                                climatology_selected_timesteps='11',
+                                climatology_window_start='2030-07-01', climatology_window_end='2040-07-31',
+                                downscaling_baseline_file='/fixture/baseline.nc',
+                                downscaling_anomaly_file='/fixture/anomaly.nc',
+                                downscaling_coastal_mask_file='/fixture/mask.nc',
+                                log_ratio_qc_mask_variable='chl_log_ratio_qc_valid')
         with netCDF4.Dataset(source, 'w') as ds:
+            ds.setncatts(scientific_attrs)
             ds.createDimension('time', 1)
             ds.createDimension('bnds', 2)
             time = ds.createVariable('time', 'f8', ('time',))
             time.units = 'days since 2030-01-01 00:00:00'
             time.calendar = 'proleptic_gregorian'
             time.climatology = 'time_bnds'
-            time[:] = [2008.5]
+            time[:] = expected_time
             bounds = ds.createVariable('time_bnds', 'f8', ('time', 'bnds'))
             bounds.units = time.units
             bounds.calendar = time.calendar
-            bounds[:] = [[0, 4017]]
+            bounds[:] = expected_bounds
+            data = ds.createVariable('chl', 'f4', ('time',))
+            data[:] = [2.]
+            data.setncatts(dict(units='mg m-3', anomaly_mode='log_ratio',
+                               anomaly_apply_formula='baseline * exp(anomaly)'))
         with netCDF4.Dataset(destination, 'w') as ds:
             ds.createDimension('time', 1)
             ds.createDimension('bnds', 2)
@@ -393,9 +418,14 @@ class SafeguardTests(unittest.TestCase):
             time.units = 'days since 2035-07-02 00:00:00'
             time.calendar = 'proleptic_gregorian'
             time.climatology = 'climatology_bnds'
+            time.bounds = 'climatology_bnds'
             time[:] = [0]
             bounds = ds.createVariable('climatology_bnds', 'f8', ('time', 'bnds'))
             bounds[:] = [[0, 4017]]
+            data = ds.createVariable('chl', 'f4', ('time',))
+            data[:] = [2.]
+            data.units = 'lost'
+            data.anomaly_mode = 'lost'
 
         result = subprocess.run(
             [sys.executable, '-', str(source), str(destination)],
@@ -406,13 +436,33 @@ class SafeguardTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         with netCDF4.Dataset(destination) as ds:
             self.assertEqual(ds.variables['time'].units, 'days since 2030-01-01 00:00:00')
-            self.assertEqual(ds.variables['time'].climatology, 'climatology_bnds')
-            np.testing.assert_allclose(ds.variables['time'][:], [2008.5])
-            np.testing.assert_allclose(ds.variables['climatology_bnds'][:], [[0, 4017]])
+            self.assertEqual(ds.variables['time'].climatology, 'time_bnds')
+            self.assertNotIn('bounds', ds.variables['time'].ncattrs())
+            np.testing.assert_allclose(ds.variables['time'][:], expected_time)
+            np.testing.assert_allclose(ds.variables['time_bnds'][:], expected_bounds)
+            for name, expected in scientific_attrs.items():
+                self.assertEqual(ds.getncattr(name), expected)
+            self.assertEqual(ds.variables['chl'].units, 'mg m-3')
+            self.assertEqual(ds.variables['chl'].anomaly_mode, 'log_ratio')
+            self.assertEqual(ds.variables['chl'].anomaly_apply_formula, 'baseline * exp(anomaly)')
+            np.testing.assert_array_equal(ds.variables['chl'][:], [2.])
             self.assertEqual(
-                ds.variables['climatology_bnds'].units,
+                ds.variables['time_bnds'].units,
                 'days since 2030-01-01 00:00:00',
             )
+        # Legacy whole-period products may keep CDO's renamed bounds variable.
+        with netCDF4.Dataset(source, 'r+') as ds:
+            ds.climatology_product_type = 'whole'
+        with netCDF4.Dataset(destination, 'r+') as ds:
+            ds.variables['time'].climatology = 'climatology_bnds'
+            ds.variables['time'][:] = [0]
+        result = subprocess.run([sys.executable, '-', str(source), str(destination)],
+                                input=embedded(ADD, 'PY_RESTORE_CLIMATOLOGY_TIME'),
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with netCDF4.Dataset(destination) as ds:
+            self.assertEqual(ds.variables['time'].climatology, 'climatology_bnds')
+            np.testing.assert_allclose(ds.variables['climatology_bnds'][:], expected_bounds)
 
     def test_real_add_and_mismatch(self):
         base = self.root/'base.nc'; anomaly = self.root/'anomaly.nc'; out = self.root/'out'
@@ -2159,6 +2209,9 @@ class MonthlyDeltaBatchTests(unittest.TestCase):
         self.jobs = []
         self.fail_copy = False
         self.fail_worker = False
+        self.corrupt_metadata = None
+        self.corrupt_publication = False
+        self.corrupt_regrid_metadata = False
 
     def run_batch(self, kind='delta'):
         import shutil
@@ -2189,6 +2242,14 @@ class MonthlyDeltaBatchTests(unittest.TestCase):
                                       time_bnds=Variable(self.bounds))
                 self.variables['time'].shape = (1,)
                 self.variables['time_bnds'].shape = (1, 2)
+                self.variables['thetao'].units = getattr(self, 'field_units', 'days')
+                self.variables['thetao'].delta_mode = getattr(self, 'field_mode', '')
+                self.variables['thetao'].anomaly_mode = getattr(self, 'field_mode', '')
+                if getattr(self, 'qc_variable_present', False):
+                    self.variables['thetao_log_ratio_qc_valid'] = Variable()
+                self.variables['time'].units = getattr(self, 'time_units', 'days')
+                self.variables['time'].calendar = getattr(self, 'time_calendar', 'proleptic_gregorian')
+                self.variables['time'].climatology = getattr(self, 'time_link', 'time_bnds')
                 self.dimensions = dict(time=[0], lev=[0, 1], lat=[0, 1], lon=[0, 1])
             def __enter__(self):
                 return self
@@ -2209,6 +2270,10 @@ class MonthlyDeltaBatchTests(unittest.TestCase):
                         self.returncode = 23
                     else:
                         shutil.copyfile(command[-2], command[-1])
+                        if owner.corrupt_publication and '.delta_publish_' in command[-1]:
+                            data = json.loads(Path(command[-1]).read_text())
+                            data['climatology_month'] = 2
+                            Path(command[-1]).write_text(json.dumps(data))
                 else:
                     owner.jobs.append(kwargs['env'])
                     if owner.fail_worker:
@@ -2217,7 +2282,35 @@ class MonthlyDeltaBatchTests(unittest.TestCase):
                     config = kwargs['env']
                     folder = Path(config['OUT_DIR']); folder.mkdir()
                     product = folder/f'{config["OUT_PREFIX"]}_delta_{config["FUTURE_TAG"]}_minus_{config["BASELINE_TAG"]}.nc'
-                    shutil.copyfile(config['FUTURE_FILE'], product)
+                    data = json.loads(Path(config['FUTURE_FILE']).read_text())
+                    addition = bool(config.get('ADD_MONTH'))
+                    prefix = 'downscaling' if addition else 'delta'
+                    future_key = 'anomaly' if addition else 'future'
+                    data['field_mode'] = config.get('ANOMALY_MODE' if addition else 'DELTA_MODE', 'additive')
+                    data[f'{prefix}_baseline_file'] = config['DELTA_BASELINE_SOURCE']
+                    data[f'{prefix}_{future_key}_file'] = config['DELTA_FUTURE_SOURCE']
+                    if addition:
+                        data['downscaling_coastal_mask_file'] = config.get('ADD_COASTAL_MASK_SOURCE', '')
+                    if config.get('ANOMALY_MODE' if addition else 'DELTA_MODE') == 'log_ratio':
+                        data.update(qc_variable_present=True, log_ratio_qc_mask_variable='thetao_log_ratio_qc_valid')
+                        if not addition:
+                            data['field_units'] = '1'
+                    if owner.corrupt_metadata in ('field_units', 'field_mode'):
+                        data[owner.corrupt_metadata] = ''
+                    elif owner.corrupt_metadata in ('time_units', 'time_calendar', 'time_link'):
+                        data[owner.corrupt_metadata] = 'invalid'
+                    elif owner.corrupt_metadata == 'time':
+                        data['time'][0] += 1
+                    elif owner.corrupt_metadata == 'bounds':
+                        data['bounds'][0][1] += 1
+                    elif owner.corrupt_metadata:
+                        data.pop(owner.corrupt_metadata, None)
+                    product.write_text(json.dumps(data))
+                    if config.get('REGRID_DELTA') == 'yes':
+                        regrid = Path(config['REGRID_OUT_DIR']); regrid.mkdir()
+                        if owner.corrupt_regrid_metadata:
+                            data.pop('climatology_month')
+                        (regrid/product.name).write_text(json.dumps(data))
             def wait(self):
                 return self.returncode
 
@@ -2255,6 +2348,78 @@ class MonthlyDeltaBatchTests(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             self.run_batch()
         self.assertFalse(list((self.root/'out').glob('*.nc')))
+        self.assertFalse(list((self.root/'scratch').iterdir()))
+
+    def test_missing_metadata_or_units_never_replaces_accepted_output(self):
+        out = self.root/'out'; out.mkdir()
+        accepted = out/'fixture_month_01_delta_2050-2058_minus_2006-2014.nc'
+        accepted.write_bytes(b'accepted')
+        prefix = 'downscaling' if 'ADD_SCRATCH_ROOT' in self.env else 'delta'
+        future_key = 'anomaly' if prefix == 'downscaling' else 'future'
+        keys = ['climatology_month', 'climatology_selected_timesteps', 'climatology_window_start',
+                'climatology_window_end', 'climatology_product_type', 'field_units', 'field_mode',
+                'time_units', 'time_calendar', 'time_link', f'{prefix}_baseline_file', f'{prefix}_{future_key}_file']
+        if prefix == 'downscaling':
+            keys.append('downscaling_coastal_mask_file')
+        for key in keys:
+            with self.subTest(attribute=key):
+                self.corrupt_metadata = key
+                with self.assertRaisesRegex(ValueError, 'Monthly output'):
+                    self.run_batch()
+                self.assertEqual(accepted.read_bytes(), b'accepted')
+                self.assertFalse(list(out.glob('.*.lock')))
+                self.assertFalse(list((self.root/'scratch').iterdir()))
+
+    def test_copy_back_metadata_change_rejected_even_when_size_matches(self):
+        out = self.root/'out'; out.mkdir()
+        accepted = out/'fixture_month_01_delta_2050-2058_minus_2006-2014.nc'
+        accepted.write_bytes(b'accepted')
+        self.corrupt_publication = True
+        with self.assertRaisesRegex(ValueError, 'climatology_month'):
+            self.run_batch()
+        self.assertEqual(accepted.read_bytes(), b'accepted')
+        self.assertFalse(list(out.glob('.delta_publish_*')))
+        self.assertFalse(list(out.glob('.*.lock')))
+
+    def test_changed_time_values_or_bounds_prevent_publication(self):
+        out = self.root/'out'; out.mkdir()
+        accepted = out/'fixture_month_01_delta_2050-2058_minus_2006-2014.nc'
+        accepted.write_bytes(b'accepted')
+        for key in ('time', 'bounds'):
+            with self.subTest(coordinate=key):
+                self.corrupt_metadata = key
+                with self.assertRaises(AssertionError):
+                    self.run_batch()
+                self.assertEqual(accepted.read_bytes(), b'accepted')
+                self.assertFalse(list(out.glob('.*.lock')))
+
+    def test_missing_qc_link_or_variable_prevents_publication(self):
+        key = 'ANOMALY_MODE' if 'ADD_SCRATCH_ROOT' in self.env else 'DELTA_MODE'
+        self.env[key] = 'log_ratio'
+        out = self.root/'out'; out.mkdir()
+        accepted = out/'fixture_month_01_delta_2050-2058_minus_2006-2014.nc'
+        accepted.write_bytes(b'accepted')
+        for attribute in ('log_ratio_qc_mask_variable', 'qc_variable_present'):
+            with self.subTest(attribute=attribute):
+                self.corrupt_metadata = attribute
+                with self.assertRaisesRegex(ValueError, 'QC linkage'):
+                    self.run_batch()
+                self.assertEqual(accepted.read_bytes(), b'accepted')
+                self.assertFalse(list(out.glob('.*.lock')))
+
+    def test_remapped_metadata_failure_prevents_native_publication(self):
+        grid = self.root/'grid.txt'
+        grid.write_text('gridtype = lonlat\nxsize = 2\nysize = 2\n')
+        self.env.update(GRIDFILE=str(grid), REGRID_GRIDFILE=str(grid),
+                        REGRID_DELTA='yes', REGRID_OUTPUT='yes')
+        out = self.root/'out'; out.mkdir()
+        accepted = out/'fixture_month_01_delta_2050-2058_minus_2006-2014.nc'
+        accepted.write_bytes(b'accepted')
+        self.corrupt_regrid_metadata = True
+        with self.assertRaisesRegex(ValueError, 'climatology_month'):
+            self.run_batch()
+        self.assertEqual(accepted.read_bytes(), b'accepted')
+        self.assertFalse(any('.delta_publish_' in command[-1] for command in self.calls))
         self.assertFalse(list((self.root/'scratch').iterdir()))
 
     def test_wrong_month_and_existing_lock_rejected(self):
@@ -2478,6 +2643,21 @@ class MonthlyAdditionBatchTests(unittest.TestCase):
 
     def test_worker_failure_does_not_publish(self):
         MonthlyDeltaBatchTests.test_worker_failure_does_not_publish(self)
+
+    def test_missing_metadata_or_units_never_replaces_accepted_output(self):
+        MonthlyDeltaBatchTests.test_missing_metadata_or_units_never_replaces_accepted_output(self)
+
+    def test_copy_back_metadata_change_rejected_even_when_size_matches(self):
+        MonthlyDeltaBatchTests.test_copy_back_metadata_change_rejected_even_when_size_matches(self)
+
+    def test_remapped_metadata_failure_prevents_native_publication(self):
+        MonthlyDeltaBatchTests.test_remapped_metadata_failure_prevents_native_publication(self)
+
+    def test_changed_time_values_or_bounds_prevent_publication(self):
+        MonthlyDeltaBatchTests.test_changed_time_values_or_bounds_prevent_publication(self)
+
+    def test_missing_qc_link_or_variable_prevents_publication(self):
+        MonthlyDeltaBatchTests.test_missing_qc_link_or_variable_prevents_publication(self)
 
 
 class MonthlyDownscalingRunnerTests(unittest.TestCase):

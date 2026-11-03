@@ -24,6 +24,43 @@ incomplete-work signal, not proof that previously released results were wrong.
 Do not automatically rename coordinates, convert units, fill missing months,
 select conflicting dataset versions, or change members to bypass a failure.
 
+## Monthly metadata preservation and publication
+
+Earlier fixes covered future products inheriting baseline-era times (`0f058bc`,
+July 2026), bounds arrays being selected as scientific variables (`4e91670`,
+August), and CDO bounds renaming/time-reference rewrites (`a4c2821` and
+`0c90dc2`, October). The monthly final-addition review additionally reproduced
+global-attribute loss through the QC-mask remap/merge branch.
+
+For current monthly delta/downscaling jobs, validate both native and remapped
+scratch products before publishing either one. Repeat metadata validation on
+the staged SB5 copy before replacing its accepted final file. Required checks
+compare the product against the already validated future monthly source:
+
+- exact serialized time and bounds values, dimensions, units, calendar and
+  `time:climatology=time_bnds`; no competing ordinary `time:bounds` reference
+- calendar month, product type, contributing-year count and first/last dates
+- scientific units and calculation-mode annotation
+- canonical historical/future or baseline/anomaly/mask provenance paths
+- log-ratio QC-variable linkage and dimensions
+
+Post-remap restoration copies scientific globals as well as time coordinates.
+Monthly products normalize bounds linkage to `time_bnds`; legacy whole-period
+products may retain the valid CDO-renamed referenced bounds variable. Existing
+CDO processing history is retained. Output clipping explicitly restores the
+baseline scientific attributes and anomaly formula rather than relying on
+`xr.where` attribute-retention defaults. No numerical/fill policy is changed.
+
+Regression fixtures deliberately remove metadata, change time/bounds values,
+break QC linkage, and simulate a same-size copy with altered metadata. They
+require failures to leave accepted outputs unchanged and clean private work.
+The end-to-end cluster fixture covers all twelve months, additive and log-ratio
+branches, sea-ice scale/bounds, and both native and optional final-remapped
+products. Full numerical acceptance must still pass with the installed GRIT
+CDO/Python environment before submitting production. Later ensemble and delivery
+stages require their own integrity checks; this protection covers the current
+monthly delta/addition publication path.
+
 ## Daily inputs and protected preparation outputs
 
 GLORYS download skipping now requires complete actual daily timestamps, not a

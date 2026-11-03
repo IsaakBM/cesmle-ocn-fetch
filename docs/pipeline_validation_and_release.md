@@ -50,6 +50,11 @@ products may retain the valid CDO-renamed referenced bounds variable. Existing
 CDO processing history is retained. Output clipping explicitly restores the
 baseline scientific attributes and anomaly formula rather than relying on
 `xr.where` attribute-retention defaults. No numerical/fill policy is changed.
+New time/bounds variables are created as float64, including in strict
+`NETCDF4_CLASSIC` files, which cannot define xarray's possible int64 coordinate
+encoding. Integer coordinates outside the exact float64 range are rejected;
+serialized values are compared with the source after writing. The restore
+regression includes an int64-coordinate source and a classic-model destination.
 
 Regression fixtures deliberately remove metadata, change time/bounds values,
 break QC linkage, and simulate a same-size copy with altered metadata. They

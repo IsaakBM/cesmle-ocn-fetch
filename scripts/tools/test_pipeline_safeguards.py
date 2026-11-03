@@ -387,7 +387,7 @@ class SafeguardTests(unittest.TestCase):
         midpoint = start + dt.timedelta(days=(end-start).days//2)
         expected_time = netCDF4.date2num([midpoint], units, 'proleptic_gregorian')
         expected_bounds = netCDF4.date2num([[start, end]], units, 'proleptic_gregorian')
-        scientific_attrs = dict(climatology_product_type='monthly', climatology_month=7,
+        scientific_attrs = dict(climatology_product_type='monthly', climatology_month=np.int32(7),
                                 climatology_selected_timesteps='11',
                                 climatology_window_start='2030-07-01', climatology_window_end='2040-07-31',
                                 downscaling_baseline_file='/fixture/baseline.nc',
@@ -398,12 +398,12 @@ class SafeguardTests(unittest.TestCase):
             ds.setncatts(scientific_attrs)
             ds.createDimension('time', 1)
             ds.createDimension('bnds', 2)
-            time = ds.createVariable('time', 'f8', ('time',))
+            time = ds.createVariable('time', 'i8', ('time',))
             time.units = 'days since 2030-01-01 00:00:00'
             time.calendar = 'proleptic_gregorian'
             time.climatology = 'time_bnds'
             time[:] = expected_time
-            bounds = ds.createVariable('time_bnds', 'f8', ('time', 'bnds'))
+            bounds = ds.createVariable('time_bnds', 'i8', ('time', 'bnds'))
             bounds.units = time.units
             bounds.calendar = time.calendar
             bounds[:] = expected_bounds
@@ -411,7 +411,7 @@ class SafeguardTests(unittest.TestCase):
             data[:] = [2.]
             data.setncatts(dict(units='mg m-3', anomaly_mode='log_ratio',
                                anomaly_apply_formula='baseline * exp(anomaly)'))
-        with netCDF4.Dataset(destination, 'w') as ds:
+        with netCDF4.Dataset(destination, 'w', format='NETCDF4_CLASSIC') as ds:
             ds.createDimension('time', 1)
             ds.createDimension('bnds', 2)
             time = ds.createVariable('time', 'f8', ('time',))
@@ -437,6 +437,8 @@ class SafeguardTests(unittest.TestCase):
         with netCDF4.Dataset(destination) as ds:
             self.assertEqual(ds.variables['time'].units, 'days since 2030-01-01 00:00:00')
             self.assertEqual(ds.variables['time'].climatology, 'time_bnds')
+            self.assertEqual(ds.variables['time_bnds'].dtype, np.dtype('float64'))
+            self.assertEqual(ds.data_model, 'NETCDF4_CLASSIC')
             self.assertNotIn('bounds', ds.variables['time'].ncattrs())
             np.testing.assert_allclose(ds.variables['time'][:], expected_time)
             np.testing.assert_allclose(ds.variables['time_bnds'][:], expected_bounds)

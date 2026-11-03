@@ -531,7 +531,11 @@ with nc.Dataset(future) as source, nc.Dataset(path, 'r+') as out:
                 if dim not in out.dimensions:
                     out.createDimension(dim, len(source.dimensions[dim]))
             if name not in out.variables:
-                out.createVariable(name, src.dtype, src.dimensions)
+                # Coordinate values are checked after writing; float64 also
+                # works when the destination uses the strict classic model.
+                if src.dtype.kind in 'iu' and np.any((src[:] > 2**53) | (src[:] < -2**53)):
+                    raise ValueError('Time coordinate exceeds the exact float64 integer range')
+                out.createVariable(name, 'f8', src.dimensions)
             dest = out.variables[name]
             if dest.dimensions != src.dimensions or dest.shape != src.shape:
                 raise ValueError(f'Incorrect delta time/bounds dimensions: {name}')

@@ -393,7 +393,12 @@ with Dataset(source_path) as source, Dataset(destination_path, "r+") as destinat
             for dim in reference.dimensions:
                 if dim not in destination.dimensions:
                     destination.createDimension(dim, len(source.dimensions[dim]))
-            destination.createVariable(destination_bounds_name, reference.dtype, reference.dimensions)
+            # xarray may encode day coordinates as int64, which strict
+            # NETCDF4_CLASSIC cannot create. CF time/bounds use float64 here;
+            # exact read-back comparisons below protect their numeric values.
+            if reference.dtype.kind in 'iu' and np.any((reference[:] > 2**53) | (reference[:] < -2**53)):
+                raise ValueError('Time bounds exceed the exact float64 integer range')
+            destination.createVariable(destination_bounds_name, 'f8', reference.dimensions)
         if 'bounds' in destination_time.ncattrs():
             destination_time.delncattr('bounds')
     if not destination_bounds_name or destination_bounds_name not in destination.variables:
@@ -1336,7 +1341,9 @@ with nc.Dataset(source) as src, nc.Dataset(destination, 'r+') as dst:
             if dim not in dst.dimensions:
                 dst.createDimension(dim, len(src.dimensions[dim]))
         if name not in dst.variables:
-            dst.createVariable(name, reference.dtype, reference.dimensions)
+            if reference.dtype.kind in 'iu' and np.any((reference[:] > 2**53) | (reference[:] < -2**53)):
+                raise ValueError('Time coordinate exceeds the exact float64 integer range')
+            dst.createVariable(name, 'f8', reference.dimensions)
         target = dst.variables[name]
         assert target.dimensions == reference.dimensions and target.shape == reference.shape
         if name == 'time' and 'bounds' in target.ncattrs():

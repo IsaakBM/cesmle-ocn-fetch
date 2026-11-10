@@ -76,21 +76,22 @@ OVERWRITE="${OVERWRITE:-yes}"
 CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
 BASELINE_TAG="${BASELINE_TAG:-2006-2014}"
 BASELINE_SCRATCH_ROOT="${BASELINE_SCRATCH_ROOT:-}"
-default_mask_template="/home/SB5/reanalysis/glorys12v1/monthly_0p05/thetao/clim_monthly/glorys12v1_thetao_clim_month_{month}_${BASELINE_TAG}.nc"
-COASTAL_MASK_FILE_TEMPLATE="${COASTAL_MASK_FILE_TEMPLATE:-$default_mask_template}"
 CDO="${CDO:-/usr/bin/cdo}"
 case "$CLIMATOLOGY_MODE" in
   whole) CLIM_STAGE=clim_windows ;;
-  monthly)
-    CLIM_STAGE=clim_monthly
-    if [[ -z "$BASELINE_SCRATCH_ROOT" ]]; then
-      echo "ERROR: Monthly coastal baselines require BASELINE_SCRATCH_ROOT" >&2
-      exit 1
-    fi
-    NPROC="${NPROC:-1}"
-    ;;
-  *) echo "ERROR: CLIMATOLOGY_MODE must be whole or monthly" >&2; exit 1 ;;
+  monthly) CLIM_STAGE=clim_monthly; CLIM_FIELD=month ;;
+  seasonal) CLIM_STAGE=clim_seasonal; CLIM_FIELD=season ;;
+  *) echo "ERROR: CLIMATOLOGY_MODE must be whole, monthly or seasonal" >&2; exit 1 ;;
 esac
+if [[ "$CLIMATOLOGY_MODE" != whole ]]; then
+  if [[ -z "$BASELINE_SCRATCH_ROOT" ]]; then
+    echo "ERROR: ${CLIMATOLOGY_MODE^} coastal baselines require BASELINE_SCRATCH_ROOT" >&2
+    exit 1
+  fi
+  NPROC="${NPROC:-1}"
+  default_mask_template="/home/SB5/reanalysis/glorys12v1/monthly_0p05/thetao/${CLIM_STAGE}/glorys12v1_thetao_clim_${CLIM_FIELD}_{${CLIM_FIELD}}_${BASELINE_TAG}.nc"
+  COASTAL_MASK_FILE_TEMPLATE="${COASTAL_MASK_FILE_TEMPLATE:-$default_mask_template}"
+fi
 NPROC="${NPROC:-${SLURM_CPUS_PER_TASK:-4}}"
 
 if [[ ! -d "${IN_ROOT}" ]]; then
@@ -156,24 +157,36 @@ resolve_method() {
   esac
 }
 
-restore_monthly_time() {
-  [[ "$CLIMATOLOGY_MODE" == monthly ]] || return 0
-  python3 - "$1" "$2" "$3" "$BASELINE_TAG" <<'PY_BASELINE_TIME'
+restore_climatology_time() {
+  [[ "$CLIMATOLOGY_MODE" != whole ]] || return 0
+  python3 - "$1" "$2" "$3" "$BASELINE_TAG" "$CLIMATOLOGY_MODE" <<'PY_BASELINE_TIME'
 import calendar
 import datetime as dt
 import sys
 import netCDF4 as nc
 import numpy as np
 
-source, destination, month, tag = sys.argv[1:]
+source, destination, token, tag, mode = sys.argv[1:]
 a, b = map(int, tag.split('-'))
-month = int(month)
-start = dt.datetime(a, month, 1)
-end = dt.datetime(b, month, calendar.monthrange(b, month)[1])
+years = b - a + 1
+if mode == 'monthly':
+    month = int(token)
+    start_year, start_month, end_month = a, month, month
+    count = years
+else:
+    start_month, end_month = {'DJF': (12, 2), 'MAM': (3, 5), 'JJA': (6, 8), 'SON': (9, 11)}[token]
+    start_year = a - 1 if token == 'DJF' else a
+    count = 3 * years
+start = dt.datetime(start_year, start_month, 1)
+end = dt.datetime(b, end_month, calendar.monthrange(b, end_month)[1])
 with nc.Dataset(source) as src:
-    assert src.climatology_product_type == 'monthly', source
-    assert int(src.climatology_month) == month, source
-    assert int(src.climatology_selected_timesteps) == b-a+1, source
+    assert src.climatology_product_type == mode, source
+    if mode == 'monthly':
+        assert int(src.climatology_month) == month, source
+    else:
+        assert src.climatology_season == token, source
+        assert int(src.climatology_season_years) == years, source
+    assert int(src.climatology_selected_timesteps) == count, source
     assert src.climatology_window_start == start.date().isoformat(), source
     assert src.climatology_window_end == end.date().isoformat(), source
     time, bounds = src.variables['time'], src.variables['time_bnds']
@@ -186,19 +199,26 @@ with nc.Dataset(source) as src:
     np.testing.assert_allclose(time[:], nc.date2num([midpoint], time.units, time.calendar), rtol=0, atol=1e-8)
     if destination != '-':
         with nc.Dataset(destination, 'r+') as dst:
+            dst_time = dst.variables.get('time')
+            old_bounds = getattr(dst_time, 'climatology', getattr(dst_time, 'bounds', ''))
+            if ('time_bnds' not in dst.variables and old_bounds in dst.variables
+                    and dst.variables[old_bounds].dimensions == bounds.dimensions
+                    and dst.variables[old_bounds].shape == bounds.shape):
+                dst.renameVariable(old_bounds, 'time_bnds')
             for name in ('time', 'time_bnds'):
                 coord = src.variables[name]
                 for dim in coord.dimensions:
                     if dim not in dst.dimensions:
                         dst.createDimension(dim, len(src.dimensions[dim]))
                 if name not in dst.variables:
-                    dst.createVariable(name, coord.dtype, coord.dimensions)
+                    dst.createVariable(name, 'f8', coord.dimensions)
                 target = dst.variables[name]
                 assert target.dimensions == coord.dimensions and target.shape == coord.shape, destination
                 if name == 'time' and 'bounds' in target.ncattrs():
                     target.delncattr('bounds')
                 target.setncatts({key: coord.getncattr(key) for key in coord.ncattrs() if key != '_FillValue'})
                 target[:] = coord[:]
+                np.testing.assert_array_equal(target[:], coord[:])
             dst.setncatts({key: src.getncattr(key) for key in src.ncattrs() if key.startswith('climatology_')})
 PY_BASELINE_TIME
 }
@@ -206,7 +226,7 @@ PY_BASELINE_TIME
 process_file() (
   local infile="$1"
   local rel_path rel_dir out_dir base stem outfile tmp_remap tmp_out method_to_use var
-  local work="" publish_tmp="" lock month="" source_infile="$1" source_mask=""
+  local work="" publish_tmp="" lock token="" source_infile="$1" source_mask=""
 
   rel_path="${infile#${IN_ROOT}/}"
   rel_dir="$(dirname "${rel_path}")"
@@ -234,14 +254,19 @@ process_file() (
   trap 'exit 130' INT
   trap 'exit 143' TERM
 
-  if [[ "$CLIMATOLOGY_MODE" == monthly ]]; then
-    month="${stem#*_clim_month_}"
-    month="${month%%_*}"
-    [[ "$month" =~ ^(0[1-9]|1[012])$ ]] || { echo "ERROR: Invalid monthly filename: $infile" >&2; exit 1; }
-    COASTAL_MASK_FILE="${COASTAL_MASK_FILE_TEMPLATE//\{month\}/$month}"
+  if [[ "$CLIMATOLOGY_MODE" != whole ]]; then
+    token="${stem#*_clim_${CLIM_FIELD}_}"
+    token="${token%%_*}"
+    local token_pattern='^(0[1-9]|1[012])$'
+    if [[ "$CLIMATOLOGY_MODE" == seasonal ]]; then
+      token_pattern='^(DJF|MAM|JJA|SON)$'
+    fi
+    [[ "$token" =~ $token_pattern ]] || { echo "ERROR: Invalid ${CLIMATOLOGY_MODE} filename: $infile" >&2; exit 1; }
+    local placeholder="{${CLIM_FIELD}}"
+    COASTAL_MASK_FILE="${COASTAL_MASK_FILE_TEMPLATE//$placeholder/$token}"
     source_mask="$COASTAL_MASK_FILE"
-    restore_monthly_time "$infile" - "$month"
-    restore_monthly_time "$COASTAL_MASK_FILE" - "$month"
+    restore_climatology_time "$infile" - "$token"
+    restore_climatology_time "$COASTAL_MASK_FILE" - "$token"
     mkdir -p "$BASELINE_SCRATCH_ROOT"
     python3 - "$infile" "$COASTAL_MASK_FILE" "$GRIDFILE" "$BASELINE_SCRATCH_ROOT" "$var" <<'PY_BASELINE_SPACE'
 import sys
@@ -261,7 +286,7 @@ print(f'[SPACE] required={required} available={available}', flush=True)
 if required > available:
     raise SystemExit('ERROR: Insufficient baseline scratch space')
 PY_BASELINE_SPACE
-    work="$(mktemp -d "${BASELINE_SCRATCH_ROOT}/baseline_${var}_${month}.XXXXXX")"
+    work="$(mktemp -d "${BASELINE_SCRATCH_ROOT}/baseline_${var}_${token}.XXXXXX")"
     echo "[SCRATCH] $work"
     python3 - "$infile" "$COASTAL_MASK_FILE" "$work/sources.json" <<'PY_BASELINE_SOURCES'
 import json
@@ -279,8 +304,8 @@ PY_BASELINE_SOURCES
     GRIDFILE="$work/grid.txt"
     tmp_remap="$work/remap.nc"
     tmp_out="$work/coastal.nc"
-    restore_monthly_time "$infile" - "$month"
-    restore_monthly_time "$COASTAL_MASK_FILE" - "$month"
+    restore_climatology_time "$infile" - "$token"
+    restore_climatology_time "$COASTAL_MASK_FILE" - "$token"
   fi
 
   rm -f "${tmp_remap}" "${tmp_out}"
@@ -290,8 +315,13 @@ PY_BASELINE_SOURCES
   echo "[START] ${rel_path}"
   echo "[INFO ] remap method resolved to: ${method_to_use}"
 
-  "$CDO" -L -O -P 1 -f nc4c -z zip_1 "${method_to_use},${GRIDFILE}" "${infile}" "${tmp_remap}"
-  restore_monthly_time "$infile" "$tmp_remap" "$month"
+  local -a selection=()
+  if [[ "$CLIMATOLOGY_MODE" != whole ]]; then
+    selection=("-selname,${var}")
+  fi
+  "$CDO" -L -O -P 1 -f nc4c -z zip_1 "${method_to_use},${GRIDFILE}" \
+    ${selection[@]+"${selection[@]}"} "${infile}" "${tmp_remap}"
+  restore_climatology_time "$infile" "$tmp_remap" "$token"
 
   INFILE="${tmp_remap}" \
   OUTFILE="${tmp_out}" \
@@ -669,7 +699,7 @@ finally:
     ds_mask.close()
 PY
 
-  restore_monthly_time "$infile" "$tmp_out" "$month"
+  restore_climatology_time "$infile" "$tmp_out" "$token"
   if [[ -n "$work" ]]; then
     publish_tmp="$(mktemp "${out_dir}/.${stem}.publish.XXXXXX")"
     rsync -t -- "$tmp_out" "$publish_tmp"
@@ -699,8 +729,8 @@ export IN_ROOT OUT_ROOT GRIDFILE METHOD AUTO_METHOD_DEFAULT AUTO_METHOD_CURVILIN
 export COASTAL_MASK_FILE COASTAL_MASK_VAR COASTAL_FILL_METHOD
 export COASTAL_FILL_MAX_STEPS COASTAL_FILL_WEIGHT_POWER COASTAL_FILL_MIN_DONORS
 export COASTAL_FILL_REQUIRE_COMPLETE OVERWRITE
-export CLIMATOLOGY_MODE CLIM_STAGE BASELINE_TAG BASELINE_SCRATCH_ROOT COASTAL_MASK_FILE_TEMPLATE CDO
-export -f detect_gridtype resolve_method restore_monthly_time process_file
+export CLIMATOLOGY_MODE CLIM_STAGE CLIM_FIELD BASELINE_TAG BASELINE_SCRATCH_ROOT COASTAL_MASK_FILE_TEMPLATE CDO
+export -f detect_gridtype resolve_method restore_climatology_time process_file
 
 echo "============================================================"
 echo "Deriving hindcast baselines at 0.05 with GLORYS coast"
@@ -746,18 +776,31 @@ fi
 for var in "${VAR_LIST[@]}"; do
   src_dir="${IN_ROOT}/${var}/${CLIM_STAGE}"
   if [[ ! -d "${src_dir}" ]]; then
+    if [[ "$CLIMATOLOGY_MODE" == seasonal ]]; then
+      echo "ERROR: Missing seasonal climatology directory: ${src_dir}" >&2
+      exit 1
+    fi
     echo "[WARN] Missing climatology directory for var=${var}: ${src_dir}"
     continue
   fi
 
   pattern='*.nc'
-  if [[ "$CLIMATOLOGY_MODE" == monthly ]]; then
-    pattern="global_ocean_biogeochemistry_hindcast_${var}_clim_month_??_${BASELINE_TAG}.nc"
-  fi
-  mapfile -t files < <(find "${src_dir}" -maxdepth 1 -type f -name "$pattern" | sort)
-  if [[ "$CLIMATOLOGY_MODE" == monthly && ${#files[@]} != 12 ]]; then
-    echo "ERROR: Expected twelve monthly baseline inputs for $var" >&2
-    exit 1
+  if [[ "$CLIMATOLOGY_MODE" == seasonal ]]; then
+    files=()
+    for season in DJF MAM JJA SON; do
+      source="${src_dir}/global_ocean_biogeochemistry_hindcast_${var}_clim_season_${season}_${BASELINE_TAG}.nc"
+      [[ -f "$source" ]] || { echo "ERROR: Missing seasonal baseline input: $source" >&2; exit 1; }
+      files+=( "$source" )
+    done
+  else
+    if [[ "$CLIMATOLOGY_MODE" == monthly ]]; then
+      pattern="global_ocean_biogeochemistry_hindcast_${var}_clim_month_??_${BASELINE_TAG}.nc"
+    fi
+    mapfile -t files < <(find "${src_dir}" -maxdepth 1 -type f -name "$pattern" | sort)
+    if [[ "$CLIMATOLOGY_MODE" == monthly && ${#files[@]} != 12 ]]; then
+      echo "ERROR: Expected twelve monthly baseline inputs for $var" >&2
+      exit 1
+    fi
   fi
   if (( ${#files[@]} == 0 )); then
     echo "[WARN] No climatology NetCDF files found for var=${var}: ${src_dir}"

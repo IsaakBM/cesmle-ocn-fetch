@@ -19,19 +19,18 @@ GLORYS_ROOT="${GLORYS_ROOT:-/home/SB5/reanalysis/glorys12v1/monthly_0p05}"
 CLIMATOLOGY_MODE="${CLIMATOLOGY_MODE:-whole}"
 BASELINE_TAG="${BASELINE_TAG:-2006-2014}"
 BASELINE_SCRATCH_ROOT="${BASELINE_SCRATCH_ROOT:-}"
-default_mask_template="${GLORYS_ROOT}/thetao/clim_monthly/glorys12v1_thetao_clim_month_{month}_${BASELINE_TAG}.nc"
-COASTAL_MASK_FILE_TEMPLATE="${COASTAL_MASK_FILE_TEMPLATE:-$default_mask_template}"
 case "$CLIMATOLOGY_MODE" in
-  whole) CLIM_STAGE=clim_windows ;;
-  monthly)
-    CLIM_STAGE=clim_monthly
-    if [[ -z "$BASELINE_SCRATCH_ROOT" ]]; then
-      echo "ERROR: Monthly coastal baselines require BASELINE_SCRATCH_ROOT" >&2
-      exit 1
-    fi
-    ;;
-  *) echo "ERROR: CLIMATOLOGY_MODE must be whole or monthly" >&2; exit 1 ;;
+  whole) CLIM_STAGE=clim_windows; field=month ;;
+  monthly) CLIM_STAGE=clim_monthly; field=month ;;
+  seasonal) CLIM_STAGE=clim_seasonal; field=season ;;
+  *) echo "ERROR: CLIMATOLOGY_MODE must be whole, monthly or seasonal" >&2; exit 1 ;;
 esac
+if [[ "$CLIMATOLOGY_MODE" != whole && -z "$BASELINE_SCRATCH_ROOT" ]]; then
+  echo "ERROR: ${CLIMATOLOGY_MODE^} coastal baselines require BASELINE_SCRATCH_ROOT" >&2
+  exit 1
+fi
+default_mask_template="${GLORYS_ROOT}/thetao/${CLIM_STAGE/clim_windows/clim_monthly}/glorys12v1_thetao_clim_${field}_{${field}}_${BASELINE_TAG}.nc"
+COASTAL_MASK_FILE_TEMPLATE="${COASTAL_MASK_FILE_TEMPLATE:-$default_mask_template}"
 COASTAL_MASK_FILE="${COASTAL_MASK_FILE:-${GLORYS_ROOT}/thetao/clim_windows/glorys12v1_thetao_clim_2006-2014.nc}"
 COASTAL_MASK_VAR="${COASTAL_MASK_VAR:-thetao}"
 COASTAL_FILL_METHOD="${COASTAL_FILL_METHOD:-distance_weighted}"
@@ -52,7 +51,7 @@ CPUS_PER_TASK="${CPUS_PER_TASK:-4}"
 MEMORY="${MEMORY:-256G}"
 WALLTIME="${WALLTIME:-2-00:00:00}"
 NPROC="${NPROC:-${CPUS_PER_TASK}}"
-if [[ "$CLIMATOLOGY_MODE" == monthly ]]; then
+if [[ "$CLIMATOLOGY_MODE" != whole ]]; then
   # Three variables run independently, but avoid concurrent full 0.05-degree
   # scientific arrays within a single job's existing 256G memory allocation.
   NPROC=1
@@ -90,25 +89,29 @@ if (( ${#VAR_LIST[@]} == 0 )); then
   exit 1
 fi
 
-if [[ "$CLIMATOLOGY_MODE" == monthly ]]; then
+if [[ "$CLIMATOLOGY_MODE" != whole ]]; then
   CHECK_ROOT="$IN_ROOT" CHECK_VARS="${VAR_LIST[*]}" CHECK_TAG="$BASELINE_TAG" \
   CHECK_MASK_TEMPLATE="$COASTAL_MASK_FILE_TEMPLATE" CHECK_GRID="$GRIDFILE" \
-  python3 - <<'PY_BASELINE_PREFLIGHT'
+  python3 - "$CLIMATOLOGY_MODE" "$CLIM_STAGE" "$field" <<'PY_BASELINE_PREFLIGHT'
 import os
+import sys
 from pathlib import Path
 
+mode, stage, field = sys.argv[1:]
 root = Path(os.environ['CHECK_ROOT'])
 tag = os.environ['CHECK_TAG']
+mask_template = os.environ['CHECK_MASK_TEMPLATE']
+placeholder = '{' + field + '}'
+tokens = [f'{month:02d}' for month in range(1, 13)] if mode == 'monthly' else ['DJF', 'MAM', 'JJA', 'SON']
 assert Path(os.environ['CHECK_GRID']).is_file(), 'Missing baseline target grid'
-assert '{month}' in os.environ['CHECK_MASK_TEMPLATE'], 'Mask template must contain {month}'
+assert placeholder in mask_template, f'Mask template must contain {placeholder}'
 for var in os.environ['CHECK_VARS'].split():
-    for month in range(1, 13):
-        token = f'{month:02d}'
-        source = root/var/'clim_monthly'/f'global_ocean_biogeochemistry_hindcast_{var}_clim_month_{token}_{tag}.nc'
-        mask = Path(os.environ['CHECK_MASK_TEMPLATE'].replace('{month}', token))
-        assert source.is_file(), f'Missing monthly baseline input: {source}'
-        assert mask.is_file(), f'Missing monthly GLORYS mask: {mask}'
-print('MONTHLY COASTAL BASELINE INPUT COVERAGE: PASS', flush=True)
+    for token in tokens:
+        source = root/var/stage/f'global_ocean_biogeochemistry_hindcast_{var}_clim_{field}_{token}_{tag}.nc'
+        mask = Path(mask_template.replace(placeholder, token))
+        assert source.is_file(), f'Missing {mode} baseline input: {source}'
+        assert mask.is_file(), f'Missing {mode} GLORYS mask: {mask}'
+print(f'{mode.upper()} COASTAL BASELINE INPUT COVERAGE: PASS', flush=True)
 PY_BASELINE_PREFLIGHT
 fi
 

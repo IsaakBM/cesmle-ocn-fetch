@@ -2629,6 +2629,35 @@ class MonthlyCoastalBaselineRunnerTests(unittest.TestCase):
         self.assertEqual(len(calls), 3)
         self.assertTrue(all('CLIMATOLOGY_MODE=whole' in ' '.join(call['args']) for call in calls))
 
+    def test_seasonal_submission_requires_all_four_matching_masks(self):
+        self.env.pop('COASTAL_MASK_FILE_TEMPLATE')
+        self.env.update(CLIMATOLOGY_MODE='seasonal', GLORYS_ROOT=str(self.root/'glorys'))
+        masks = self.root/'glorys/thetao/clim_seasonal'
+        masks.mkdir(parents=True)
+        for var in ('chl', 'o2', 'ph'):
+            directory = self.root/'bgc'/var/'clim_seasonal'
+            directory.mkdir()
+            for season in ('DJF', 'MAM', 'JJA', 'SON'):
+                (directory/f'global_ocean_biogeochemistry_hindcast_{var}_clim_season_{season}_2006-2014.nc').touch()
+        for season in ('DJF', 'MAM', 'JJA'):
+            (masks/f'glorys12v1_thetao_clim_season_{season}_2006-2014.nc').touch()
+
+        result = self.run_runner()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Missing seasonal GLORYS mask', result.stderr)
+        self.assertFalse(self.log.exists())
+
+        (masks/'glorys12v1_thetao_clim_season_SON_2006-2014.nc').touch()
+        result = self.run_runner()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [json.loads(row) for row in self.log.read_text().splitlines()]
+        self.assertEqual(len(calls), 3)
+        for call in calls:
+            exports = next(arg for arg in call['args'] if arg.startswith('--export='))
+            self.assertIn('CLIMATOLOGY_MODE=seasonal', exports)
+            self.assertIn('NPROC=1', exports)
+            self.assertIn(str(masks/'glorys12v1_thetao_clim_season_{season}_2006-2014.nc'), exports)
+
 
 class MonthlyAdditionBatchTests(unittest.TestCase):
     def setUp(self):

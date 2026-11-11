@@ -1796,6 +1796,7 @@ fi
             env = dict(
                 VAR='thetao', OUT_DIR=str(out), OUT_PREFIX='fixture',
                 FILL_TOP_MISSING='no', CLIMATOLOGY_MODE='seasonal', CLIM_WORKERS='4',
+                SLURM_CPUS_PER_TASK='4',
             )
             if kind == 'timeseries':
                 env.update(

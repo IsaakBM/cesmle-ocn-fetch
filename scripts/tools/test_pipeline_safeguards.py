@@ -1790,9 +1790,9 @@ fi
             'JJA': (30 * 6 + 31 * 7 + 31 * 8) / (30 + 31 + 31),
             'SON': (30 * 9 + 31 * 10 + 30 * 11) / (30 + 31 + 30),
         }
-        for kind in ('timeseries', 'monthly_files'):
+        for kind, stage_on_scratch in (('timeseries', False), ('monthly_files', False), ('monthly_files', True)):
             worker = ROOT/f'scripts/core/climatology_window_from_{kind}.slurm.sh'
-            out = self.root/f'{kind}_seasonal'
+            out = self.root/f'{kind}_seasonal_{stage_on_scratch}'
             env = dict(
                 VAR='thetao', OUT_DIR=str(out), OUT_PREFIX='fixture',
                 FILL_TOP_MISSING='no', CLIMATOLOGY_MODE='seasonal', CLIM_WORKERS='4',
@@ -1807,9 +1807,17 @@ fi
                     IN_DIR=str(inputs), WINDOW_START='200001', WINDOW_END='200012',
                     EXPECTED_N='12',
                 )
+            if stage_on_scratch:
+                scratch = self.root/'seasonal_scratch'
+                env.update(CLIM_SCRATCH_ROOT=str(scratch), CLIM_SCRATCH_POLICY='per_month',
+                           CLIM_SCRATCH_HEADROOM_GB='0', CLIM_WORKERS='1')
             result = self.run_script(worker, **env)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(len(list(out.glob('*.nc'))), 4)
+            if stage_on_scratch:
+                self.assertEqual(result.stdout.count('[COPY IN]'), 12)
+                self.assertFalse(list(scratch.iterdir()))
+                self.assertFalse(list(out.rglob('*.lock')))
             for season, expected_value in expected.items():
                 path = out/f'fixture_clim_season_{season}_2000-2000.nc'
                 with xr.open_dataset(path) as seasonal:

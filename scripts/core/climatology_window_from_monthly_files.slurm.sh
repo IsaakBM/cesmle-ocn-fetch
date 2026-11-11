@@ -340,7 +340,7 @@ shopt -s nullglob
 #                     the preceding December required by DJF
 #   CLIM_WORKERS    : concurrent month/season tasks (default: allocated CPUs,
 #                     capped at four); use 1 to benchmark serial storage access
-#   CLIM_SCRATCH_ROOT: optional scratch parent for monthly input staging and
+#   CLIM_SCRATCH_ROOT: optional scratch parent for monthly or season-year staging and
 #                     calculation; defaults to no staging. Requires one worker.
 #   CLIM_SCRATCH_POLICY: per_month (existing default) | shared. Shared retains a
 #                     source cache across monthly/seasonal jobs; all calculation
@@ -381,8 +381,8 @@ if (( CLIM_WORKERS > ${SLURM_CPUS_PER_TASK:-$CLIM_WORKERS} )); then
 fi
 (( CLIM_WORKERS <= 4 )) || CLIM_WORKERS=4
 if [[ -n "$CLIM_SCRATCH_ROOT" ]]; then
-  if [[ "$CLIMATOLOGY_MODE" != monthly || "$CLIM_WORKERS" != 1 ]]; then
-    echo "ERROR: Scratch staging currently requires monthly mode and CLIM_WORKERS=1" >&2
+  if [[ "$CLIMATOLOGY_MODE" == whole || "$CLIM_WORKERS" != 1 ]]; then
+    echo "ERROR: Scratch staging requires monthly or seasonal mode and CLIM_WORKERS=1" >&2
     exit 1
   fi
   if [[ "$CLIM_SCRATCH_ROOT" != /* || ! "$CLIM_SCRATCH_HEADROOM_GB" =~ ^[0-9]+$ ]]; then
@@ -840,6 +840,35 @@ wait_fields() {
   (( failed == 0 ))
 }
 
+check_scratch_space() {
+  python3 - "$1" "$VAR" "$CLIM_SCRATCH_HEADROOM_GB" "${@:2}" <<'PY_SCRATCH_SPACE'
+import os
+import shutil
+import sys
+import netCDF4 as nc
+
+root, name, reserve, *sources = sys.argv[1:]
+source_bytes = sum(os.stat(path).st_size for path in sources)
+with nc.Dataset(sources[0]) as ds:
+    variable = ds.variables[name]
+    output_bytes = variable.size * variable.dtype.itemsize
+required = source_bytes + 2 * output_bytes + int(reserve) * 1024**3
+available = shutil.disk_usage(root).free
+print(f'[SPACE] inputs={source_bytes} estimated_required={required} available={available}', flush=True)
+if available < required:
+    raise SystemExit('ERROR: Insufficient scratch space; no inputs staged')
+PY_SCRATCH_SPACE
+}
+
+copy_checked() {
+  cp -- "$1" "$2"
+  python3 - "$1" "$2" <<'PY_COPY_SIZE'
+import os
+import sys
+assert os.stat(sys.argv[1]).st_size == os.stat(sys.argv[2]).st_size, 'Incomplete copy'
+PY_COPY_SIZE
+}
+
 if [[ "$CLIMATOLOGY_MODE" == "monthly" ]]; then
   start_year="${WINDOW_START:0:4}"
   end_year="${WINDOW_END:0:4}"
@@ -946,34 +975,13 @@ PY_REUSE_MONTH
     calculation_tmp="$monthly_tmp"
     calculation_files=( "${month_files[@]}" )
     if [[ -n "$scratch_job_dir" ]]; then
-      python3 - "$scratch_job_dir" "$VAR" "$CLIM_SCRATCH_HEADROOM_GB" "${month_files[@]}" <<'PY_SCRATCH_SPACE'
-import os
-import shutil
-import sys
-import netCDF4 as nc
-
-root, name, reserve, *sources = sys.argv[1:]
-source_bytes = sum(os.stat(path).st_size for path in sources)
-with nc.Dataset(sources[0]) as ds:
-    variable = ds.variables[name]
-    output_bytes = variable.size * variable.dtype.itemsize
-required = source_bytes + 2 * output_bytes + int(reserve) * 1024**3
-available = shutil.disk_usage(root).free
-print(f'[SPACE] inputs={source_bytes} estimated_required={required} available={available}', flush=True)
-if available < required:
-    raise SystemExit('ERROR: Insufficient scratch space; no inputs staged')
-PY_SCRATCH_SPACE
+      check_scratch_space "$scratch_job_dir" "${month_files[@]}"
       field_scratch="$(mktemp -d "${scratch_job_dir}/month_${month_padded}.XXXXXX")"
       calculation_files=()
       for input_file in "${month_files[@]}"; do
         staged_file="${field_scratch}/$(basename "$input_file")"
         echo "[COPY IN] $(date -u +%FT%TZ) $input_file"
-        cp -- "$input_file" "$staged_file"
-        python3 - "$input_file" "$staged_file" <<'PY_COPY_SIZE'
-import os
-import sys
-assert os.stat(sys.argv[1]).st_size == os.stat(sys.argv[2]).st_size, 'Incomplete staged copy'
-PY_COPY_SIZE
+        copy_checked "$input_file" "$staged_file"
         calculation_files+=( "$staged_file" )
         echo "[COPIED] $(date -u +%FT%TZ) $input_file"
       done
@@ -1044,6 +1052,27 @@ if [[ "$CLIMATOLOGY_MODE" == "seasonal" ]]; then
   expected_season_years=$((10#${end_year} - 10#${start_year} + 1))
   seasonal_temps=()
   seasonal_outputs=()
+  season_work=""
+  publish_dir=""
+  if [[ -n "$CLIM_SCRATCH_ROOT" ]]; then
+    seasonal_lock="${TMP_DIR}/${OUT_PREFIX}_seasonal_${WINDOW_START}-${WINDOW_END}.lock"
+    if ! mkdir "$seasonal_lock"; then
+      echo "ERROR: Seasonal outputs locked: $seasonal_lock" >&2
+      exit 1
+    fi
+    cleanup_seasonal_job() {
+      [[ -z "$season_work" ]] || rm -rf -- "$season_work"
+      [[ -z "$publish_dir" ]] || rm -rf -- "$publish_dir"
+      rmdir -- "$seasonal_lock"
+    }
+    trap cleanup_seasonal_job EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    mkdir -p "$CLIM_SCRATCH_ROOT"
+    season_work="$(mktemp -d "${CLIM_SCRATCH_ROOT%/}/clim_${VAR}_${SLURM_JOB_ID:-local}.XXXXXX")"
+    TMP_DIR="$season_work"
+    echo "[SCRATCH] $season_work"
+  fi
 
   echo "[STEP1] Computing calendar-weighted season-year means"
   process_season() (
@@ -1089,12 +1118,27 @@ if [[ "$CLIMATOLOGY_MODE" == "seasonal" ]]; then
         exit 1
       fi
 
-      season_input="${TMP_DIR}/${OUT_PREFIX}_${season}_${year}.selected.tmp.nc"
       season_year_mean="${TMP_DIR}/${OUT_PREFIX}_${season}_${year}.weighted.tmp.nc"
-      rm -f "$season_input" "$season_year_mean"
+      rm -f "$season_year_mean"
+      if [[ -n "$season_work" ]]; then
+        check_scratch_space "$season_work" "${season_files[@]}"
+        staging_dir="${season_work}/inputs"
+        mkdir "$staging_dir"
+        staged_files=()
+        for input_file in "${season_files[@]}"; do
+          staged_file="${staging_dir}/$(basename "$input_file")"
+          echo "[COPY IN] season=${season} year=${year} $input_file"
+          copy_checked "$input_file" "$staged_file"
+          staged_files+=( "$staged_file" )
+        done
+        season_files=( "${staged_files[@]}" )
+      fi
       # Stream the three inputs into the weighted mean instead of materializing
       # a three-field seasonal input on shared storage.
       cdo -L -O -P 1 -f nc4c -z zip_1 yearmonmean -setyear,"${year}" -mergetime "${season_files[@]}" "$season_year_mean"
+      if [[ -n "$season_work" ]]; then
+        rm -rf -- "$staging_dir"
+      fi
       weighted_steps="$(cdo -s ntime "$season_year_mean" | tr -d '[:space:]')"
       if [[ "$weighted_steps" -ne 1 ]]; then
         echo "ERROR: ${season} ${year} expected one weighted season-year mean, found ${weighted_steps}" >&2
@@ -1134,24 +1178,36 @@ if [[ "$CLIMATOLOGY_MODE" == "seasonal" ]]; then
     write_climatology_metadata "$seasonal_tmp" "$bounds_start" "$bounds_end" \
       "$((expected_season_years * 3))" "seasonal" "" "season" "$season" \
       "$expected_season_years" "$FILL_TOP_MISSING"
-    rm -f "${season_year_means[@]}" "$season_input"
+    rm -f "${season_year_means[@]}"
     echo "[READY] season=${season} $(date -u +%FT%TZ)"
   )
   for season in DJF MAM JJA SON; do
     seasonal_temps+=( "${TMP_DIR}/${OUT_PREFIX}_clim_season_${season}_${start_year}-${end_year}.tmp.nc" )
     seasonal_outputs+=( "${OUT_DIR}/${OUT_PREFIX}_clim_season_${season}_${start_year}-${end_year}.nc" )
-    process_season "$season" &
-    field_pids+=( "$!" )
-    if (( ${#field_pids[@]} >= CLIM_WORKERS )); then wait_fields; fi
+    if [[ -n "$season_work" ]]; then
+      process_season "$season"
+    else
+      process_season "$season" &
+      field_pids+=( "$!" )
+      if (( ${#field_pids[@]} >= CLIM_WORKERS )); then wait_fields; fi
+    fi
   done
   wait_fields
 
+  if [[ -n "$season_work" ]]; then
+    # Complete all four transfers before replacing any published season.
+    publish_dir="$(mktemp -d "${OUT_DIR}/.${OUT_PREFIX}_seasonal.publish.XXXXXX")"
+    for index in "${!seasonal_temps[@]}"; do
+      returned="${publish_dir}/$(basename "${seasonal_outputs[$index]}")"
+      copy_checked "${seasonal_temps[$index]}" "$returned"
+      seasonal_temps[$index]="$returned"
+    done
+  fi
   echo "[STEP2] Publishing all four seasonal climatology fields"
   for index in "${!seasonal_temps[@]}"; do
     mv -f "${seasonal_temps[$index]}" "${seasonal_outputs[$index]}"
     echo "[DONE ] ${seasonal_outputs[$index]}"
   done
-  rm -f "${TMP_DIR}"/*.selected.tmp.nc
   echo
   echo "All four seasonal climatology fields completed for VAR=${VAR}"
   exit 0

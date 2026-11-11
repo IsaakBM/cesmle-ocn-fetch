@@ -69,8 +69,8 @@ if [[ "$CLIMATOLOGY_MODE" != "whole" && "$CLIMATOLOGY_MODE" != "monthly" && "$CL
   echo "ERROR: CLIMATOLOGY_MODE must be one of: whole, monthly, seasonal" >&2
   exit 1
 fi
-if [[ -n "$CLIM_SCRATCH_ROOT" && "$CLIM_SCRATCH_POLICY" != shared && ( "$CLIMATOLOGY_MODE" != monthly || "$CLIM_WORKERS" != 1 ) ]]; then
-  echo "ERROR: Scratch staging requires CLIMATOLOGY_MODE=monthly and CLIM_WORKERS=1" >&2
+if [[ -n "$CLIM_SCRATCH_ROOT" && "$CLIM_SCRATCH_POLICY" != shared && ( "$CLIMATOLOGY_MODE" == whole || "$CLIM_WORKERS" != 1 ) ]]; then
+  echo "ERROR: Scratch staging requires monthly or seasonal mode and CLIM_WORKERS=1" >&2
   exit 1
 fi
 
